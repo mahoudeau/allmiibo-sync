@@ -5,13 +5,14 @@
 import { BleTransport } from './ble.js';
 import { AllmiiboClient } from './protocol.js';
 import { walkDevice, hashDeviceIndex } from './sync.js';
-import { buildCollection, describeAmiibo } from './amiibo.js';
+import { buildCollection, describeAmiibo, DUMP_SIZES } from './amiibo.js';
+import { isExcluded } from './planner.js';
 import * as localfs from './localfs.js';
 
 const els = {};
 for (const id of [
   'pickFolder', 'scan', 'connect', 'scanDevice', 'stop', 'folderName',
-  'status', 'progress', 'stats', 'series', 'search', 'copyMissing',
+  'status', 'progress', 'stats', 'series', 'skipped', 'search', 'copyMissing',
   'mOwned', 'mMissing', 'mDevice', 'mExtra', 'mTotal',
 ]) els[id] = document.getElementById(id);
 
@@ -55,17 +56,34 @@ els.scan.addEventListener('click', async () => {
     });
 
     localIds = new Set();
-    let unreadable = 0;
-    for (const e of index.values()) {
-      if (e.isDir) continue;
-      if (e.amiiboId) localIds.add(e.amiiboId);
-      else unreadable++;
+    let files = 0;
+    let folders = 0;
+    let dumps = 0;
+    const ignored = [];
+    const unrecognised = [];
+
+    for (const [relPath, e] of index) {
+      if (e.isDir) {
+        folders++;
+        continue;
+      }
+      files++;
+      if (e.amiiboId) {
+        dumps++;
+        localIds.add(e.amiiboId);
+      } else if (isExcluded(relPath)) {
+        ignored.push({ relPath, size: e.size });
+      } else {
+        unrecognised.push({ relPath, size: e.size });
+      }
     }
 
     render();
+    renderSkipped(ignored, unrecognised);
     setStatus(
-      `Read ${index.size} entries — ${localIds.size} distinct amiibos` +
-        (unreadable ? `, ${unreadable} file(s) with no readable amiibo ID` : ''),
+      `${dumps} dumps in ${folders} folders — ${localIds.size} distinct amiibos` +
+        (unrecognised.length ? `, ${unrecognised.length} file(s) not recognised` : '') +
+        (ignored.length ? `, ${ignored.length} system file(s) ignored` : ''),
       'ok'
     );
   } catch (err) {
@@ -149,6 +167,38 @@ function render() {
   els.mTotal.textContent = s.ownedLocal;
 
   paint();
+}
+
+// Files that are not amiibo dumps, split into harmless system clutter and
+// anything genuinely unexpected — the latter is worth seeing.
+function renderSkipped(ignored, unrecognised) {
+  els.skipped.textContent = '';
+  if (!ignored.length && !unrecognised.length) {
+    els.skipped.hidden = true;
+    return;
+  }
+  els.skipped.hidden = false;
+
+  const block = (title, items, note) => {
+    if (!items.length) return;
+    const d = document.createElement('details');
+    const sm = document.createElement('summary');
+    sm.textContent = `${title} (${items.length})`;
+    d.append(sm);
+    const pre = document.createElement('pre');
+    pre.textContent =
+      (note ? `${note}\n\n` : '') +
+      items.map((i) => `${String(i.size).padStart(8)} B  ${i.relPath}`).join('\n');
+    d.append(pre);
+    els.skipped.append(d);
+  };
+
+  block(
+    'Not recognised as amiibo dumps',
+    unrecognised,
+    `Recognised dump sizes: ${Object.entries(DUMP_SIZES).map(([n, l]) => `${n} (${l})`).join(', ')}.`
+  );
+  block('System files, ignored by sync too', ignored);
 }
 
 function currentFilter() {

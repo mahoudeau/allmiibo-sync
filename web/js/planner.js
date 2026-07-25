@@ -29,7 +29,12 @@ export const DEFAULT_EXCLUDES = [
   'settings.bin',
   'key_retail.bin',
   '.allmiibo-sync.json',
+  // Operating-system metadata. Without these a push uploads Finder and
+  // Explorer droppings to the device.
   '.DS_Store',
+  'desktop.ini',
+  'Thumbs.db',
+  '._.DS_Store',
 ];
 
 export function isExcluded(relPath, excludes = DEFAULT_EXCLUDES) {

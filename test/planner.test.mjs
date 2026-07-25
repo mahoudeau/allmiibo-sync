@@ -553,3 +553,17 @@ test('no variant is reported when both sides hold the same dumps', () => {
   const r = compareByContent({ local: index(both), device: index(both) });
   assert.deepEqual(r.variants, []);
 });
+
+test('operating-system metadata is never uploaded to the device', () => {
+  // A push would otherwise carry Finder and Explorer droppings onto the drive.
+  for (const junk of ['.DS_Store', 'desktop.ini', 'Thumbs.db', 'sub/.DS_Store']) {
+    assert.equal(isExcluded(junk), true, `${junk} must be excluded`);
+  }
+
+  const p = plan(
+    { 'Zelda/.DS_Store': file(6148, 'h1'), 'Zelda/desktop.ini': file(244, 'h2'), 'Zelda/Link.bin': file(540, 'h3') },
+    {},
+    {}
+  );
+  assert.deepEqual(p.upload.map((u) => u.relPath), ['Zelda/Link.bin']);
+});
