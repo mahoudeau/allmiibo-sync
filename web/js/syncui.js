@@ -255,7 +255,16 @@ function renderPlan(p) {
   section('CREATE FOLDER locally', p.mkdirLocal, (m) => m.relPath);
   section('MOVE on device (rename, no re-upload)', p.moveDevice, (m) => `${m.from}  →  ${m.to}`);
   section('UPLOAD to device', p.upload, (u) => `${u.relPath}  (${u.size} B)`);
-  section('DOWNLOAD to local', p.download, (d) => `${d.relPath}  (${d.size} B)`);
+  section('DOWNLOAD to local', p.download, (d) =>
+    d.localPath && d.localPath !== d.relPath
+      ? `${d.relPath}  (${d.size} B)  ->  saved as ${d.localPath}`
+      : `${d.relPath}  (${d.size} B)`
+  );
+  section(
+    'RENAMED locally — the device allows names your filesystem does not',
+    p.renamedLocally ?? [],
+    (r) => `${r.from}  ->  ${r.to}`
+  );
   section('DELETE on device', p.deleteDevice, (d) => d.relPath);
   section('DELETE locally', p.deleteLocal, (d) => d.relPath);
   section('REMOVE FOLDER on device', p.rmdirDevice, (d) => d.relPath);

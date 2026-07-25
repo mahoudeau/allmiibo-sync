@@ -40,9 +40,17 @@ function stripped(src) {
   let i = 0;
   const depth = []; // open template literals, for `${ ... }` re-entry
 
+  // Last non-whitespace character emitted, used to tell a regex literal from
+  // a division operator.
+  const lastOf = (t) => {
+    for (let k = t.length - 1; k >= 0; k--) if (!/\s/.test(t[k])) return t[k];
+    return '';
+  };
+
   while (i < src.length) {
     const c = src[i];
     const next = src[i + 1];
+    const lastMeaningful = lastOf(out);
 
     if (c === '/' && next === '/') {
       while (i < src.length && src[i] !== '\n') i++;
@@ -52,6 +60,25 @@ function stripped(src) {
       i += 2;
       while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++;
       i += 2;
+      continue;
+    }
+    // A regex literal, which can contain quotes: /[<>:"|?*]/ would otherwise
+    // open a string and swallow the rest of the file. Distinguished from
+    // division by what precedes it.
+    if (c === '/' && /[=(,:[!&|?{;+\-*%^~]|^$/.test(lastMeaningful)) {
+      i++;
+      let inClass = false;
+      while (i < src.length) {
+        if (src[i] === '\\') { i += 2; continue; }
+        if (src[i] === '[') inClass = true;
+        else if (src[i] === ']') inClass = false;
+        else if (src[i] === '/' && !inClass) break;
+        else if (src[i] === '\n') break;
+        i++;
+      }
+      i++;
+      while (i < src.length && /[a-z]/.test(src[i])) i++;
+      out += ' ';
       continue;
     }
     if (c === "'" || c === '"') {

@@ -68,6 +68,30 @@ export function checkDestination(deviceRoot, relPath) {
   return null;
 }
 
+// The device filesystem accepts names the browser will not create locally.
+// Chrome's File System Access API enforces Windows naming rules on every
+// platform, so a folder called "Dark Souls " — with a trailing space, which
+// the device is perfectly happy with — fails with "Name is not allowed".
+//
+// Observed on a real device: two folders with trailing spaces, which killed
+// four operations of an 870-operation backup.
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+const ILLEGAL_LOCAL_CHARS = /[<>:"|?*\u0000-\u001f]/g;
+
+/** A single path segment made safe for the local filesystem. */
+export function sanitizeLocalName(name) {
+  let out = name.replace(ILLEGAL_LOCAL_CHARS, '_');
+  // Trailing spaces and dots are the ones that actually bite.
+  out = out.replace(/[ .]+$/, '').replace(/^\s+/, '');
+  if (WINDOWS_RESERVED.test(out)) out = `_${out}`;
+  return out || '_';
+}
+
+/** A device-relative path made safe for the local filesystem. */
+export function sanitizeLocalRelPath(relPath) {
+  return relPath.split('/').map(sanitizeLocalName).join('/');
+}
+
 function parentDirs(relPath) {
   const parts = relPath.split('/');
   parts.pop();
@@ -177,13 +201,13 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
       if (mode === 'push') {
         addUpload(plan, relPath, l, deviceRoot, deviceDirs, localDirs);
       } else if (mode === 'pull') {
-        plan.download.push({ relPath, size: d.size });
         queueLocalDirs(plan, relPath, localDirs);
+        addDownload(plan, relPath, d);
       } else if (localChanged) {
         addUpload(plan, relPath, l, deviceRoot, deviceDirs, localDirs);
       } else if (deviceChanged) {
-        plan.download.push({ relPath, size: d.size });
         queueLocalDirs(plan, relPath, localDirs);
+        addDownload(plan, relPath, d);
       } else {
         plan.unchanged.push(relPath);
       }
@@ -258,8 +282,8 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
         continue;
       }
 
-      plan.download.push({ relPath, size: d.size });
       queueLocalDirs(plan, relPath, localDirs);
+      addDownload(plan, relPath, d);
     }
   }
 
@@ -398,8 +422,24 @@ function queueLocalDirs(plan, relPath, localDirs) {
   for (const dir of parentDirs(relPath)) {
     if (localDirs.has(dir)) continue;
     localDirs.add(dir);
-    plan.mkdirLocal.push({ relPath: dir });
+    plan.mkdirLocal.push({ relPath: dir, localPath: sanitizeLocalRelPath(dir) });
   }
+}
+
+// Records a download destination, noting when the local filesystem forces a
+// different name than the device uses.
+function addDownload(plan, relPath, entry) {
+  const localPath = sanitizeLocalRelPath(relPath);
+  if (localPath !== relPath) {
+    plan.renamedLocally ??= [];
+    plan.renamedLocally.push({ from: relPath, to: localPath });
+  }
+  plan.download.push({
+    relPath,
+    localPath,
+    size: entry.size,
+    amiiboId: entry.amiiboId ?? null,
+  });
 }
 
 // Rough wall-clock estimate from the measured ~2 KB/s and ~60 ms per command
@@ -640,12 +680,7 @@ export function planIdentitySync({ local, device, deviceRoot, options = {} }) {
       }
       const source = entries[0];
       queueLocalDirs(plan, source.relPath, localDirs);
-      plan.download.push({
-        relPath: source.relPath,
-        size: source.size,
-        amiiboId: source.amiiboId,
-        vehicle: source.vehicle ?? null,
-      });
+      addDownload(plan, source.relPath, source);
     }
   }
 
@@ -727,7 +762,7 @@ export function planDump({ device, local = new Map(), deviceRoot, options = {} }
     if (entry.isDir) {
       if (!localDirs.has(relPath)) {
         localDirs.add(relPath);
-        plan.mkdirLocal.push({ relPath });
+        plan.mkdirLocal.push({ relPath, localPath: sanitizeLocalRelPath(relPath) });
       }
       continue;
     }
@@ -748,7 +783,7 @@ export function planDump({ device, local = new Map(), deviceRoot, options = {} }
     }
 
     queueLocalDirs(plan, relPath, localDirs);
-    plan.download.push({ relPath, size: entry.size, amiiboId: entry.amiiboId ?? null });
+    addDownload(plan, relPath, entry);
   }
 
   if (skippedDeviceFiles) {

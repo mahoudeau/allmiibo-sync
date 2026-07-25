@@ -8,6 +8,8 @@ import {
   planSync,
   planIdentitySync,
   planDump,
+  sanitizeLocalName,
+  sanitizeLocalRelPath,
   flattenPlan,
   checkDestination,
   devicePath,
@@ -756,4 +758,60 @@ test('a dump never writes to the device', () => {
   assert.deepEqual(p.mkdirDevice, []);
   assert.deepEqual(p.deleteDevice, []);
   assert.deepEqual(p.rmdirDevice, []);
+});
+
+// ---- local name sanitisation --------------------------------------------
+
+test('a trailing space is trimmed, because the browser refuses such names', () => {
+  // Real device folders: "others/Dark Souls " and "others/Chibi Robo ".
+  // getDirectoryHandle rejects them with "Name is not allowed".
+  assert.equal(sanitizeLocalName('Dark Souls '), 'Dark Souls');
+  assert.equal(sanitizeLocalRelPath('others/Chibi Robo /01 - Chibi-Robo.bin'),
+    'others/Chibi Robo/01 - Chibi-Robo.bin');
+});
+
+test('characters the local filesystem rejects are replaced', () => {
+  // The device stores these happily — the write test confirmed it.
+  assert.equal(sanitizeLocalName('Star*Q?.bin'), 'Star_Q_.bin');
+  assert.equal(sanitizeLocalName('Quote "X".bin'), 'Quote _X_.bin');
+  assert.equal(sanitizeLocalName('Colon:Test.bin'), 'Colon_Test.bin');
+});
+
+test('names that are legal are left exactly alone', () => {
+  for (const name of ['Link.bin', "Majora's Mask.bin", 'Mr. Game & Watch.bin', 'Kamijō.bin']) {
+    assert.equal(sanitizeLocalName(name), name);
+  }
+});
+
+test('reserved device names are escaped', () => {
+  assert.equal(sanitizeLocalName('CON'), '_CON');
+  assert.equal(sanitizeLocalName('nul.bin'), '_nul.bin');
+});
+
+test('a name that sanitises to nothing still yields something usable', () => {
+  assert.equal(sanitizeLocalName('   '), '_');
+  assert.equal(sanitizeLocalName('...'), '_');
+});
+
+test('a dump carries the safe local destination and reports the rename', () => {
+  const p = planDump({
+    device: index({
+      'others/Dark Souls ': dir(),
+      'others/Dark Souls /1 - Solaire.bin': file(540),
+    }),
+    deviceRoot: ROOT,
+  });
+
+  const dl = p.download.find((d) => d.relPath.includes('Solaire'));
+  assert.equal(dl.localPath, 'others/Dark Souls/1 - Solaire.bin');
+  assert.ok(p.mkdirLocal.some((m) => m.localPath === 'others/Dark Souls'));
+  assert.deepEqual(p.renamedLocally, [
+    { from: 'others/Dark Souls /1 - Solaire.bin', to: 'others/Dark Souls/1 - Solaire.bin' },
+  ]);
+});
+
+test('nothing is reported as renamed when no name needs changing', () => {
+  const p = planDump({ device: index({ 'Zelda/Link.bin': file(540) }), deviceRoot: ROOT });
+  assert.equal(p.renamedLocally, undefined);
+  assert.equal(p.download[0].localPath, 'Zelda/Link.bin');
 });

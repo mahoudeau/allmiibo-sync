@@ -142,7 +142,9 @@ export async function applyPlan({
         return;
 
       case 'mkdirLocal':
-        await makeLocalDir(rootHandle, op.relPath);
+        // localPath, not relPath: the device permits names the browser will
+        // not create, such as a folder ending in a space.
+        await makeLocalDir(rootHandle, op.localPath ?? op.relPath);
         return;
 
       case 'upload': {
@@ -159,7 +161,7 @@ export async function applyPlan({
 
       case 'download': {
         const bytes = await client.readFile(full(op.relPath));
-        await writeLocalFile(rootHandle, op.relPath, bytes);
+        await writeLocalFile(rootHandle, op.localPath ?? op.relPath, bytes);
         state.entries[op.relPath] = { size: bytes.length, hash: await sha256(bytes) };
         onProgress(op.relPath, bytes.length, bytes.length);
         return;
