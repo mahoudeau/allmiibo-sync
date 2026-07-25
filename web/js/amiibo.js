@@ -211,7 +211,7 @@ const SERIES_FACE = {
   0x12: /^Chrom/, 0x13: /^Samus Aran$/, 0x14: /Solaire/, 0x15: /^Mega Man$/,
   0x16: /Loot Goblin/, 0x17: /Pawapuro/, 0x18: /^Magnamalo/, 0x19: /Yuga Ohdo/,
   0x1a: /Donkey Kong/, 0x1b: /^Noah/, 0x1c: /Wooden Blocks/, 0x1d: /^Ryu$/,
-  0x1e: /^Kirby$/, 0xff: /^Mario - Power Up Band/,
+  0x1e: /^Kirby/, 0xff: /^Mario - Power Up Band/,
 };
 
 let faceIndex = null;

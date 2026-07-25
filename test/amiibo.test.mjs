@@ -73,9 +73,10 @@ test('the collection marks owned and missing per series', () => {
 });
 
 test('an owned amiibo absent from the database is still listed', () => {
-  const c = buildCollection(new Set(['0000050004e90102'])); // Mario + Luma, newer than the table
+  // The HHD item-card ID: a real dump that no amiibo database will ever list.
+  const c = buildCollection(new Set(['026a000100000502']));
   const all = c.series.flatMap((s) => s.items);
-  const extra = all.find((i) => i.id === '0000050004e90102');
+  const extra = all.find((i) => i.id === '026a000100000502');
 
   assert.ok(extra, 'unlisted amiibos must still appear');
   assert.equal(extra.inDatabase, false);
@@ -100,7 +101,7 @@ test('series labels come from the authoritative table', () => {
 });
 
 test('an unknown series byte degrades to the raw value rather than guessing', () => {
-  assert.equal(decodeAmiiboId('0000000000002102').seriesName, 'Series 0x21');
+  assert.equal(decodeAmiiboId('0000000000002f02').seriesName, 'Series 0x2f');
 });
 
 test('the Block figure type is known', () => {
@@ -153,11 +154,10 @@ test('non-v3 dumps carry no vehicle', () => {
 });
 
 test('an ID absent from the database is named through its character head', () => {
-  // Kirby Air Riders Meta Knight and King Dedede are not in the table, but
-  // their heads appear on earlier figures.
-  assert.equal(characterName('1f01000004c61e03'), 'Meta Knight');
-  assert.equal(characterName('1f02000004c71e03'), 'King Dedede');
-  assert.equal(characterName('1f00000004c41e03'), 'Kirby');
+  // A fabricated tail on a real character head: the exact ID is unknown, the
+  // character is not.
+  assert.equal(characterName('1f010000deadbe03'), 'Meta Knight');
+  assert.equal(characterName('00000000deadbe02'), 'Mario');
 });
 
 test('a head shared by variants resolves to the base character', () => {
@@ -170,8 +170,9 @@ test('an entirely unknown head yields nothing rather than a guess', () => {
 });
 
 test('the collection names unlisted amiibos by character, marked as a guess', () => {
-  const c = buildCollection(new Set(['1f01000004c61e03']));
-  const item = c.series.flatMap((s) => s.items).find((i) => i.id === '1f01000004c61e03');
+  const id = '1f010000deadbe03'; // unknown tail, known Meta Knight head
+  const c = buildCollection(new Set([id]));
+  const item = c.series.flatMap((s) => s.items).find((i) => i.id === id);
   assert.equal(item.name, 'Meta Knight');
   assert.equal(item.nameSource, 'inferred');
   assert.equal(item.inDatabase, false, 'still flagged as absent from the database');
@@ -180,7 +181,7 @@ test('the collection names unlisted amiibos by character, marked as a guess', ()
 test('the character in the ID outranks a filename', () => {
   // A filename gave "MK+" where the ID says Meta Knight. The dump beats the
   // typing.
-  const id = '1f01000004c61e03';
+  const id = '1f010000deadbe03';
   const c = buildCollection(new Set([id]), null, { nameHints: new Map([[id, 'MK+']]) });
   const item = c.series.flatMap((s) => s.items).find((i) => i.id === id);
   assert.equal(item.name, 'Meta Knight');
@@ -188,7 +189,7 @@ test('the character in the ID outranks a filename', () => {
 });
 
 test('a filename is used when the character is genuinely unknown', () => {
-  const id = '0000040004c10102'; // Elephant Mario — head not in the database
+  const id = 'abcdef0004c10102'; // head unknown to the database
   const c = buildCollection(new Set([id]), null, { nameHints: new Map([[id, 'Elephant Mario']]) });
   const item = c.series.flatMap((s) => s.items).find((i) => i.id === id);
   assert.equal(item.name, 'Elephant Mario');
@@ -218,7 +219,7 @@ test('a database name is never overridden by a hint', () => {
 
 test('vehicles apply to the Kirby Air Riders series', () => {
   assert.equal(hasVehicles('1f00000004c41e03'), true);  // Kirby, Air Riders
-  assert.equal(hasVehicles('1f01000004c61e03'), true);  // Meta Knight, unlisted
+  assert.equal(hasVehicles('1f01000004c61e03'), true);  // Meta Knight
   assert.equal(hasVehicles('0181000100440502'), false); // Isabelle, Animal Crossing
 });
 

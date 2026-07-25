@@ -29,7 +29,7 @@ const run = promisify(execFile);
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const FULL_DIR = join(ROOT, 'web/data/images/full');
 const THUMB_DIR = join(ROOT, 'web/data/images/thumb');
-const BASE = 'https://raw.githubusercontent.com/N3evin/AmiiboAPI/master/images';
+const BASE = 'https://raw.githubusercontent.com/8bitDream/AmiiboAPI/dev/images';
 const CONCURRENCY = 10;
 const THUMB_SIZE = 96;
 

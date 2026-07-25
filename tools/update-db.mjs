@@ -6,8 +6,11 @@
 //   npm run update-db -- --no-images    skip the artwork pass
 //
 // Sources, the same two the generator documents:
-//   solosky/pixl.js    fw/application/src/amiidb/db_amiibo.c   (names)
-//   N3evin/AmiiboAPI   database/amiibo.json                    (series, types)
+//   solosky/pixl.js      fw/application/src/amiidb/db_amiibo.c  (names)
+//   8bitDream/AmiiboAPI  database/amiibo.json                   (series, types,
+//     release dates) — an actively maintained superset of N3evin/AmiiboAPI,
+//     verified to add newer amiibos (Air Riders v3, Mario Wonder, Splatoon
+//     Raiders, Pragmata…) without dropping or corrupting upstream entries.
 //
 // Prints exactly what changed, because a silent regeneration is how a bad
 // upstream edit would slip into the committed database unreviewed.
@@ -28,7 +31,7 @@ const SOURCES = {
   'db_amiibo.c':
     'https://raw.githubusercontent.com/solosky/pixl.js/main/fw/application/src/amiidb/db_amiibo.c',
   'amiibo.json':
-    'https://raw.githubusercontent.com/N3evin/AmiiboAPI/master/database/amiibo.json',
+    'https://raw.githubusercontent.com/8bitDream/AmiiboAPI/dev/database/amiibo.json',
 };
 
 const skipImages = process.argv.includes('--no-images');
