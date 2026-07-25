@@ -8,6 +8,7 @@ import {
   planSync,
   planIdentitySync,
   planDump,
+  planReplace,
   sanitizeLocalName,
   sanitizeLocalRelPath,
   storedSize,
@@ -429,16 +430,16 @@ test('an empty local folder is created on the device', () => {
   assert.deepEqual(p.mkdirDevice.map((m) => m.relPath), ['Empty Folder']);
 });
 
-test('the estimate reflects the measured ~2 KB/s link', () => {
+test('the estimate reflects what an upload actually costs', () => {
   const local = {};
   for (let i = 0; i < 100; i++) local[`f${i}.bin`] = file(540, `h${i}`);
   const p = plan(local, {}, {});
 
   assert.equal(p.stats.upload, 100);
-  assert.equal(p.stats.uploadBytes, 54000);
-  // 100 files x (2 commands + 3 chunks) is on the order of a minute.
-  assert.ok(p.stats.estimatedSeconds > 30 && p.stats.estimatedSeconds < 120,
-    `estimate ${p.stats.estimatedSeconds}s should be about a minute`);
+  // Measured at ~2.5 s per 540-byte dump, so a hundred of them is a few
+  // minutes — not the ~47 s the per-chunk throughput figure suggested.
+  const minutes = p.stats.estimatedSeconds / 60;
+  assert.ok(minutes > 3 && minutes < 6, `estimated ${minutes.toFixed(1)} min for 100 dumps`);
 });
 
 test('an unknown mode is rejected', () => {
@@ -1077,4 +1078,118 @@ test('equal sizes with no record are still left alone', () => {
   const p = plan({ 'a.bin': file(540, 'h1') }, { 'a.bin': file(540) }, {});
   assert.deepEqual(p.upload, []);
   assert.equal(p.ambiguous.length, 1);
+});
+
+test('a file being moved is never also deleted', () => {
+  // Renaming a folder to differ only in case put the device path first in sort
+  // order, so a delete was scheduled before the move that claimed the same
+  // file. With deletions running first, the rename then had no source.
+  const local = new Map();
+  const device = new Map();
+  const state = {};
+  for (let i = 0; i < 3; i++) {
+    local.set(`street fighter/f${i}.bin`, { size: 540, hash: `sf${i}`, isDir: false });
+    device.set(`Street fighter/f${i}.bin`, { size: 540, isDir: false });
+    state[`Street fighter/f${i}.bin`] = { size: 540, hash: `sf${i}` };
+  }
+
+  const p = planSync({
+    local, device, state: { entries: state }, deviceRoot: ROOT,
+    options: { mode: 'push', delete: true, preferDeleteFirst: true },
+  });
+
+  assert.equal(p.moveDevice.length, 3, 'renamed, not re-uploaded');
+  assert.deepEqual(p.upload, []);
+
+  const moving = new Set(p.moveDevice.map((m) => m.from));
+  const deleting = new Set(p.deleteDevice.map((d) => d.relPath));
+  const both = [...moving].filter((f) => deleting.has(f));
+  assert.deepEqual(both, [], 'a move source must never also be deleted');
+});
+
+test('a move still happens when the device path sorts after the local one', () => {
+  // The mirror image of the case above, to be sure the fix is not order-bound.
+  const p = plan(
+    { 'AAA/f.bin': file(540, 'h1') },
+    { 'zzz/f.bin': file(540) },
+    { 'zzz/f.bin': { size: 540, hash: 'h1' } },
+    { delete: true }
+  );
+  assert.deepEqual(p.moveDevice, [{ from: 'zzz/f.bin', to: 'AAA/f.bin' }]);
+  assert.deepEqual(p.deleteDevice, []);
+});
+
+// ---- replace ------------------------------------------------------------
+
+test('a replace deletes everything under the root, then writes everything back', () => {
+  const p = planReplace({
+    local: index({ 'a.bin': file(540, 'h1'), 'sub/b.bin': file(540, 'h2'), sub: dir() }),
+    device: index({ 'old1.bin': file(540), 'old2.bin': file(540), 'olddir/c.bin': file(540), olddir: dir() }),
+    deviceRoot: ROOT,
+  });
+
+  assert.deepEqual(p.deleteDevice.map((d) => d.relPath).sort(),
+    ['old1.bin', 'old2.bin', 'olddir/c.bin']);
+  assert.deepEqual(p.upload.map((u) => u.relPath).sort(), ['a.bin', 'sub/b.bin']);
+  assert.equal(p.deleteFirst, true);
+  assert.deepEqual(p.unchanged, [], 'a replacement skips nothing');
+});
+
+test('a replace re-uploads a file the device already has', () => {
+  // The point of the operation: a device file of the right size and the wrong
+  // contents cannot be detected without reading it back, so it is replaced
+  // rather than trusted.
+  const same = { 'a.bin': file(540, 'h1') };
+  const p = planReplace({
+    local: index(same),
+    device: index({ 'a.bin': file(540) }),
+    deviceRoot: ROOT,
+  });
+
+  assert.deepEqual(p.upload.map((u) => u.relPath), ['a.bin']);
+  assert.deepEqual(p.deleteDevice.map((d) => d.relPath), ['a.bin']);
+});
+
+test('a replace clears before it writes', () => {
+  const p = planReplace({
+    local: index({ 'a.bin': file(540, 'h') }),
+    device: index({ 'old.bin': file(540) }),
+    deviceRoot: ROOT,
+  });
+  const ops = flattenPlan(p).map((o) => o.op);
+  assert.ok(ops.indexOf('deleteDevice') < ops.indexOf('upload'));
+});
+
+test('a replace leaves device state alone', () => {
+  const p = planReplace({
+    local: index({}),
+    device: index({ 'key_retail.bin': file(160), 'settings.bin': file(24) }),
+    deviceRoot: 'E:/',
+  });
+  assert.deepEqual(p.deleteDevice, []);
+});
+
+test('a replace that cannot fit the drive says so', () => {
+  const local = {};
+  for (let i = 0; i < 2000; i++) local[`f${i}.bin`] = file(540, `h${i}`);
+  const p = planReplace({
+    local: index(local),
+    device: index({}),
+    deviceRoot: ROOT,
+    options: { drive: { totalSize: 1_920_401, usedSize: 0 } },
+  });
+  assert.equal(p.capacity.fits, false);
+  assert.match(p.warnings.join(' '), /Will not fit/);
+});
+
+test('the time estimate matches what the hardware actually did', () => {
+  // A push of 1049 dumps with 831 deletions took 48 minutes.
+  const local = {};
+  for (let i = 0; i < 1049; i++) local[`f${i}.bin`] = file(540, `h${i}`);
+  const device = {};
+  for (let i = 0; i < 831; i++) device[`old${i}.bin`] = file(540);
+
+  const p = planReplace({ local: index(local), device: index(device), deviceRoot: ROOT });
+  const minutes = p.stats.estimatedSeconds / 60;
+  assert.ok(minutes > 35 && minutes < 60, `estimated ${minutes.toFixed(0)} min, expected about 48`);
 });

@@ -3,7 +3,7 @@
 
 import { BleTransport } from './ble.js';
 import { AllmiiboClient } from './protocol.js';
-import { planSync, planDump, planIdentitySync, flattenPlan, compareByContent } from './planner.js';
+import { planSync, planDump, planReplace, planIdentitySync, flattenPlan, compareByContent } from './planner.js';
 import { walkDevice, verifyDeviceHashes, hashDeviceIndex, applyPlan, ambiguousPaths } from './sync.js';
 import * as localfs from './localfs.js';
 
@@ -242,12 +242,10 @@ function buildPlan({ op, local, device, state, deviceRoot, drive }) {
         },
       });
     case 'replace':
-      // A replacement is a mirror: local is master and surplus goes. The drive
-      // figures let the planner decide whether uploads can precede deletions.
-      return planSync({
-        local, device, state, deviceRoot,
-        options: { mode: 'push', delete: true, drive, preferDeleteFirst: true },
-      });
+      // A replacement clears the root and writes everything back. Skipping
+      // files believed correct would make this a mirror, and that belief
+      // cannot be checked without reading the device.
+      return planReplace({ local, device, deviceRoot, options: { drive } });
     case 'smart':
       return planSync({
         local, device, state, deviceRoot,

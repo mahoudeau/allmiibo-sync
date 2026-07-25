@@ -66,8 +66,11 @@
     <label class="op">
       <input type="radio" name="op" value="replace">
       <span class="opName danger">Replace device with local</span>
-      <span class="opDesc">Make the device match your local folder exactly, <strong>deleting
-        anything the device has that you do not</strong>. Matches on path.</span>
+      <span class="opDesc">Erase everything under the device folder, then write your whole
+        local folder back. <strong>Nothing is skipped and nothing is checked</strong> — the only
+        way to be certain the device matches, since a file of the right size and the wrong
+        contents cannot be spotted without reading it back. Slow: the entire library over a
+        ~2 KB/s link.</span>
     </label>
     <label class="op">
       <input type="radio" name="op" value="smart">

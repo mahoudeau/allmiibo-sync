@@ -188,6 +188,27 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
   }
   const movedFrom = new Set();
 
+  // Moves are decided before anything else. Deciding them inside the main loop
+  // made the outcome depend on sort order: renaming "Street fighter" to
+  // "street fighter" put the device-only path first, which scheduled a delete,
+  // and the local-only path later, which scheduled a move of the file that
+  // delete had already claimed. With deletions running first, the rename then
+  // failed against a source that no longer existed.
+  const plannedMoves = new Map(); // local relPath -> device relPath it comes from
+  if (mode === 'push' || mode === 'two-way') {
+    for (const [relPath, l] of localFiles) {
+      if (deviceFiles.has(relPath) || !l.hash) continue;
+      // In two-way a local-only file that has a record was deleted on the
+      // device; that is a deletion to reconcile, not a move.
+      if (mode === 'two-way' && prev[relPath]) continue;
+      const from = moveCandidates.get(l.hash);
+      if (!from || movedFrom.has(from)) continue;
+      if (checkDestination(deviceRoot, relPath)) continue; // handled as blocked below
+      movedFrom.add(from);
+      plannedMoves.set(relPath, from);
+    }
+  }
+
   for (const relPath of [...paths].sort()) {
     const l = localFiles.get(relPath);
     const d = deviceFiles.get(relPath);
@@ -276,18 +297,20 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
         continue;
       }
 
-      // A file that vanished from one path and appeared at another is a move.
-      const from = l.hash ? moveCandidates.get(l.hash) : undefined;
-      if (from && !movedFrom.has(from)) {
+      // A file that vanished from one path and appeared at another is a move,
+      // decided in the pre-pass above.
+      const from = plannedMoves.get(relPath);
+      if (from) {
+        queueDeviceDirs(plan, relPath, deviceDirs, deviceRoot);
+        plan.moveDevice.push({ from, to: relPath });
+        continue;
+      }
+      if (l.hash && moveCandidates.has(l.hash)) {
         const why = checkDestination(deviceRoot, relPath);
         if (why) {
           plan.blocked.push({ relPath, action: 'move', reason: why });
-        } else {
-          movedFrom.add(from);
-          queueDeviceDirs(plan, relPath, deviceDirs, deviceRoot);
-          plan.moveDevice.push({ from, to: relPath });
+          continue;
         }
-        continue;
       }
 
       addUpload(plan, relPath, l, deviceRoot, deviceDirs, localDirs);
@@ -526,19 +549,28 @@ function addDownload(plan, relPath, entry) {
   });
 }
 
-// Rough wall-clock estimate from the measured ~2 KB/s and ~60 ms per command
-// (PROTOCOL.md §9.6). Uploads cost open + ceil(size/242) writes + close.
+// Wall-clock estimate, calibrated against two real runs rather than from the
+// per-chunk throughput figure, which turned out to be five times optimistic:
+//
+//   a full download    866 files in ~370 s   ->  427 ms each
+//   a full push        729 dumps in ~1850 s  -> 2538 ms each
+//   its deletions      831 files in ~197 s   ->  237 ms each
+//
+// An upload costs far more than its chunks suggest because open and close are
+// themselves round-trips, and it is that fixed cost that dominates a library
+// of 540-byte files.
+const OPEN_CLOSE_MS = 2200;
+const WRITE_CHUNK_MS = 100;
+const DOWNLOAD_MS = 430;
+const COMMAND_MS = 240;
+const CHUNK = 242;
+
 export function estimateSeconds(plan) {
-  const CMD_MS = 60;
-  const WRITE_CHUNK_MS = 118;
-  const CHUNK = 242;
   let ms = 0;
-  for (const u of plan.upload) ms += 2 * CMD_MS + Math.ceil(u.size / CHUNK) * WRITE_CHUNK_MS;
-  for (const d of plan.download) ms += 3 * CMD_MS;
-  ms += plan.moveDevice.length * CMD_MS;
-  ms += plan.deleteDevice.length * CMD_MS;
-  ms += plan.mkdirDevice.length * CMD_MS;
-  ms += plan.rmdirDevice.length * CMD_MS;
+  for (const u of plan.upload) ms += OPEN_CLOSE_MS + Math.ceil(u.size / CHUNK) * WRITE_CHUNK_MS;
+  ms += plan.download.length * DOWNLOAD_MS;
+  ms += (plan.moveDevice.length + plan.deleteDevice.length + plan.mkdirDevice.length +
+         plan.rmdirDevice.length) * COMMAND_MS;
   return Math.round(ms / 1000);
 }
 
@@ -928,6 +960,115 @@ export function planDump({ device, local = new Map(), state = { entries: {} }, d
     ambiguous: 0,
     uploadBytes: 0,
     downloadBytes: plan.download.reduce((n, d) => n + d.size, 0),
+  };
+  plan.stats.estimatedSeconds = estimateSeconds(plan);
+  return plan;
+}
+
+/**
+ * Plan a genuine replacement: clear the device root, then write the local
+ * folder onto it.
+ *
+ * Distinct from a mirror, which skips files it believes are already correct.
+ * That belief rests on recorded hashes and on sizes, and every amiibo dump is
+ * 540 bytes — so a device file that is the right size and the wrong content
+ * would survive a mirror indefinitely. A replacement does not ask: everything
+ * goes, everything is written again.
+ *
+ * The cost is the whole library over a ~2 KB/s link, and the device is empty
+ * in between. The local folder is the source of truth throughout, so an
+ * interrupted run loses nothing that is not still on disk.
+ */
+export function planReplace({ local, device, deviceRoot, options = {} }) {
+  const excludes = options.excludes || DEFAULT_EXCLUDES;
+
+  const plan = {
+    mode: 'replace',
+    deviceRoot,
+    mkdirDevice: [],
+    mkdirLocal: [],
+    upload: [],
+    download: [],
+    moveDevice: [],
+    deleteDevice: [],
+    deleteLocal: [],
+    rmdirDevice: [],
+    wouldDelete: [],
+    conflicts: [],
+    blocked: [],
+    unchanged: [],
+    ambiguous: [],
+    warnings: [],
+    deleteFirst: true, // a replacement always clears before it writes
+  };
+
+  // Everything on the device goes, except what the device owns.
+  const deviceDirs = [];
+  for (const [relPath, e] of device) {
+    if (isExcluded(relPath, excludes)) continue;
+    if (e.isDir) deviceDirs.push(relPath);
+    else plan.deleteDevice.push({ relPath, size: e.size });
+  }
+  deviceDirs.sort((a, b) => depth(b) - depth(a) || b.localeCompare(a));
+  for (const relPath of deviceDirs) plan.rmdirDevice.push({ relPath });
+
+  // Then the local folder is written onto the empty root.
+  const created = new Set();
+  for (const [relPath, e] of local) {
+    if (e.isDir || isExcluded(relPath, excludes)) continue;
+    const why = checkDestination(deviceRoot, relPath);
+    if (why) {
+      plan.blocked.push({ relPath, action: 'upload', reason: why });
+      continue;
+    }
+    queueDeviceDirs(plan, relPath, created, deviceRoot);
+    plan.upload.push({ relPath, size: e.size, hash: e.hash, amiiboId: e.amiiboId ?? null });
+  }
+
+  const uploadBytes = plan.upload.reduce((n, u) => n + storedSize(u.size), 0);
+  const drive = options.drive ?? null;
+  if (drive && Number.isFinite(drive.totalSize)) {
+    // The device is empty by the time the uploads run, so the whole drive is
+    // what has to hold them.
+    plan.capacity = {
+      totalSize: drive.totalSize,
+      usedSize: drive.usedSize,
+      freeNow: drive.totalSize - drive.usedSize,
+      uploadBytes,
+      freeingBytes: plan.deleteDevice.reduce((n, d) => n + storedSize(d.size ?? 0), 0),
+      freeAfterDeletes: drive.totalSize,
+      fits: uploadBytes <= drive.totalSize,
+    };
+    if (!plan.capacity.fits) {
+      plan.warnings.push(
+        `Will not fit: the uploads need about ${uploadBytes} bytes once filesystem overhead is ` +
+          `counted, and the drive holds ${drive.totalSize}. Sync a smaller folder.`
+      );
+    }
+  }
+
+  plan.warnings.push(
+    `Everything under ${deviceRoot} is deleted first, then the whole local folder is written ` +
+      `back — ${plan.upload.length} file(s), nothing skipped. The device is empty in between. ` +
+      `Use Smart sync instead to transfer only what differs.`
+  );
+
+  plan.stats = {
+    upload: plan.upload.length,
+    download: 0,
+    moveDevice: 0,
+    deleteDevice: plan.deleteDevice.length,
+    deleteLocal: 0,
+    mkdirDevice: plan.mkdirDevice.length,
+    mkdirLocal: 0,
+    rmdirDevice: plan.rmdirDevice.length,
+    wouldDelete: 0,
+    unchanged: 0,
+    conflicts: 0,
+    blocked: plan.blocked.length,
+    ambiguous: 0,
+    uploadBytes,
+    downloadBytes: 0,
   };
   plan.stats.estimatedSeconds = estimateSeconds(plan);
   return plan;

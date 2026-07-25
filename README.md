@@ -92,16 +92,21 @@ regardless. The plan says how many were skipped and why.
 **Replace device with local** makes the device match your folder exactly,
 including deletions. It always confirms first, with counts.
 
-**It deletes before uploading.** A replacement means the device should end up
-matching your folder, and your folder is the source of truth, so nothing unique
-is lost by clearing first — while uploading first would need room for both
-copies at once on a 1.9 MB drive. Other operations keep the safer order, where
-nothing is removed until its replacement is across.
+**It really does replace.** Everything under the device folder is deleted, then
+the whole local folder is written back — nothing skipped, nothing trusted. A
+mirror that skips files it believes are already correct is a different
+operation, and that belief cannot be checked: a device file of the right size
+and the wrong contents is indistinguishable from a good one without reading it
+back at 2 kB/s. If you want only the differences moved, use **Smart sync**.
 
-Capacity is checked against what a file actually *occupies*, not its contents.
-A 540-byte dump costs about 1.3 kB once filesystem overhead is counted, so a
-1049-dump library needs ~1.4 MB rather than the 590 kB its bytes suggest. A
-plan that will not fit says so rather than failing part way through.
+Deleting comes first, so only the final state has to fit rather than both
+copies at once. Capacity is checked against what a file actually *occupies*,
+not its contents: a 540-byte dump costs about 1.3 kB once filesystem overhead
+is counted, so a 1049-dump library needs ~1.4 MB rather than the 590 kB its
+bytes suggest.
+
+Expect it to be slow — roughly 2.5 s per dump, so about 45 minutes for a
+thousand.
 
 **Smart sync** sends each side the other's changes, using the record of the
 last sync to tell an edit from a deletion. It matches on path, so it works best
