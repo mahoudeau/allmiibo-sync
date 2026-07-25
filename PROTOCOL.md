@@ -539,7 +539,9 @@ Still open:
 
 ## 9. Write semantics (verified on hardware)
 
-Measured on Pixl.js 2.11.2 by writing to a scratch folder and reading back.
+Measured on Pixl.js 2.11.2 by writing to a scratch folder and reading back,
+then re-run unchanged on 2.16.0: every behaviour below is identical on both,
+and throughput moved only from 2.00 to 1.96 KB/s.
 
 ### 9.1 Filenames are stored verbatim
 
@@ -591,7 +593,8 @@ move detector keyed on content hash is worth having.
 
 ### 9.6 Throughput is ~2 KB/s
 
-16,384 bytes took 8,010 ms — **2.00 KB/s**, about 118 ms per 242-byte chunk.
+16,384 bytes took 8,010 ms — **2.00 KB/s**, about 118 ms per 242-byte chunk
+(8,160 ms / 1.96 KB/s on 2.16.0).
 That is dominated by per-command latency, not bandwidth: each chunk is a
 separate acknowledged write, and the device commits to external SPI flash
 between them.

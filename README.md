@@ -22,8 +22,9 @@ pulled from someone else's script at runtime.
 - **Read-only hardware probe** — verified against Pixl.js 2.11.2 and 2.16.0:
   full walk of 862 files across 44 folders, 0 errors, file read matching
   byte-for-byte. ✅
-- **Write test** — verified: filenames stored verbatim, content round-trips
-  exactly, and every remaining protocol question answered. ✅
+- **Write test** — verified on 2.11.2 and re-verified unchanged on 2.16.0:
+  filenames stored verbatim, content round-trips exactly, and every remaining
+  protocol question answered. ✅
 - **Sync engine** — implemented, planner fully tested. Not yet run against
   hardware.
 - **Collection view** — every amiibo in the database, per series, marked owned
