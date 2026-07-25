@@ -38,6 +38,13 @@ Three hardware findings shape the sync design:
   files individually is the only safe approach.
 - **`rename` moves between folders**, so a relocated file need not be re-uploaded.
 
+## Hosting
+
+The site is static files — the bundled Node server exists only to give Web
+Bluetooth the secure context it requires during local development. To host it
+elsewhere, serve the contents of `web/` from any HTTPS server; HTTPS is what
+Web Bluetooth requires.
+
 ## Quick start
 
 All commands are collected in [COMMANDS.md](COMMANDS.md).

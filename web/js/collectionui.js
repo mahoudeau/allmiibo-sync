@@ -5,7 +5,8 @@
 import { BleTransport } from './ble.js';
 import { AllmiiboClient } from './protocol.js';
 import { walkDevice, hashDeviceIndex } from './sync.js';
-import { buildCollection, describeAmiibo, DUMP_SIZES, KNOWN_VEHICLES, hasVehicles } from './amiibo.js';
+import { buildCollection, describeAmiibo, DUMP_SIZES, KNOWN_VEHICLES, hasVehicles, seriesRepresentative } from './amiibo.js';
+import { AMIIBO_RELEASE } from '../data/amiibo-db.js';
 import { isExcluded } from './planner.js';
 import * as localfs from './localfs.js';
 
@@ -13,7 +14,7 @@ const els = {};
 for (const id of [
   'pickFolder', 'scan', 'connect', 'scanDevice', 'stop', 'folderName',
   'status', 'progress', 'stats', 'series', 'skipped', 'search', 'copyMissing',
-  'mOwned', 'mMissing', 'mDevice', 'mExtra', 'mTotal',
+  'mOwned', 'mMissing', 'mDevice', 'mExtra', 'mTotal', 'viewToggle', 'sortMode',
 ]) els[id] = document.getElementById(id);
 
 let rootHandle = null;
@@ -255,6 +256,31 @@ function currentFilter() {
   return document.querySelector('input[name=filter]:checked').value;
 }
 
+// A series' place in time is its first release. Series whose amiibos are all
+// newer than the date table sort last rather than being guessed at.
+function seriesDate(group) {
+  if (group._date === undefined) {
+    const dates = group.items.map((i) => AMIIBO_RELEASE[i.id]).filter(Boolean).sort();
+    group._date = dates[0] ?? null;
+  }
+  return group._date;
+}
+
+function sortedSeries() {
+  const groups = [...collection.series];
+  if (els.sortMode.value === 'name') {
+    groups.sort((a, b) => a.seriesName.localeCompare(b.seriesName));
+  } else {
+    groups.sort((a, b) => {
+      const da = seriesDate(a), db = seriesDate(b);
+      if (da && db && da !== db) return da.localeCompare(db);
+      if (!da !== !db) return da ? -1 : 1;
+      return a.series - b.series;
+    });
+  }
+  return groups;
+}
+
 function paint() {
   if (!collection) return;
   const filter = currentFilter();
@@ -271,7 +297,7 @@ function paint() {
   els.series.textContent = '';
   let shown = 0;
 
-  for (const group of collection.series) {
+  for (const group of sortedSeries()) {
     const items = group.items.filter(keep);
     if (!items.length) continue;
     shown += items.length;
@@ -287,11 +313,18 @@ function paint() {
     headArt.className = 'seriesArt';
     headArt.loading = 'lazy';
     headArt.alt = '';
-    headArt.src = `./data/images/thumb/${(items.find((i) => i.hasLocal) ?? items[0]).id}.png`;
+    headArt.src = `./data/images/thumb/${seriesRepresentative(group.series) ?? (items.find((i) => i.hasLocal) ?? items[0]).id}.png`;
     headArt.addEventListener('error', () => headArt.remove());
     const label = document.createElement('span');
     label.textContent = group.seriesName;
     head.append(headArt, label);
+    const year = seriesDate(group)?.slice(0, 4);
+    if (year) {
+      const y = document.createElement('span');
+      y.className = 'year';
+      y.textContent = year;
+      head.append(y);
+    }
     // Completion is measured against the database, so unlisted extras do not
     // make a series read as more than complete.
     const known = group.items.filter((i) => i.inDatabase).length;
@@ -442,6 +475,28 @@ function paint() {
     return wrap;
   }
 }
+
+// Compact rows or image-forward cards; a pure CSS switch, remembered.
+function applyView(mode) {
+  els.series.classList.toggle('cards', mode === 'cards');
+  els.viewToggle.textContent = mode === 'cards' ? 'Compact view' : 'Card view';
+  try { localStorage.setItem('collectionView', mode); } catch {}
+}
+
+els.viewToggle.addEventListener('click', () => {
+  applyView(els.series.classList.contains('cards') ? 'compact' : 'cards');
+});
+
+try { applyView(localStorage.getItem('collectionView') === 'cards' ? 'cards' : 'compact'); } catch {}
+
+els.sortMode.addEventListener('change', () => {
+  try { localStorage.setItem('collectionSort', els.sortMode.value); } catch {}
+  paint();
+});
+try {
+  const saved = localStorage.getItem('collectionSort');
+  if (saved === 'name' || saved === 'release') els.sortMode.value = saved;
+} catch {}
 
 for (const radio of document.querySelectorAll('input[name=filter]')) {
   radio.addEventListener('change', paint);

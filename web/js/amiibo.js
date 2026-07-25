@@ -197,6 +197,44 @@ export function characterName(id) {
   return headIndex.get(id.slice(0, 8)) ?? null;
 }
 
+// A curated face for each series, matched by name rather than hardcoded ID so
+// a database update cannot silently break it. No public series-logo dataset
+// exists, so the series header shows its most recognisable figure instead.
+// Falls back to the first entry of the series, and callers fall back further
+// to whatever the user owns.
+const SERIES_FACE = {
+  0x00: /^Mario$/, 0x01: /^Mario$/, 0x03: /^Green Yarn Yoshi/,
+  0x04: /^Inkling Girl$/, 0x05: /001 - Isabelle/, 0x06: /Classic Color/,
+  0x07: /^Hammer Slam Bowser/, 0x09: /^Link - Ocarina/, 0x0a: /^Shovel Knight$/,
+  0x0c: /^Kirby$/, 0x0d: /Detective Pikachu/, 0x0e: /^Mario - Soccer/,
+  0x0f: /One-Eyed Rathalos and Rider - Male/, 0x10: /Qbby/, 0x11: /^Pikmin/,
+  0x12: /^Chrom/, 0x13: /^Samus Aran$/, 0x14: /Solaire/, 0x15: /^Mega Man$/,
+  0x16: /Loot Goblin/, 0x17: /Pawapuro/, 0x18: /^Magnamalo/, 0x19: /Yuga Ohdo/,
+  0x1a: /Donkey Kong/, 0x1b: /^Noah/, 0x1c: /Wooden Blocks/, 0x1d: /^Ryu$/,
+  0x1e: /^Kirby$/, 0xff: /^Mario - Power Up Band/,
+};
+
+let faceIndex = null;
+
+/** Representative amiibo ID for a series byte, or null. */
+export function seriesRepresentative(series) {
+  if (!faceIndex) {
+    faceIndex = new Map();
+    const bySeries = new Map();
+    for (const [id, name] of Object.entries(AMIIBO_NAMES)) {
+      const s = parseInt(id.slice(12, 14), 16);
+      if (!bySeries.has(s)) bySeries.set(s, []);
+      bySeries.get(s).push([id, name]);
+    }
+    for (const [s, entries] of bySeries) {
+      const want = SERIES_FACE[s];
+      const pick = (want && entries.find(([, n]) => want.test(n))) ?? entries[0];
+      faceIndex.set(s, pick[0]);
+    }
+  }
+  return faceIndex.get(series) ?? null;
+}
+
 export function describeAmiibo(id) {
   const decoded = decodeAmiiboId(id);
   if (!decoded) return null;

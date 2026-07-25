@@ -45,6 +45,7 @@ for (const m of c.matchAll(row)) {
 
 let series = {};
 let types = {};
+let releases = new Map(); // id -> earliest regional release date
 let apiCount = 0;
 
 if (apiSrc) {
@@ -54,11 +55,15 @@ if (apiSrc) {
   for (const [k, v] of Object.entries(api.amiibo_series ?? {})) series[byte(k)] = v;
   for (const [k, v] of Object.entries(api.types ?? {})) types[byte(k)] = v;
 
-  // Fill any gap the firmware table does not cover.
+  // Fill any gap the firmware table does not cover, and keep the earliest
+  // regional release date — it is what lets the UI order series
+  // chronologically.
   for (const [k, v] of Object.entries(api.amiibos ?? {})) {
     const id = k.replace(/^0x/, '').toLowerCase();
     apiCount++;
     if (!names.has(id)) names.set(id, v.name);
+    const dates = Object.values(v.release ?? {}).filter(Boolean).sort();
+    if (dates.length) releases.set(id, dates[0]);
   }
 }
 
@@ -91,11 +96,17 @@ ${Object.entries(series).map(([k, v]) => `  ${k}: ${JSON.stringify(v)},`).join('
 export const AMIIBO_TYPES = Object.freeze({
 ${Object.entries(types).map(([k, v]) => `  ${k}: ${JSON.stringify(v)},`).join('\n')}
 });
+
+// amiibo ID -> earliest regional release date (YYYY-MM-DD).
+export const AMIIBO_RELEASE = Object.freeze({
+${[...releases].sort((a, b) => a[0].localeCompare(b[0])).map(([id, d]) => `  '${id}': '${d}',`).join('\n')}
+});
 `;
 
 const dest = join(fileURLToPath(new URL('..', import.meta.url)), 'web/data/amiibo-db.js');
 await writeFile(dest, out);
 console.log(
   `wrote ${entries.length} names, ${Object.keys(series).length} series, ` +
-    `${Object.keys(types).length} types (AmiiboAPI contributed ${apiCount} entries)`
+    `${Object.keys(types).length} types, ${releases.size} release dates ` +
+    `(AmiiboAPI contributed ${apiCount} entries)`
 );

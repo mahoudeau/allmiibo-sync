@@ -230,3 +230,25 @@ test('the amiibo format version is byte 7', () => {
   assert.equal(amiiboVersion('1f00000004c41e03'), 3);
   assert.equal(amiiboVersion('0181000100440502'), 2);
 });
+
+test('release dates exist for every database entry, in sortable form', async () => {
+  const { AMIIBO_RELEASE } = await import('../web/data/amiibo-db.js');
+  const entries = Object.entries(AMIIBO_RELEASE);
+  assert.ok(entries.length >= 900, `${entries.length} dates`);
+  for (const [id, date] of entries) {
+    assert.match(id, /^[0-9a-f]{16}$/);
+    assert.match(date, /^\d{4}-\d{2}-\d{2}$/, `${id}: ${date}`);
+  }
+  // Launch wave amiibos date from November 2014.
+  assert.equal(AMIIBO_RELEASE['0000000000000002'], '2014-11-21');
+});
+
+test('every series resolves to a representative with a database entry', async () => {
+  const { seriesRepresentative, AMIIBO_NAMES } = await import('../web/js/amiibo.js');
+  const seen = new Set(Object.keys(AMIIBO_NAMES).map((id) => parseInt(id.slice(12, 14), 16)));
+  for (const s of seen) {
+    const id = seriesRepresentative(s);
+    assert.ok(id && AMIIBO_NAMES[id], `series 0x${s.toString(16)} has no representative`);
+  }
+  assert.equal(AMIIBO_NAMES[seriesRepresentative(0x05)], '[AC] 001 - Isabelle');
+});

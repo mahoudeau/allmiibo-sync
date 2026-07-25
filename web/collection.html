@@ -39,6 +39,22 @@
   .item.missing .art img { filter:grayscale(1); opacity:.5; }
   .seriesHead { display:flex; align-items:center; gap:.6rem; min-width:0; }
   .seriesArt { width:28px; height:28px; object-fit:contain; flex:none; }
+  .seriesHead .year { color:var(--muted); font-weight:400; font-size:.78rem; }
+  select { font:inherit; padding:.35rem .5rem; border:1px solid var(--border);
+           border-radius:5px; background:var(--bg); color:var(--fg); }
+
+  /* Card view: the artwork is the point; text supports it. */
+  .cards .items { grid-template-columns:repeat(auto-fill,minmax(8.5rem,1fr)); gap:.6rem; }
+  .cards .item { flex-direction:column; text-align:center; gap:.35rem; padding:.7rem .4rem .55rem;
+                 border-color:var(--border); background:var(--bg); }
+  .cards .item .art { width:88px; height:88px; }
+  .cards .item .art::before { font-size:1.4rem; }
+  .cards .item .nm { white-space:normal; font-size:.8rem; line-height:1.25; }
+  .cards .item .dot { position:absolute; margin:.15rem; align-self:flex-start; }
+  .cards .item { position:relative; }
+  .cards .item .tag { font-size:.62rem; }
+  .cards .withVehicles { grid-column:1 / -1; }
+  .cards .vehicles { justify-content:center; padding-left:0; }
   .dot { width:.6rem; height:.6rem; border-radius:50%; background:var(--ok); flex:none; }
   .item .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tag { font-size:.7rem; padding:.05rem .3rem; border-radius:3px; border:1px solid var(--border); color:var(--muted); }
@@ -104,6 +120,11 @@
     <label class="inline"><input type="radio" name="filter" value="missing"> Missing</label>
     <label class="inline"><input type="radio" name="filter" value="notondevice"> Not on device</label>
     <input id="search" type="search" placeholder="Search name or ID…">
+    <select id="sortMode">
+      <option value="release">Sort by release</option>
+      <option value="name">Sort by name</option>
+    </select>
+    <button id="viewToggle">Card view</button>
     <button id="copyMissing">Copy missing list</button>
   </div>
 
