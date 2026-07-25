@@ -100,7 +100,12 @@ export async function applyPlan({
 }) {
   const { onOp = () => {}, onProgress = () => {}, onError = () => {}, shouldStop = () => false } = callbacks;
 
-  const result = { completed: 0, failed: 0, stopped: false, errors: [] };
+  // Every operation is recorded, not just the failures, so a run that goes
+  // wrong can be examined afterwards rather than reconstructed from a scrolled
+  // log. Timings included: they are what reveal a device slowing down or a
+  // command class that is unusually expensive.
+  const result = { completed: 0, failed: 0, stopped: false, errors: [], log: [] };
+  const startedAt = Date.now();
   let sinceSave = 0;
 
   const persist = async (force = false) => {
@@ -118,14 +123,35 @@ export async function applyPlan({
     }
     onOp(op, i, ops.length);
 
+    const opStarted = Date.now();
+    const record = {
+      n: i + 1,
+      at: opStarted - startedAt,
+      op: op.op,
+      path: op.relPath ?? op.from ?? null,
+      to: op.to ?? op.localPath ?? null,
+      size: op.size ?? null,
+    };
+
     try {
       await runOp(op);
       result.completed++;
+      record.ok = true;
+      record.ms = Date.now() - opStarted;
+      result.log.push(record);
       await persist();
     } catch (err) {
       result.failed++;
       const message = `${op.op} ${op.relPath ?? op.from ?? ''}: ${err.message}`;
       result.errors.push(message);
+      record.ok = false;
+      record.ms = Date.now() - opStarted;
+      record.error = err.message;
+      // A protocol failure carries its command and status; both matter when
+      // working out why the device refused.
+      if (err.cmd !== undefined) record.cmd = err.cmd;
+      if (err.status !== undefined) record.status = err.status;
+      result.log.push(record);
       onError(message);
     }
   }

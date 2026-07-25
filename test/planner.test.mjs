@@ -10,6 +10,7 @@ import {
   planDump,
   sanitizeLocalName,
   sanitizeLocalRelPath,
+  storedSize,
   flattenPlan,
   checkDestination,
   devicePath,
@@ -949,4 +950,103 @@ test('without drive figures the safe order is kept', () => {
   assert.equal(p.capacity, undefined);
   const ops = flattenPlan(p).map((o) => o.op);
   assert.ok(ops.indexOf('upload') < ops.indexOf('deleteDevice'));
+});
+
+test('capacity counts what a file actually occupies, not its contents', () => {
+  // A 540-byte dump costs about 1.1 kB once filesystem overhead is counted.
+  assert.ok(storedSize(540) > 1000, `540 bytes should cost over 1 kB, got ${storedSize(540)}`);
+});
+
+test('a replace that only fits on paper is refused', () => {
+  // The real failure: 1049 dumps, 590 kB of content, 963 kB free -- looked
+  // fine on raw bytes, needed 1.18 MB, died 320 uploads in.
+  const local = {};
+  for (let i = 0; i < 1049; i++) local[`f${i}.bin`] = file(540, `h${i}`);
+
+  const p = plan(local, {}, {}, { delete: true, drive: { totalSize: 1_920_401, usedSize: 956_812 } });
+
+  assert.equal(p.capacity.fits, false, 'raw content bytes would have said this fits');
+  assert.match(p.warnings.join(' '), /Not enough room/);
+});
+
+test('a replace deletes first even when uploads would fit', () => {
+  // Deleting first is the point of a replacement: local is the source of
+  // truth, and it avoids needing room for both copies.
+  const p = plan(
+    { 'new.bin': file(540, 'h1') },
+    { 'old.bin': file(540) },
+    { 'old.bin': { size: 540, hash: 'h0' } },
+    { delete: true, drive: DRIVE, preferDeleteFirst: true }
+  );
+
+  assert.equal(p.deleteFirst, true);
+  const ops = flattenPlan(p).map((o) => o.op);
+  assert.ok(ops.indexOf('deleteDevice') < ops.indexOf('upload'));
+});
+
+test('a smart sync still protects the device copy until its replacement lands', () => {
+  const p = plan(
+    { 'a.bin': file(540, 'new') },
+    { 'a.bin': file(540), 'gone.bin': file(540) },
+    { 'a.bin': { size: 540, hash: 'old' }, 'gone.bin': { size: 540, hash: 'g' } },
+    { mode: 'two-way', delete: true, drive: DRIVE }
+  );
+  assert.equal(p.deleteFirst, false);
+});
+
+test('the run log records every operation, not only the failures', async () => {
+  // Verified through the executor rather than the planner, since that is where
+  // the record is built.
+  const { applyPlan } = await import('../web/js/sync.js');
+
+  const client = {
+    createFolder: async () => {},
+    writeFile: async (path) => {
+      if (path.includes('full')) {
+        const err = new Error('cmd 21 failed with status 1');
+        err.cmd = 21;
+        err.status = 1;
+        throw err;
+      }
+    },
+    remove: async () => {},
+  };
+
+  const ops = [
+    { op: 'mkdirDevice', relPath: 'a' },
+    { op: 'upload', relPath: 'a/ok.bin', size: 540, hash: 'h1' },
+    { op: 'upload', relPath: 'a/full.bin', size: 540, hash: 'h2' },
+  ];
+
+  // Uploads read the local file first, so the handle has to yield bytes.
+  const fileHandle = {
+    async getFile() {
+      return { size: 540, arrayBuffer: async () => new Uint8Array(540).buffer };
+    },
+  };
+  const rootHandle = {
+    async getDirectoryHandle() { return rootHandle; },
+    async getFileHandle() { return fileHandle; },
+  };
+
+  const state = { entries: {} };
+  const result = await applyPlan({
+    client,
+    rootHandle,
+    deviceRoot: 'E:/amiibo',
+    state,
+    ops,
+    callbacks: {},
+  });
+
+  assert.equal(result.log.length, 3, 'successes are recorded too');
+  assert.equal(result.log[0].op, 'mkdirDevice');
+  assert.equal(result.log[0].ok, true);
+
+  const failure = result.log.find((e) => e.ok === false);
+  assert.equal(failure.path, 'a/full.bin');
+  assert.equal(failure.cmd, 21, 'the command that failed');
+  assert.equal(failure.status, 1, 'and the status it returned');
+  assert.ok(Number.isFinite(failure.ms), 'with a duration');
+  assert.ok(Number.isFinite(failure.at), 'and an offset into the run');
 });

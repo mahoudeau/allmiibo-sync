@@ -92,6 +92,27 @@ export function sanitizeLocalRelPath(relPath) {
   return relPath.split('/').map(sanitizeLocalName).join('/');
 }
 
+// A file costs far more than its bytes, and the margin matters: a replace
+// planned on raw content bytes looked like it fit in 963 kB of free space and
+// died 320 uploads into a 48-minute run.
+//
+// Two measurements, and they disagree:
+//   - the drive reports 966,601 bytes used for 862 files holding 464,979 bytes
+//     of content, which averages 1,121 bytes per file
+//   - a real push filled 963,589 bytes of free space after 729 uploads of
+//     540-byte dumps, i.e. 1,322 bytes each
+//
+// The second is the one that counts: it measures what an upload actually
+// consumes rather than averaging over a drive whose history is unknown. The
+// figure below is rounded up from it, because underestimating fails a run part
+// way through while overestimating only declines one that might have fit.
+export const STORAGE_OVERHEAD_PER_FILE = 800;
+
+/** What a file of this size actually costs on the device. */
+export function storedSize(size) {
+  return size + STORAGE_OVERHEAD_PER_FILE;
+}
+
 function parentDirs(relPath) {
   const parts = relPath.split('/');
   parts.pop();
@@ -372,13 +393,19 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
   //
   // Upload-first is preferred where it fits: nothing is destroyed until the
   // new copy is safely on the device.
-  const uploadBytes = plan.upload.reduce((n, u) => n + u.size, 0);
-  const freeingBytes = plan.deleteDevice.reduce((n, d) => n + (d.size ?? 0), 0);
+  // Costed as the device stores them, not as raw content.
+  const uploadBytes = plan.upload.reduce((n, u) => n + storedSize(u.size), 0);
+  const freeingBytes = plan.deleteDevice.reduce((n, d) => n + storedSize(d.size ?? 0), 0);
   const drive = options.drive ?? null;
 
   if (drive && Number.isFinite(drive.totalSize) && Number.isFinite(drive.usedSize)) {
     const freeNow = drive.totalSize - drive.usedSize;
-    plan.deleteFirst = uploadBytes > freeNow && freeingBytes > 0;
+    // A replacement deletes first by default. Local is the source of truth, so
+    // nothing unique is lost, and it avoids needing room for both copies at
+    // once — which is what actually broke a full replace on this hardware.
+    plan.deleteFirst = options.preferDeleteFirst
+      ? freeingBytes > 0
+      : uploadBytes > freeNow && freeingBytes > 0;
     plan.capacity = {
       totalSize: drive.totalSize,
       usedSize: drive.usedSize,
@@ -391,14 +418,16 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
 
     if (!plan.capacity.fits) {
       plan.warnings.push(
-        `Not enough room: ${uploadBytes} bytes to upload, ${freeNow + freeingBytes} bytes free ` +
-          `even after the planned deletions. Remove something first, or sync a smaller folder.`
+        `Not enough room: the uploads need about ${uploadBytes} bytes once filesystem overhead ` +
+          `is counted (~${STORAGE_OVERHEAD_PER_FILE} bytes per file on top of its contents), and ` +
+          `only ${freeNow + freeingBytes} bytes are free even after the planned deletions. ` +
+          `Sync a smaller folder, or remove something from the device first.`
       );
     } else if (plan.deleteFirst) {
       plan.warnings.push(
-        `Deleting before uploading: ${uploadBytes} bytes will not fit in the ${freeNow} bytes ` +
-          `free now, but will once ${freeingBytes} bytes are reclaimed. The device is left ` +
-          `short of files until the uploads finish — everything removed exists in your local folder.`
+        `Deleting before uploading, to make room: about ${uploadBytes} bytes are going on and ` +
+          `${freeNow} bytes are free now, ${freeingBytes} more once the deletions run. The device ` +
+          `is short of files until the uploads finish — everything removed is in your local folder.`
       );
     }
   }

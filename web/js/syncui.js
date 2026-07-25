@@ -12,7 +12,7 @@ for (const id of [
   'connect', 'disconnect', 'pickFolder', 'scan', 'apply', 'audit', 'stop',
   'deviceRoot', 'allowDelete', 'verify', 'includeDeviceFiles', 'force',
   'wrapDelete', 'wrapVerify', 'wrapDeviceFiles', 'wrapForce',
-  'status', 'folderName', 'planBox', 'log', 'progress',
+  'status', 'folderName', 'planBox', 'log', 'progress', 'saveLog', 'copyLog',
 ]) els[id] = document.getElementById(id);
 
 let transport = null;
@@ -21,6 +21,8 @@ let rootHandle = null;
 let plan = null;
 let state = null;
 let stopRequested = false;
+let lastRun = null; // full record of the most recent scan and apply
+let firmwareVersion = null;
 
 const started = Date.now();
 
@@ -94,6 +96,7 @@ els.connect.addEventListener('click', async () => {
     });
     const name = await transport.connect();
     const v = await client.getVersion();
+    firmwareVersion = v.version;
     log('ok', `connected to "${name}" (firmware ${v.version})`);
     setStatus(`Connected: ${name} — firmware ${v.version}`, 'ok');
   } catch (err) {
@@ -191,6 +194,30 @@ els.scan.addEventListener('click', async () => {
       plan = buildPlan({ op, local, device, state, deviceRoot, drive });
     }
 
+    lastRun = {
+      generatedAt: new Date().toISOString(),
+      operation: op,
+      deviceRoot,
+      firmware: firmwareVersion,
+      drive,
+      localFiles: count(local),
+      localFolders: countDirs(local),
+      deviceFiles: count(device),
+      deviceFolders: countDirs(device),
+      plan: {
+        stats: plan.stats,
+        capacity: plan.capacity ?? null,
+        deleteFirst: !!plan.deleteFirst,
+        warnings: plan.warnings ?? [],
+        blocked: plan.blocked,
+        conflicts: plan.conflicts,
+        ambiguous: plan.ambiguous,
+        renamedLocally: plan.renamedLocally ?? [],
+      },
+      apply: null,
+    };
+    els.saveLog.disabled = false;
+
     renderPlan(plan);
     setStatus(hasWork(plan) ? 'Plan ready — review, then Apply' : 'Nothing to do', hasWork(plan) ? '' : 'ok');
   } catch (err) {
@@ -219,7 +246,7 @@ function buildPlan({ op, local, device, state, deviceRoot, drive }) {
       // figures let the planner decide whether uploads can precede deletions.
       return planSync({
         local, device, state, deviceRoot,
-        options: { mode: 'push', delete: true, drive },
+        options: { mode: 'push', delete: true, drive, preferDeleteFirst: true },
       });
     case 'smart':
       return planSync({
@@ -359,6 +386,18 @@ els.apply.addEventListener('click', async () => {
   });
 
   const secs = Math.round((Date.now() - t0) / 1000);
+  if (lastRun) {
+    lastRun.apply = {
+      startedAt: new Date(t0).toISOString(),
+      seconds: secs,
+      completed: result.completed,
+      failed: result.failed,
+      stopped: result.stopped,
+      errors: result.errors,
+      operations: result.log,
+    };
+    els.saveLog.disabled = false;
+  }
   els.stop.disabled = true;
   els.progress.value = 0;
 
@@ -474,6 +513,27 @@ function renderAudit(r, partial) {
 
   els.planBox.textContent = lines.join('\n');
 }
+
+// A full run record: the plan, the capacity figures, and every operation with
+// its timing and outcome.
+function runReport() {
+  return JSON.stringify(lastRun ?? { error: 'nothing has been scanned yet' }, null, 2);
+}
+
+els.saveLog.addEventListener('click', () => {
+  const blob = new Blob([runReport()], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `allmiibo-sync-${lastRun?.operation ?? 'run'}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+els.copyLog.addEventListener('click', async () => {
+  await navigator.clipboard.writeText(runReport());
+  els.copyLog.textContent = 'Copied';
+  setTimeout(() => (els.copyLog.textContent = 'Copy log'), 1500);
+});
 
 els.stop.addEventListener('click', () => {
   stopRequested = true;

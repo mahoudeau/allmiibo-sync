@@ -92,13 +92,16 @@ regardless. The plan says how many were skipped and why.
 **Replace device with local** makes the device match your folder exactly,
 including deletions. It always confirms first, with counts.
 
-Deletion order is decided by capacity, not by habit. Normally uploads run
-first, so nothing is destroyed until its replacement is safely on the device.
-But the drive is small — 1.9 MB — and uploading before deleting means it
-briefly holds both copies, which may simply not fit. When the incoming data
-does not fit in the free space as it stands, deletions run first to reclaim the
-room, and the plan says so. If it will not fit even after the deletions, the
-plan refuses to pretend otherwise.
+**It deletes before uploading.** A replacement means the device should end up
+matching your folder, and your folder is the source of truth, so nothing unique
+is lost by clearing first — while uploading first would need room for both
+copies at once on a 1.9 MB drive. Other operations keep the safer order, where
+nothing is removed until its replacement is across.
+
+Capacity is checked against what a file actually *occupies*, not its contents.
+A 540-byte dump costs about 1.3 kB once filesystem overhead is counted, so a
+1049-dump library needs ~1.4 MB rather than the 590 kB its bytes suggest. A
+plan that will not fit says so rather than failing part way through.
 
 **Smart sync** sends each side the other's changes, using the record of the
 last sync to tell an edit from a deletion. It matches on path, so it works best
@@ -114,6 +117,11 @@ to identify it, which takes a few minutes, and never deletes.
 **Every operation is a dry run until you press Apply.** The plan lists exactly
 what would be uploaded, downloaded, moved, deleted, skipped or blocked, with a
 time estimate.
+
+**Save run log** writes the whole run to JSON: the plan, the capacity figures,
+and every operation with its duration, outcome, and — where the device refused
+— the command and status it returned. Useful when something fails 300
+operations into a 48-minute push.
 
 ### Collection view
 
