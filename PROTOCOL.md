@@ -17,7 +17,9 @@ the clients left ambiguous:
 - `fw/application/src/mod/vfs/vfs.h` — limits, mode flags, error codes
 
 Everything below has been cross-checked against that firmware. Confirmed
-against hardware running **Pixl.js 2.11.2**.
+against hardware running **Pixl.js 2.11.2 and 2.16.0** — the wire protocol is
+unchanged across those five releases (October 2024 to January 2026), including
+the addition of v3 amiibo emulation in 2.16.0.
 
 ---
 
@@ -432,7 +434,13 @@ failing partway through a copy.
 
 **Not everything on the drive is a dump.** `settings.bin` is device
 configuration (and flagged hidden), `key_retail.bin` holds the amiibo signing
-keys, and `chameleon/` is separate emulator state. A whole-drive `pull` would
+keys, and `chameleon/` is separate emulator state.
+
+A firmware upgrade from 2.11.2 to 2.16.0 changed exactly one thing on the
+drive: `settings.bin` grew from 17 to 24 bytes. Every one of the 862 dumps was
+untouched. Had `settings.bin` been syncable, a `pull` taken before the upgrade
+would have cached the old layout and a later `push` could have written it back
+over the new one. A whole-drive `pull` would
 sweep these up, and a whole-drive `push` with `--delete` could destroy them.
 Sync should be scoped to a subtree such as `E:/amiibo` and treat device-managed
 files as excluded by default.

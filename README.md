@@ -19,8 +19,9 @@ pulled from someone else's script at runtime.
 - **Protocol** — reverse-engineered, cross-checked against the open-source
   firmware, and verified on hardware. ✅
 - **Client library** — implemented, with 17 tests against a simulated device. ✅
-- **Read-only hardware probe** — verified against Pixl.js 2.11.2: full walk of
-  862 files across 44 folders, 0 errors, file read matching byte-for-byte. ✅
+- **Read-only hardware probe** — verified against Pixl.js 2.11.2 and 2.16.0:
+  full walk of 862 files across 44 folders, 0 errors, file read matching
+  byte-for-byte. ✅
 - **Write test** — verified: filenames stored verbatim, content round-trips
   exactly, and every remaining protocol question answered. ✅
 - **Sync engine** — implemented, planner fully tested. Not yet run against
@@ -259,7 +260,11 @@ that reason — check `git status` before committing if you change it.
 ## Compatibility
 
 Protocol verified identical across the Allmiibo and PIXL web clients. Verified
-on hardware: **Pixl.js 2.11.2** (nRF52832, external flash).
+on hardware: **Pixl.js 2.11.2 and 2.16.0** (nRF52832, external flash) — the
+protocol is unchanged across those releases.
+
+Firmware **2.16.0** (January 2026) added v3 amiibo emulation, so Kirby Air
+Riders dumps work on-device from that version onward.
 
 ## Disclaimer
 
