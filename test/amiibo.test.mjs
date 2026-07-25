@@ -83,3 +83,19 @@ test('device ownership is tracked separately from local', () => {
   assert.equal(all.find((i) => i.id === '0183000100450502').hasDevice, true);
   assert.equal(c.stats.ownedDevice, 1);
 });
+
+test('series labels come from the authoritative table', () => {
+  // A hand-derived table had these wrong; they are worth pinning down.
+  assert.equal(decodeAmiiboId('000000000000ff02').seriesName, 'Super Nintendo World');
+  assert.equal(decodeAmiiboId('0000000000001c02').seriesName, 'My Mario Wooden Blocks');
+  assert.equal(decodeAmiiboId('0000000000001e02').seriesName, 'Kirby Air Riders');
+  assert.equal(decodeAmiiboId('0000000000000f02').seriesName, 'Monster Hunter');
+});
+
+test('an unknown series byte degrades to the raw value rather than guessing', () => {
+  assert.equal(decodeAmiiboId('0000000000002102').seriesName, 'Series 0x21');
+});
+
+test('the Block figure type is known', () => {
+  assert.equal(decodeAmiiboId('0000000400000002').typeName, 'Block');
+});

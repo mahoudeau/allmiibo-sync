@@ -15,7 +15,7 @@
 // and 476 when *generating* a tag. In retail dumps 476 falls inside encrypted
 // data and reads as noise, so 84 is the one to use.
 
-import { AMIIBO_NAMES } from '../data/amiibo-db.js';
+import { AMIIBO_NAMES, AMIIBO_SERIES, AMIIBO_TYPES } from '../data/amiibo-db.js';
 
 export const AMIIBO_ID_OFFSET = 84;
 export const AMIIBO_ID_SIZE = 8;
@@ -27,52 +27,12 @@ export const DUMP_SIZES = {
   572: 'Thenaya',
 };
 
-// Figure type, byte 3 of the ID.
-export const TYPE_NAMES = {
-  0x00: 'Figure',
-  0x01: 'Card',
-  0x02: 'Yarn',
-  0x03: 'Band',
-  0x04: 'Other',
-};
-
-// Series, byte 6 of the ID. Labels derived by correlating the series byte
-// against a verified 1035-dump collection; unlisted values fall back to the
-// raw byte rather than being guessed at.
-export const SERIES_NAMES = {
-  0x00: 'Super Smash Bros.',
-  0x01: 'Super Mario',
-  0x02: 'Chibi-Robo',
-  0x03: "Yoshi's Woolly World",
-  0x04: 'Splatoon',
-  0x05: 'Animal Crossing',
-  0x06: '8-bit Mario',
-  0x07: 'Skylanders',
-  0x09: 'The Legend of Zelda',
-  0x0a: 'Shovel Knight',
-  0x0b: 'Tekken',
-  0x0c: 'Kirby',
-  0x0d: 'Pokémon',
-  0x0e: 'Mario Sports Superstars',
-  0x0f: 'Monster Hunter Stories',
-  0x10: 'BoxBoy!',
-  0x11: 'Pikmin',
-  0x12: 'Fire Emblem',
-  0x13: 'Metroid',
-  0x14: 'Others',
-  0x15: 'Mega Man',
-  0x16: 'Diablo',
-  0x17: 'Jikkyou Powerful Pro Baseball',
-  0x18: 'Monster Hunter Rise',
-  0x19: 'Yu-Gi-Oh!',
-  0x1a: 'Donkey Kong',
-  0x1b: 'Xenoblade Chronicles',
-  0x1c: 'Super Mario (recent)',
-  0x1d: 'Street Fighter',
-  0x1e: 'Kirby (recent)',
-  0x21: 'Pragmata',
-  0xff: 'Unclassified',
-};
+// Figure type (byte 3) and amiibo series (byte 6). Both tables come from
+// AmiiboAPI via the generated database, which is authoritative — a
+// hand-derived version of this got twelve series labels wrong, including
+// 0xff, which is Super Nintendo World rather than a catch-all.
+export const TYPE_NAMES = AMIIBO_TYPES;
+export const SERIES_NAMES = AMIIBO_SERIES;
 
 const hex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 
@@ -177,6 +137,8 @@ export function buildCollection(ownedLocal, ownedDevice = null) {
       knownTotal: Object.keys(AMIIBO_NAMES).length,
       listed: all.length,
       ownedLocal: all.filter((i) => i.hasLocal).length,
+      // Owned *and* in the database, so it reads sensibly against knownTotal.
+      ownedKnown: all.filter((i) => i.hasLocal && i.inDatabase).length,
       ownedDevice: deviceSet ? all.filter((i) => i.hasDevice).length : null,
       missingLocal: all.filter((i) => !i.hasLocal && i.inDatabase).length,
       notInDatabase: all.filter((i) => !i.inDatabase).length,

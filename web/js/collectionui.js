@@ -142,11 +142,11 @@ function render() {
   const s = collection.stats;
 
   els.stats.hidden = false;
-  els.mOwned.textContent = s.ownedLocal;
+  els.mOwned.textContent = `${s.ownedKnown} / ${s.knownTotal}`;
   els.mMissing.textContent = s.missingLocal;
   els.mDevice.textContent = s.ownedDevice ?? '–';
   els.mExtra.textContent = s.notInDatabase;
-  els.mTotal.textContent = s.knownTotal;
+  els.mTotal.textContent = s.ownedLocal;
 
   paint();
 }
