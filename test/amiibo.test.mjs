@@ -177,15 +177,33 @@ test('the collection names unlisted amiibos by character, marked as a guess', ()
   assert.equal(item.inDatabase, false, 'still flagged as absent from the database');
 });
 
-test('a filename hint outranks the character heuristic, and is labelled as such', () => {
-  // The 91 Animal Crossing item cards share a head with the villager Stinky.
-  // Naming them "Stinky" would be confidently wrong.
-  const id = '026a000100000502';
-  const guessed = buildCollection(new Set([id]));
-  assert.equal(guessed.series.flatMap((s) => s.items).find((i) => i.id === id).name, 'Stinky');
+test('the character in the ID outranks a filename', () => {
+  // A filename gave "MK+" where the ID says Meta Knight. The dump beats the
+  // typing.
+  const id = '1f01000004c61e03';
+  const c = buildCollection(new Set([id]), null, { nameHints: new Map([[id, 'MK+']]) });
+  const item = c.series.flatMap((s) => s.items).find((i) => i.id === id);
+  assert.equal(item.name, 'Meta Knight');
+  assert.equal(item.nameSource, 'inferred');
+});
 
-  const hinted = buildCollection(new Set([id]), null, { nameHints: new Map([[id, 'HHD Items']]) });
-  const item = hinted.series.flatMap((s) => s.items).find((i) => i.id === id);
+test('a filename is used when the character is genuinely unknown', () => {
+  const id = '0000040004c10102'; // Elephant Mario — head not in the database
+  const c = buildCollection(new Set([id]), null, { nameHints: new Map([[id, 'Elephant Mario']]) });
+  const item = c.series.flatMap((s) => s.items).find((i) => i.id === id);
+  assert.equal(item.name, 'Elephant Mario');
+  assert.equal(item.nameSource, 'filename');
+});
+
+test('a head shared by dozens of dumps is a collision, not a character', () => {
+  // 91 Animal Crossing item cards share head 026a0001 with the villager
+  // Stinky. They are not Stinky.
+  const id = '026a000100000502';
+  const c = buildCollection(new Set([id]), null, {
+    nameHints: new Map([[id, 'HHD Items']]),
+    dumpCounts: new Map([[id, 91]]),
+  });
+  const item = c.series.flatMap((s) => s.items).find((i) => i.id === id);
   assert.equal(item.name, 'HHD Items');
   assert.equal(item.nameSource, 'filename');
 });

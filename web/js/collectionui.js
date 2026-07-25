@@ -12,7 +12,7 @@ import * as localfs from './localfs.js';
 const els = {};
 for (const id of [
   'pickFolder', 'scan', 'connect', 'scanDevice', 'stop', 'folderName',
-  'status', 'progress', 'stats', 'series', 'skipped', 'search', 'copyMissing',
+  'status', 'progress', 'stats', 'series', 'overview', 'skipped', 'search', 'copyMissing',
   'mOwned', 'mMissing', 'mDevice', 'mExtra', 'mTotal',
 ]) els[id] = document.getElementById(id);
 
@@ -206,7 +206,7 @@ function render() {
     const label = labelFromFilenames(names);
     if (label) nameHints.set(id, label);
   }
-  collection = buildCollection(localIds, deviceIds, { nameHints });
+  collection = buildCollection(localIds, deviceIds, { nameHints, dumpCounts: filesById });
   const s = collection.stats;
 
   els.stats.hidden = false;
@@ -216,7 +216,45 @@ function render() {
   els.mExtra.textContent = s.notInDatabase;
   els.mTotal.textContent = s.ownedLocal;
 
+  renderOverview();
   paint();
+}
+
+// One chip per series: completion at a glance, and a shortcut into it.
+function renderOverview() {
+  els.overview.textContent = '';
+  els.overview.hidden = false;
+
+  for (const group of collection.series) {
+    const known = group.items.filter((i) => i.inDatabase).length;
+    const owned = group.items.filter((i) => i.hasLocal && i.inDatabase).length;
+    const complete = known > 0 && owned === known;
+
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = `sChip${complete ? ' done' : known ? ' part' : ''}`;
+    chip.title = complete
+      ? `${group.seriesName} — complete`
+      : `${group.seriesName} — ${known - owned} missing`;
+
+    const nm = document.createElement('span');
+    nm.textContent = group.seriesName;
+    const n = document.createElement('b');
+    n.textContent = known ? `${owned}/${known}` : `${group.ownedLocal}`;
+    chip.append(nm, n);
+
+    // Jump to the series and open it.
+    chip.addEventListener('click', () => {
+      const target = [...els.series.querySelectorAll('details')].find(
+        (d) => d.querySelector('summary span')?.textContent === group.seriesName
+      );
+      if (!target) return;
+      target.open = true;
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+
+    els.overview.append(chip);
+  }
 }
 
 // Files that are not amiibo dumps, split into harmless system clutter and

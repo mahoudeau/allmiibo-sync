@@ -209,7 +209,16 @@ export function describeAmiibo(id) {
  * @param {Set<string>|Map<string,any>} ownedLocal   IDs present locally
  * @param {Set<string>|Map<string,any>} [ownedDevice] IDs present on the device
  */
-export function buildCollection(ownedLocal, ownedDevice = null, { nameHints = null } = {}) {
+// Above this many dumps under one ID, treat a head match as a collision
+// rather than a character: figures do not ship in dozens of variants, item
+// card sets do.
+const MANY_DUMPS = 8;
+
+export function buildCollection(
+  ownedLocal,
+  ownedDevice = null,
+  { nameHints = null, dumpCounts = null } = {}
+) {
   const localSet = ownedLocal instanceof Map ? new Set(ownedLocal.keys()) : new Set(ownedLocal);
   const deviceSet = ownedDevice
     ? ownedDevice instanceof Map
@@ -225,21 +234,26 @@ export function buildCollection(ownedLocal, ownedDevice = null, { nameHints = nu
       seriesMap.set(d.series, { series: d.series, seriesName: d.seriesName, items: [] });
     }
     // Naming, most trustworthy first. Only the first is a fact; the rest are
-    // labelled as guesses in the UI, because being wrong quietly is worse than
-    // saying "unknown".
+    // labelled as guesses in the UI.
     //   1. the database
-    //   2. the filenames you gave the dumps — no more reliable than whoever
-    //      named them, which may not have been you
-    //   3. the character head, a heuristic that does misfire: the 91 Animal
-    //      Crossing item cards share head 026a0001 with the villager Stinky
-    //      and are emphatically not Stinky
+    //   2. the character in the ID, cross-referenced against the database.
+    //      Derived from the dump itself, so it beats anything a human typed:
+    //      it gives "Meta Knight" where a filename gave "MK+".
+    //   3. the filenames, only as good as whoever wrote them — used when the
+    //      character is unknown, i.e. a genuinely new one
     //   4. the raw ID
-    const hint = name ? null : nameHints?.get(id);
-    const inferred = name || hint ? null : characterName(id);
-    const source = name ? 'database' : hint ? 'filename' : inferred ? 'inferred' : 'unknown';
+    //
+    // One exception: a head shared by dozens of dumps is a head collision, not
+    // a character. The 91 Animal Crossing item cards share head 026a0001 with
+    // the villager Stinky and are emphatically not Stinky, so past a handful
+    // of dumps the filename is the better guess.
+    const dumps = dumpCounts?.get(id) ?? 0;
+    const inferred = name || dumps > MANY_DUMPS ? null : characterName(id);
+    const hint = name || inferred ? null : nameHints?.get(id);
+    const source = name ? 'database' : inferred ? 'inferred' : hint ? 'filename' : 'unknown';
     seriesMap.get(d.series).items.push({
       id,
-      name: name ?? hint ?? inferred ?? `Unknown (${id})`,
+      name: name ?? inferred ?? hint ?? `Unknown (${id})`,
       nameSource: source,
       inDatabase: known,
       typeName: d.typeName,
