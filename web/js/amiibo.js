@@ -138,6 +138,36 @@ export function amiiboName(id) {
   return AMIIBO_NAMES[id] ?? null;
 }
 
+// The first four bytes of an amiibo ID identify the character, independent of
+// series and figure type. Measured over the database: 827 distinct heads, 797
+// of which carry exactly one character name; the 30 that vary are variants of
+// one character (Mario / Mario - Gold Edition / Mario - Wedding).
+//
+// That makes an ID the database has never seen still nameable, as long as the
+// character has appeared before — Kirby Air Riders' Meta Knight and King
+// Dedede resolve this way from their v2 entries.
+let headIndex = null;
+
+function buildHeadIndex() {
+  const heads = new Map();
+  for (const [id, name] of Object.entries(AMIIBO_NAMES)) {
+    // Strip the database's list decorations: "[AC] 001 - Isabelle" -> "Isabelle".
+    const clean = name.replace(/^\[[^\]]+\]\s*/, '').replace(/^\d+\s*-\s*/, '').trim();
+    const head = id.slice(0, 8);
+    const current = heads.get(head);
+    // Shortest wins, so a head shared by variants yields the base character.
+    if (!current || clean.length < current.length) heads.set(head, clean);
+  }
+  return heads;
+}
+
+/** Character behind an ID, even when that exact ID is not in the database. */
+export function characterName(id) {
+  if (!id || id.length !== 16) return null;
+  headIndex ??= buildHeadIndex();
+  return headIndex.get(id.slice(0, 8)) ?? null;
+}
+
 export function describeAmiibo(id) {
   const decoded = decodeAmiiboId(id);
   if (!decoded) return null;
@@ -167,7 +197,9 @@ export function buildCollection(ownedLocal, ownedDevice = null) {
     }
     seriesMap.get(d.series).items.push({
       id,
-      name: name ?? `Unknown (${id})`,
+      // An ID absent from the database can still often be named through its
+      // character head; only fall back to the raw ID when even that fails.
+      name: name ?? characterName(id) ?? `Unknown (${id})`,
       inDatabase: known,
       typeName: d.typeName,
       hasLocal: localSet.has(id),

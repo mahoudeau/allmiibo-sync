@@ -17,8 +17,13 @@
   summary { cursor:pointer; padding:.55rem .8rem; font-weight:600; display:flex; justify-content:space-between; gap:1rem; }
   summary::-webkit-details-marker { display:none; }
   summary .count { font-weight:400; color:var(--muted); font-variant-numeric:tabular-nums; }
-  .items { display:grid; grid-template-columns:repeat(auto-fill,minmax(19rem,1fr)); gap:.25rem;
-           padding:.5rem .8rem .8rem; }
+  .items { display:grid; grid-template-columns:repeat(auto-fill,minmax(23rem,1fr)); gap:.25rem .75rem;
+           padding:.5rem .8rem .8rem; align-items:start; }
+  .withVehicles { grid-column:1 / -1; }
+  .vehicles { display:flex; flex-wrap:wrap; gap:.3rem; padding:0 0 .35rem 1.55rem; }
+  .chip { font-size:.72rem; padding:.1rem .45rem; border-radius:99px;
+          border:1px solid var(--border); color:var(--muted); }
+  .chip.dev { border-color:var(--accent); color:var(--accent); }
   .item { display:flex; align-items:center; gap:.5rem; padding:.3rem .4rem; border-radius:4px;
           font-size:.88rem; border:1px solid transparent; }
   .item.missing { opacity:.55; }

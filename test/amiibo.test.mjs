@@ -11,6 +11,7 @@ import {
   buildCollection,
   AMIIBO_ID_OFFSET,
   parseVehicle,
+  characterName,
   VEHICLE_CODE_OFFSET,
   VEHICLE_FLAG_OFFSET,
 } from '../web/js/amiibo.js';
@@ -146,4 +147,28 @@ test('an uncatalogued vehicle returns its code rather than nothing', () => {
 
 test('non-v3 dumps carry no vehicle', () => {
   assert.equal(parseVehicle(new Uint8Array(540)), null);
+});
+
+test('an ID absent from the database is named through its character head', () => {
+  // Kirby Air Riders Meta Knight and King Dedede are not in the table, but
+  // their heads appear on earlier figures.
+  assert.equal(characterName('1f01000004c61e03'), 'Meta Knight');
+  assert.equal(characterName('1f02000004c71e03'), 'King Dedede');
+  assert.equal(characterName('1f00000004c41e03'), 'Kirby');
+});
+
+test('a head shared by variants resolves to the base character', () => {
+  // 00000000 covers Mario, Mario - Gold Edition, Mario - Wedding, ...
+  assert.equal(characterName('0000000000340102'), 'Mario');
+});
+
+test('an entirely unknown head yields nothing rather than a guess', () => {
+  assert.equal(characterName('abcdef0000000002'), null);
+});
+
+test('the collection names unlisted amiibos by character', () => {
+  const c = buildCollection(new Set(['1f01000004c61e03']));
+  const item = c.series.flatMap((s) => s.items).find((i) => i.id === '1f01000004c61e03');
+  assert.equal(item.name, 'Meta Knight');
+  assert.equal(item.inDatabase, false, 'still flagged as absent from the database');
 });

@@ -269,13 +269,7 @@ function paint() {
       // separately — while completion against the database stays per
       // character, which is all the database records.
       const vehicles = vehiclesById.get(item.id);
-      if (vehicles?.size) {
-        for (const [vehicle, where] of [...vehicles].sort((a, b) => a[0].localeCompare(b[0]))) {
-          box.append(makeRow(item, `${item.name} & ${vehicle}`, where.local, where.device));
-        }
-        continue;
-      }
-      box.append(makeRow(item, item.name, item.hasLocal, item.hasDevice));
+      box.append(makeRow(item, item.name, item.hasLocal, item.hasDevice, vehicles));
     }
     details.append(box);
     els.series.append(details);
@@ -288,7 +282,7 @@ function paint() {
     els.series.append(p);
   }
 
-  function makeRow(item, label, hasLocal, hasDevice) {
+  function makeRow(item, label, hasLocal, hasDevice, vehicles) {
     const row = document.createElement('div');
     row.className = `item${hasLocal ? '' : ' missing'}`;
     row.title = `${item.id}  ${item.typeName}`;
@@ -330,7 +324,26 @@ function paint() {
     ty.textContent = item.typeName;
     row.append(ty);
 
-    return row;
+    if (!vehicles?.size) return row;
+
+    // A v3 amiibo is a character plus a vehicle, and only the character is in
+    // the amiibo ID. Keep one row per character — that is what completion is
+    // measured against — and hang the pairings you own off it.
+    const wrap = document.createElement('div');
+    wrap.className = 'withVehicles';
+    wrap.append(row);
+
+    const chips = document.createElement('div');
+    chips.className = 'vehicles';
+    for (const [vehicle, where] of [...vehicles].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const chip = document.createElement('span');
+      chip.className = `chip${where.device ? ' dev' : ''}`;
+      chip.textContent = vehicle;
+      chip.title = where.device ? `${vehicle} — also on the device` : vehicle;
+      chips.append(chip);
+    }
+    wrap.append(chips);
+    return wrap;
   }
 }
 
