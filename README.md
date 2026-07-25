@@ -70,44 +70,37 @@ open questions listed at the end of PROTOCOL.md.
 ### Syncing
 
 Open <http://localhost:8080/sync.html>, connect the device, choose a local
-folder, pick a direction, and press **Scan & plan**.
+folder, pick an operation, and press **Scan & plan**.
 
-| Direction | Meaning |
-|---|---|
-| `push` | local is master; the device mirrors it |
-| `pull` | device is master; the local folder mirrors it |
-| `two-way` | reconcile both sides against the last sync |
+| Operation | Direction | Deletes | Matches on |
+|---|---|---|---|
+| **Download everything** | device → local | no | nothing — takes it all |
+| **Replace device with local** | local → device | **yes** | path |
+| **Smart sync** | both | optional | path, against the last sync |
+| **Sync by amiibo** | both | no | amiibo identity |
 
-**Every run is a dry run until you press Apply.** The plan lists exactly what
-would be uploaded, downloaded, moved, deleted, skipped or blocked, with a time
-estimate. Deletions are off by default and, when enabled, always ask for
-confirmation.
+**Download everything** is a backup: it copies the whole device into your
+folder, keeping the device's layout, and writes nothing back. Files already
+held are re-fetched unless their content is known to match — every dump is 540
+bytes, so skipping on size would quietly miss a changed file.
 
-**`push` and `pull` mirror; `two-way` reconciles.** In `push`, anything on the
-device that is not in your local folder is surplus and will be removed when
-deletions are enabled — the same on the first run as on the hundredth, without
-consulting the sync state. `pull` does the reverse. `two-way` is different by
-necessity: a file missing from one side there is ambiguous (never synced, or
-deleted since), so only the recorded state can decide, and anything unrecognised
-is left alone.
+**Replace device with local** makes the device match your folder exactly,
+including deletions. It always confirms first, with counts.
 
-Even with deletions **off**, the plan still lists what *would* be removed under
-`NOT DELETED`. Surplus files are never silently folded into the "unchanged"
-count — you see the list before choosing whether to enable deletion.
+**Smart sync** sends each side the other's changes, using the record of the
+last sync to tell an edit from a deletion. It matches on path, so it works best
+when both sides are laid out the same way.
 
-Safety properties, each following from a verified device behaviour:
+**Sync by amiibo** ignores folders and filenames and asks only whether each
+amiibo is on the other side — the right choice when the two layouts differ.
+Identity is the amiibo ID plus the vehicle for Air Riders, falling back to
+content, so all 91 Animal Crossing item cards and all four vehicle pairings
+transfer rather than collapsing to one each. It reads every device file first
+to identify it, which takes a few minutes, and never deletes.
 
-- **Files are deleted individually, never by removing their folder.** On this
-  firmware `remove` deletes a non-empty folder recursively with no guard.
-- **Folders are only created when the scan shows them missing**, because
-  `create_folder` errors on an existing path and status is binary — so
-  "already exists" is indistinguishable from a real failure.
-- **A file that only moved is renamed on the device** rather than re-uploaded.
-- **Destination paths are validated before anything is transferred**, so an
-  over-long path is reported up front rather than failing mid-copy.
-- **Device-managed files are excluded**: `settings.bin`, `key_retail.bin`.
-- **State is saved as it goes**, so a disconnect part-way through a long push
-  resumes rather than restarting.
+**Every operation is a dry run until you press Apply.** The plan lists exactly
+what would be uploaded, downloaded, moved, deleted, skipped or blocked, with a
+time estimate.
 
 ### Collection view
 

@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {
   planSync,
   planIdentitySync,
+  planDump,
   flattenPlan,
   checkDestination,
   devicePath,
@@ -691,5 +692,68 @@ test('identity sync never deletes anything', () => {
   const p = idPlan({ 'mine.bin': dump('ID-A', { hash: 'h' }) }, { 'theirs.bin': dump('ID-B', { hash: 'h2' }) });
   assert.deepEqual(p.deleteDevice, []);
   assert.deepEqual(p.deleteLocal, []);
+  assert.deepEqual(p.rmdirDevice, []);
+});
+
+// ---- full dump ----------------------------------------------------------
+
+test('a dump downloads everything on the device, mirroring its layout', () => {
+  const p = planDump({
+    device: index({
+      'Zelda': dir(),
+      'Zelda/Link.bin': file(540),
+      'ac/Isabelle.bin': file(540),
+    }),
+    deviceRoot: ROOT,
+  });
+
+  assert.deepEqual(p.download.map((d) => d.relPath).sort(), ['Zelda/Link.bin', 'ac/Isabelle.bin']);
+  assert.ok(p.mkdirLocal.some((m) => m.relPath === 'Zelda'));
+  assert.deepEqual(p.upload, []);
+  assert.deepEqual(p.deleteLocal, []);
+  assert.deepEqual(p.deleteDevice, []);
+});
+
+test('a dump re-fetches a file whose content is not known to match', () => {
+  // Same path, same 540 bytes, but no recorded hash: every dump is 540 bytes,
+  // so skipping on size would silently miss a changed file.
+  const p = planDump({
+    device: index({ 'a.bin': file(540) }),
+    local: index({ 'a.bin': file(540, 'h1') }),
+    deviceRoot: ROOT,
+  });
+  assert.deepEqual(p.download.map((d) => d.relPath), ['a.bin']);
+});
+
+test('a dump skips a file already held with identical content', () => {
+  const p = planDump({
+    device: index({ 'a.bin': file(540, 'same') }),
+    local: index({ 'a.bin': file(540, 'same') }),
+    deviceRoot: ROOT,
+  });
+  assert.deepEqual(p.download, []);
+  assert.deepEqual(p.unchanged, ['a.bin']);
+});
+
+test('a dump leaves device state alone unless asked for it', () => {
+  const device = index({ 'key_retail.bin': file(160), 'settings.bin': file(24), 'a.bin': file(540) });
+
+  const without = planDump({ device, deviceRoot: ROOT });
+  assert.deepEqual(without.download.map((d) => d.relPath), ['a.bin']);
+  assert.match(without.warnings[0], /device state/);
+
+  const with_ = planDump({ device, deviceRoot: ROOT, options: { includeDeviceFiles: true } });
+  assert.equal(with_.download.length, 3);
+});
+
+test('a dump never writes to the device', () => {
+  const p = planDump({
+    device: index({ 'a.bin': file(540) }),
+    local: index({ 'only-local.bin': file(540, 'h') }),
+    deviceRoot: ROOT,
+  });
+  assert.deepEqual(p.upload, []);
+  assert.deepEqual(p.mkdirDevice, []);
+  assert.deepEqual(p.deleteDevice, []);
   assert.deepEqual(p.rmdirDevice, []);
 });

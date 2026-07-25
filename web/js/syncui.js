@@ -3,14 +3,15 @@
 
 import { BleTransport } from './ble.js';
 import { AllmiiboClient } from './protocol.js';
-import { planSync, flattenPlan, compareByContent } from './planner.js';
+import { planSync, planDump, planIdentitySync, flattenPlan, compareByContent } from './planner.js';
 import { walkDevice, verifyDeviceHashes, hashDeviceIndex, applyPlan, ambiguousPaths } from './sync.js';
 import * as localfs from './localfs.js';
 
 const els = {};
 for (const id of [
   'connect', 'disconnect', 'pickFolder', 'scan', 'apply', 'audit', 'stop',
-  'deviceRoot', 'mode', 'allowDelete', 'verify',
+  'deviceRoot', 'allowDelete', 'verify', 'includeDeviceFiles',
+  'wrapDelete', 'wrapVerify', 'wrapDeviceFiles',
   'status', 'folderName', 'planBox', 'log', 'progress',
 ]) els[id] = document.getElementById(id);
 
@@ -44,6 +45,29 @@ function refreshButtons() {
   els.scan.disabled = !(connected && rootHandle);
   els.audit.disabled = !(connected && rootHandle);
   els.apply.disabled = !(plan && hasWork(plan));
+}
+
+function currentOp() {
+  return document.querySelector('input[name=op]:checked').value;
+}
+
+// Only show the options that mean something for the chosen operation.
+function refreshOptions() {
+  const op = currentOp();
+  els.wrapDelete.style.display = op === 'smart' ? '' : 'none';
+  els.wrapVerify.style.display = op === 'smart' || op === 'replace' ? '' : 'none';
+  els.wrapDeviceFiles.style.display = op === 'dump' ? '' : 'none';
+  // "Replace" always deletes; that is what makes it a replacement.
+  if (op === 'replace') els.allowDelete.checked = true;
+}
+
+for (const radio of document.querySelectorAll('input[name=op]')) {
+  radio.addEventListener('change', () => {
+    plan = null;
+    els.planBox.textContent = '';
+    refreshOptions();
+    refreshButtons();
+  });
 }
 
 function hasWork(p) {
@@ -97,12 +121,14 @@ els.pickFolder.addEventListener('click', async () => {
 
 els.scan.addEventListener('click', async () => {
   els.scan.disabled = true;
+  els.stop.disabled = false;
+  stopRequested = false;
   plan = null;
   els.planBox.textContent = '';
 
   try {
     const deviceRoot = els.deviceRoot.value.trim() || 'E:/amiibo';
-    const mode = els.mode.value;
+    const op = currentOp();
 
     setStatus('Reading local folder…');
     state = await localfs.loadState(rootHandle);
@@ -112,13 +138,33 @@ els.scan.addEventListener('click', async () => {
     log('ok', `local: ${count(local)} files, ${countDirs(local)} folders`);
 
     setStatus('Reading device…');
-    const device = await walkDevice(client, deviceRoot, {
+    let device = await walkDevice(client, deviceRoot, {
       onProgress: (n) => { if (n % 50 === 0) setStatus(`Reading device… ${n} files`); },
     });
     log('ok', `device: ${count(device)} files, ${countDirs(device)} folders under ${deviceRoot}`);
 
-    const options = { mode, delete: els.allowDelete.checked };
-    plan = planSync({ local, device, state, deviceRoot, options });
+    plan = buildPlan({ op, local, device, state, deviceRoot });
+
+    // Identity sync compares amiibo IDs, which are inside the files, so the
+    // device side has to be read in full first.
+    if (op === 'identity') {
+      const toRead = [...device.values()].filter((e) => !e.isDir).length;
+      log('info', `identifying ${toRead} device files — about ${fmtDuration(Math.round(toRead * 0.22))}`);
+      const t0 = Date.now();
+      const identified = await hashDeviceIndex(client, deviceRoot, device, {
+        shouldStop: () => stopRequested,
+        onProgress: (done, n) => {
+          els.progress.value = (done / n) * 100;
+          if (done % 10 === 0 || done === n) {
+            const rate = done / Math.max(1, (Date.now() - t0) / 1000);
+            setStatus(`Identifying ${done}/${n} — about ${fmtDuration(Math.round((n - done) / Math.max(rate, 0.01)))} left`);
+          }
+        },
+      });
+      els.progress.value = 0;
+      device = identified;
+      plan = buildPlan({ op, local, device, state, deviceRoot });
+    }
 
     // Same-size files with no sync record cannot be compared without reading
     // the device copy. Only do that when asked — it costs ~0.2 s each.
@@ -132,17 +178,42 @@ els.scan.addEventListener('click', async () => {
         const existing = device.get(p);
         if (existing) device.set(p, { ...existing, hash: h });
       }
-      plan = planSync({ local, device, state, deviceRoot, options });
+      plan = buildPlan({ op, local, device, state, deviceRoot });
     }
 
     renderPlan(plan);
-    setStatus(hasWork(plan) ? 'Plan ready — review, then Apply' : 'Already in sync', hasWork(plan) ? '' : 'ok');
+    setStatus(hasWork(plan) ? 'Plan ready — review, then Apply' : 'Nothing to do', hasWork(plan) ? '' : 'ok');
   } catch (err) {
     setStatus(`Scan failed: ${err.message}`, 'err');
     log('err', err.message);
   }
+  els.stop.disabled = true;
   refreshButtons();
 });
+
+function buildPlan({ op, local, device, state, deviceRoot }) {
+  switch (op) {
+    case 'dump':
+      return planDump({
+        device,
+        local,
+        deviceRoot,
+        options: { includeDeviceFiles: els.includeDeviceFiles.checked },
+      });
+    case 'replace':
+      // A replacement is a mirror: local is master and surplus goes.
+      return planSync({ local, device, state, deviceRoot, options: { mode: 'push', delete: true } });
+    case 'smart':
+      return planSync({
+        local, device, state, deviceRoot,
+        options: { mode: 'two-way', delete: els.allowDelete.checked },
+      });
+    case 'identity':
+      return planIdentitySync({ local, device, deviceRoot, options: { direction: 'both' } });
+    default:
+      throw new Error(`unknown operation: ${op}`);
+  }
+}
 
 function count(index) {
   let n = 0;
@@ -165,7 +236,13 @@ function renderPlan(p) {
     lines.push('');
   };
 
-  lines.push(`mode: ${p.mode}   device root: ${p.deviceRoot}`);
+  const opLabel = {
+    dump: 'Download everything (device → local)',
+    replace: 'Replace device with local',
+    smart: 'Smart sync',
+    identity: 'Sync by amiibo',
+  }[currentOp()] ?? p.mode;
+  lines.push(`${opLabel}   device root: ${p.deviceRoot}`);
   lines.push(`estimated time: ${fmtDuration(p.stats.estimatedSeconds)} at the measured ~2 KB/s`);
   lines.push('');
 
@@ -209,7 +286,11 @@ els.apply.addEventListener('click', async () => {
       `${plan.deleteLocal.length} file(s) deleted locally`,
       `${plan.rmdirDevice.length} folder(s) removed on the device`,
     ].join('\n');
-    if (!confirm(`This will permanently delete:\n\n${detail}\n\nThis cannot be undone. Continue?`)) {
+    const heading =
+      currentOp() === 'replace'
+        ? 'Replace the device with your local folder.\n\nThis permanently deletes:'
+        : 'This will permanently delete:';
+    if (!confirm(`${heading}\n\n${detail}\n\nThis cannot be undone. Continue?`)) {
       log('warn', 'apply cancelled');
       return;
     }
@@ -382,6 +463,7 @@ els.stop.addEventListener('click', () => {
     return;
   }
 
+  refreshOptions();
   const restored = await localfs.restoreDirectory();
   if (restored) {
     rootHandle = restored;

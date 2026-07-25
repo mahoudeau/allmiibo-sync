@@ -682,3 +682,99 @@ export function planIdentitySync({ local, device, deviceRoot, options = {} }) {
   plan.stats.estimatedSeconds = estimateSeconds(plan);
   return plan;
 }
+
+/**
+ * Plan a full download of the device into the local folder.
+ *
+ * This is a backup, not a reconciliation: it takes everything under the device
+ * root, mirroring the device's own layout. Nothing is written to the device and
+ * nothing is deleted on either side.
+ *
+ * Files already held locally at the same path are skipped only when their
+ * content is known to match — size alone will not do, since every amiibo dump
+ * is 540 bytes. Without a recorded hash the file is fetched again, because a
+ * backup that quietly skips a changed file is not a backup.
+ */
+export function planDump({ device, local = new Map(), deviceRoot, options = {} }) {
+  const excludes = options.excludes || DEFAULT_EXCLUDES;
+  const includeDeviceFiles = !!options.includeDeviceFiles;
+
+  const plan = {
+    mode: 'dump',
+    deviceRoot,
+    mkdirDevice: [],
+    mkdirLocal: [],
+    upload: [],
+    download: [],
+    moveDevice: [],
+    deleteDevice: [],
+    deleteLocal: [],
+    rmdirDevice: [],
+    wouldDelete: [],
+    conflicts: [],
+    blocked: [],
+    unchanged: [],
+    ambiguous: [],
+    warnings: [],
+  };
+
+  const localDirs = new Set();
+  for (const [p, e] of local) if (e.isDir) localDirs.add(p);
+
+  let skippedDeviceFiles = 0;
+
+  for (const [relPath, entry] of device) {
+    if (entry.isDir) {
+      if (!localDirs.has(relPath)) {
+        localDirs.add(relPath);
+        plan.mkdirLocal.push({ relPath });
+      }
+      continue;
+    }
+    // settings.bin and key_retail.bin are device state. They are included only
+    // on request, since a backup of the drive arguably wants them.
+    if (isExcluded(relPath, excludes)) {
+      if (!includeDeviceFiles) {
+        skippedDeviceFiles++;
+        continue;
+      }
+    }
+
+    const here = local.get(relPath);
+    const identical = here && entry.hash && here.hash && entry.hash === here.hash;
+    if (identical) {
+      plan.unchanged.push(relPath);
+      continue;
+    }
+
+    queueLocalDirs(plan, relPath, localDirs);
+    plan.download.push({ relPath, size: entry.size, amiiboId: entry.amiiboId ?? null });
+  }
+
+  if (skippedDeviceFiles) {
+    plan.warnings.push(
+      `${skippedDeviceFiles} device file(s) skipped as device state (settings.bin, key_retail.bin). ` +
+        `Enable "include device files" to back those up too.`
+    );
+  }
+
+  plan.stats = {
+    upload: 0,
+    download: plan.download.length,
+    moveDevice: 0,
+    deleteDevice: 0,
+    deleteLocal: 0,
+    mkdirDevice: 0,
+    mkdirLocal: plan.mkdirLocal.length,
+    rmdirDevice: 0,
+    wouldDelete: 0,
+    unchanged: plan.unchanged.length,
+    conflicts: 0,
+    blocked: 0,
+    ambiguous: 0,
+    uploadBytes: 0,
+    downloadBytes: plan.download.reduce((n, d) => n + d.size, 0),
+  };
+  plan.stats.estimatedSeconds = estimateSeconds(plan);
+  return plan;
+}
