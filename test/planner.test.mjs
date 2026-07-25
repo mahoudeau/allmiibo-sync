@@ -815,3 +815,66 @@ test('nothing is reported as renamed when no name needs changing', () => {
   assert.equal(p.renamedLocally, undefined);
   assert.equal(p.download[0].localPath, 'Zelda/Link.bin');
 });
+
+test('a second dump skips what the first one already fetched', () => {
+  // The executor records size and hash per device path as it downloads.
+  const device = index({ 'Zelda/Link.bin': file(540) });
+  const local = index({ 'Zelda/Link.bin': file(540, 'downloaded') });
+  const state = { entries: { 'Zelda/Link.bin': { size: 540, hash: 'downloaded' } } };
+
+  const p = planDump({ device, local, state, deviceRoot: ROOT });
+  assert.deepEqual(p.download, []);
+  assert.deepEqual(p.unchanged, ['Zelda/Link.bin']);
+});
+
+test('a locally modified file is fetched again', () => {
+  const p = planDump({
+    device: index({ 'a.bin': file(540) }),
+    local: index({ 'a.bin': file(540, 'edited-since') }),
+    state: { entries: { 'a.bin': { size: 540, hash: 'downloaded' } } },
+    deviceRoot: ROOT,
+  });
+  assert.deepEqual(p.download.map((d) => d.relPath), ['a.bin']);
+});
+
+test('a device file that changed size is fetched again', () => {
+  const p = planDump({
+    device: index({ 'a.bin': file(572) }),
+    local: index({ 'a.bin': file(540, 'downloaded') }),
+    state: { entries: { 'a.bin': { size: 540, hash: 'downloaded' } } },
+    deviceRoot: ROOT,
+  });
+  assert.deepEqual(p.download.map((d) => d.relPath), ['a.bin']);
+});
+
+test('force re-fetches everything regardless of the record', () => {
+  const p = planDump({
+    device: index({ 'a.bin': file(540) }),
+    local: index({ 'a.bin': file(540, 'downloaded') }),
+    state: { entries: { 'a.bin': { size: 540, hash: 'downloaded' } } },
+    deviceRoot: ROOT,
+    options: { force: true },
+  });
+  assert.deepEqual(p.download.map((d) => d.relPath), ['a.bin']);
+});
+
+test('the skip is matched against the sanitised local path', () => {
+  // Downloaded from "Dark Souls /x.bin", saved as "Dark Souls/x.bin".
+  const p = planDump({
+    device: index({ 'Dark Souls /x.bin': file(540) }),
+    local: index({ 'Dark Souls/x.bin': file(540, 'downloaded') }),
+    state: { entries: { 'Dark Souls /x.bin': { size: 540, hash: 'downloaded' } } },
+    deviceRoot: ROOT,
+  });
+  assert.deepEqual(p.download, [], 'the renamed local copy must still count as held');
+});
+
+test('skipping is explained, including what it cannot notice', () => {
+  const p = planDump({
+    device: index({ 'a.bin': file(540) }),
+    local: index({ 'a.bin': file(540, 'downloaded') }),
+    state: { entries: { 'a.bin': { size: 540, hash: 'downloaded' } } },
+    deviceRoot: ROOT,
+  });
+  assert.match(p.warnings.join(' '), /would not be noticed/);
+});

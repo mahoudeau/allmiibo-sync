@@ -80,9 +80,14 @@ folder, pick an operation, and press **Scan & plan**.
 | **Sync by amiibo** | both | no | amiibo identity |
 
 **Download everything** is a backup: it copies the whole device into your
-folder, keeping the device's layout, and writes nothing back. Files already
-held are re-fetched unless their content is known to match — every dump is 540
-bytes, so skipping on size would quietly miss a changed file.
+folder, keeping the device's layout, and writes nothing back.
+
+Run it a second time and it skips what it already has, so only new or changed
+files cost you time. A file is skipped when it was downloaded before, the local
+copy still hashes to what was written, and the device file is still the same
+size. Every dump is 540 bytes, so a device-side edit that kept the size is the
+one case this cannot notice — tick **download everything again** to re-fetch
+regardless. The plan says how many were skipped and why.
 
 **Replace device with local** makes the device match your folder exactly,
 including deletions. It always confirms first, with counts.

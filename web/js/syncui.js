@@ -10,8 +10,8 @@ import * as localfs from './localfs.js';
 const els = {};
 for (const id of [
   'connect', 'disconnect', 'pickFolder', 'scan', 'apply', 'audit', 'stop',
-  'deviceRoot', 'allowDelete', 'verify', 'includeDeviceFiles',
-  'wrapDelete', 'wrapVerify', 'wrapDeviceFiles',
+  'deviceRoot', 'allowDelete', 'verify', 'includeDeviceFiles', 'force',
+  'wrapDelete', 'wrapVerify', 'wrapDeviceFiles', 'wrapForce',
   'status', 'folderName', 'planBox', 'log', 'progress',
 ]) els[id] = document.getElementById(id);
 
@@ -57,6 +57,7 @@ function refreshOptions() {
   els.wrapDelete.style.display = op === 'smart' ? '' : 'none';
   els.wrapVerify.style.display = op === 'smart' || op === 'replace' ? '' : 'none';
   els.wrapDeviceFiles.style.display = op === 'dump' ? '' : 'none';
+  els.wrapForce.style.display = op === 'dump' ? '' : 'none';
   // "Replace" always deletes; that is what makes it a replacement.
   if (op === 'replace') els.allowDelete.checked = true;
 }
@@ -197,8 +198,12 @@ function buildPlan({ op, local, device, state, deviceRoot }) {
       return planDump({
         device,
         local,
+        state,
         deviceRoot,
-        options: { includeDeviceFiles: els.includeDeviceFiles.checked },
+        options: {
+          includeDeviceFiles: els.includeDeviceFiles.checked,
+          force: els.force.checked,
+        },
       });
     case 'replace':
       // A replacement is a mirror: local is master and surplus goes.

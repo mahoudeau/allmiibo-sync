@@ -730,9 +730,11 @@ export function planIdentitySync({ local, device, deviceRoot, options = {} }) {
  * is 540 bytes. Without a recorded hash the file is fetched again, because a
  * backup that quietly skips a changed file is not a backup.
  */
-export function planDump({ device, local = new Map(), deviceRoot, options = {} }) {
+export function planDump({ device, local = new Map(), state = { entries: {} }, deviceRoot, options = {} }) {
   const excludes = options.excludes || DEFAULT_EXCLUDES;
   const includeDeviceFiles = !!options.includeDeviceFiles;
+  const force = !!options.force;
+  const prev = state.entries || {};
 
   const plan = {
     mode: 'dump',
@@ -775,15 +777,37 @@ export function planDump({ device, local = new Map(), deviceRoot, options = {} }
       }
     }
 
-    const here = local.get(relPath);
-    const identical = here && entry.hash && here.hash && entry.hash === here.hash;
-    if (identical) {
+    // The local copy lives at the sanitised path, which is not always the
+    // device's path.
+    const here = local.get(sanitizeLocalRelPath(relPath));
+    const record = prev[relPath];
+
+    // Skipping needs evidence that the local copy is still the device's copy.
+    // Two ways to have it:
+    //   - the device entry carries a hash, which only happens when the caller
+    //     has already read the files
+    //   - this path was downloaded before, the local file still hashes to what
+    //     was written, and the device file is still that size
+    // Size alone is never enough: every dump is 540 bytes.
+    const verified = here && entry.hash && here.hash && entry.hash === here.hash;
+    const recorded =
+      here && record && here.hash === record.hash && entry.size === record.size;
+
+    if (!force && (verified || recorded)) {
       plan.unchanged.push(relPath);
       continue;
     }
 
     queueLocalDirs(plan, relPath, localDirs);
     addDownload(plan, relPath, entry);
+  }
+
+  if (plan.unchanged.length && !force) {
+    plan.warnings.push(
+      `${plan.unchanged.length} file(s) skipped: already downloaded, unchanged locally, and ` +
+        `still the same size on the device. A device-side edit that kept the size would not be ` +
+        `noticed — tick "download everything again" to re-fetch regardless.`
+    );
   }
 
   if (skippedDeviceFiles) {
