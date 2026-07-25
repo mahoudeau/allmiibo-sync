@@ -168,6 +168,11 @@ function renderPlan(p) {
   lines.push(`estimated time: ${fmtDuration(p.stats.estimatedSeconds)} at the measured ~2 KB/s`);
   lines.push('');
 
+  for (const w of p.warnings) {
+    lines.push(`WARNING  ${w}`);
+    lines.push('');
+  }
+
   section('CREATE FOLDER on device', p.mkdirDevice, (m) => m.relPath);
   section('CREATE FOLDER locally', p.mkdirLocal, (m) => m.relPath);
   section('MOVE on device (rename, no re-upload)', p.moveDevice, (m) => `${m.from}  →  ${m.to}`);
@@ -176,6 +181,11 @@ function renderPlan(p) {
   section('DELETE on device', p.deleteDevice, (d) => d.relPath);
   section('DELETE locally', p.deleteLocal, (d) => d.relPath);
   section('REMOVE FOLDER on device', p.rmdirDevice, (d) => d.relPath);
+  section(
+    `NOT DELETED — enable "Propagate deletions" to remove these`,
+    p.wouldDelete,
+    (d) => `${d.relPath}  (on ${d.side})`
+  );
   section('CONFLICT — nothing will be changed', p.conflicts, (c) => `${c.relPath}  — ${c.reason}`);
   section('BLOCKED — will not fit on the device', p.blocked, (b) => `${b.relPath}  — ${b.reason}`);
   section('SKIPPED — cannot tell without verifying', p.ambiguous, (a) => `${a.relPath}  — ${a.reason}`);

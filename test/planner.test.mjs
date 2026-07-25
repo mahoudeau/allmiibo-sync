@@ -113,11 +113,12 @@ test('a verified device hash resolves the ambiguous case', () => {
 
 // ---- deletion safety ----------------------------------------------------
 
-test('push does not delete from the device unless --delete is set', () => {
+test('push does not delete unless --delete is set, but still lists what it would remove', () => {
   const p = plan({}, { 'gone.bin': file(540) }, { 'gone.bin': { size: 540, hash: 'h1' } });
   assert.deepEqual(p.deleteDevice, []);
-  assert.equal(p.ambiguous.length, 1);
-  assert.match(p.ambiguous[0].reason, /--delete is off/);
+  // Surplus files must be visible in the plan, not hidden in the unchanged count.
+  assert.deepEqual(p.wouldDelete, [{ relPath: 'gone.bin', side: 'device', size: 540 }]);
+  assert.deepEqual(p.unchanged, []);
 });
 
 test('push with --delete removes a file the local side dropped', () => {
@@ -130,10 +131,34 @@ test('push with --delete removes a file the local side dropped', () => {
   assert.deepEqual(p.deleteDevice.map((d) => d.relPath), ['gone.bin']);
 });
 
-test('a device file that was never synced is left alone, even with --delete', () => {
-  const p = plan({}, { 'theirs.bin': file(540) }, {}, { delete: true });
+test('push mirrors on the first run: surplus device files go even with no sync record', () => {
+  // "Local is master" must mean the same thing on run one as on run one hundred.
+  const p = plan({ 'keep.bin': file(540, 'h1') }, { 'surplus.bin': file(540) }, {}, { delete: true });
+  assert.deepEqual(p.deleteDevice.map((d) => d.relPath), ['surplus.bin']);
+});
+
+test('push lists surplus device files on the first run when --delete is off', () => {
+  const p = plan({ 'keep.bin': file(540, 'h1') }, { 'surplus.bin': file(540) }, {});
+  assert.deepEqual(p.wouldDelete.map((d) => d.relPath), ['surplus.bin']);
   assert.deepEqual(p.deleteDevice, []);
-  assert.deepEqual(p.unchanged, ['theirs.bin']);
+});
+
+test('pull mirrors in reverse: surplus local files are removed with --delete', () => {
+  const p = plan(
+    { 'surplus.bin': file(540, 'h1') },
+    { 'keep.bin': file(540) },
+    {},
+    { mode: 'pull', delete: true }
+  );
+  assert.deepEqual(p.deleteLocal.map((d) => d.relPath), ['surplus.bin']);
+});
+
+test('two-way does NOT delete a device file it has never seen', () => {
+  // Absent locally in two-way is ambiguous — never synced, or added on the
+  // device since. Only the state can tell, so an unknown file is left alone.
+  const p = plan({}, { 'theirs.bin': file(540) }, {}, { mode: 'two-way', delete: true });
+  assert.deepEqual(p.deleteDevice, []);
+  assert.deepEqual(p.download.map((d) => d.relPath), ['theirs.bin']);
 });
 
 test('folders are removed deepest-first and only after their files', () => {
@@ -176,6 +201,45 @@ test('files are deleted individually rather than by removing the folder', () => 
     p.deleteDevice.map((d) => d.relPath).sort(),
     ['a/one.bin', 'a/two.bin']
   );
+});
+
+test('a folder holding an excluded file is never removed', () => {
+  // remove() is recursive, so removing the folder would take the excluded
+  // file with it.
+  const p = plan(
+    {},
+    { 'keep/key_retail.bin': file(160), 'keep/dump.bin': file(540), keep: dir() },
+    { 'keep/dump.bin': { size: 540, hash: 'h1' } },
+    { delete: true }
+  );
+  assert.deepEqual(p.deleteDevice.map((d) => d.relPath), ['keep/dump.bin']);
+  assert.deepEqual(p.rmdirDevice, [], 'the folder still holds an excluded file');
+});
+
+test('a folder is not removed while a subfolder survives', () => {
+  const p = plan(
+    { 'a/b': dir() }, // the subfolder still exists locally, so it stays
+    { a: dir(), 'a/b': dir(), 'a/old.bin': file(540) },
+    { 'a/old.bin': { size: 540, hash: 'h1' } },
+    { delete: true }
+  );
+  assert.deepEqual(p.deleteDevice.map((d) => d.relPath), ['a/old.bin']);
+  assert.deepEqual(p.rmdirDevice, [], 'a/b survives, so a cannot be removed recursively');
+});
+
+test('a warning fires when the two sides share no paths at all', () => {
+  // The classic misconfiguration: local folder contains "amiibo/", device root
+  // is already "E:/amiibo", so every relative path is shifted by one level.
+  const p = plan({ 'amiibo/Zelda/Link.bin': file(540, 'h1') }, { 'Zelda/Link.bin': file(540) }, {});
+  assert.equal(p.stats.overlap, 0);
+  assert.equal(p.warnings.length, 1);
+  assert.match(p.warnings[0], /No path is shared/);
+});
+
+test('no warning when the sides line up', () => {
+  const p = plan({ 'Zelda/Link.bin': file(540, 'h1') }, { 'Zelda/Link.bin': file(540) }, {});
+  assert.equal(p.stats.overlap, 1);
+  assert.deepEqual(p.warnings, []);
 });
 
 // ---- moves --------------------------------------------------------------

@@ -101,6 +101,9 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
     deleteDevice: [],
     deleteLocal: [],
     rmdirDevice: [],
+    // What deletion would remove if it were enabled — always computed, so the
+    // plan shows it rather than hiding it behind the checkbox.
+    wouldDelete: [],
     conflicts: [],
     blocked: [],
     unchanged: [],
@@ -185,10 +188,11 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
     // ---- local only ------------------------------------------------------
     if (l && !d) {
       const deletedOnDevice = !!s; // we synced it before, so the device lost it
+
+      // pull mirrors in the other direction: the device is master.
       if (mode === 'pull') {
-        if (deletedOnDevice && allowDelete) plan.deleteLocal.push({ relPath });
-        else if (deletedOnDevice) plan.unchanged.push(relPath);
-        else plan.unchanged.push(relPath);
+        if (allowDelete) plan.deleteLocal.push({ relPath, size: l.size });
+        else plan.wouldDelete.push({ relPath, side: 'local', size: l.size });
         continue;
       }
       if (mode === 'two-way' && deletedOnDevice) {
@@ -227,11 +231,12 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
       if (movedFrom.has(relPath)) continue; // already accounted for as a move
       const deletedLocally = !!s;
 
+      // push mirrors: local is master, so anything the device holds that local
+      // does not is surplus. This does not consult the sync state — "mirror my
+      // folder" must behave the same on the first run as on the hundredth.
       if (mode === 'push') {
-        if (deletedLocally && allowDelete) plan.deleteDevice.push({ relPath });
-        else if (deletedLocally) {
-          plan.ambiguous.push({ relPath, reason: 'removed locally; --delete is off' });
-        } else plan.unchanged.push(relPath);
+        if (allowDelete) plan.deleteDevice.push({ relPath, size: d.size });
+        else plan.wouldDelete.push({ relPath, side: 'device', size: d.size });
         continue;
       }
       if (mode === 'two-way' && deletedLocally) {
@@ -274,17 +279,54 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
   // folder is genuinely gone from the source side — never as a shortcut for
   // deleting contents, because remove() is recursive.
   if (allowDelete && (mode === 'push' || mode === 'two-way')) {
-    const doomed = [];
+    const deleting = new Set(plan.deleteDevice.map((d) => d.relPath));
+
+    // Everything that will still be on the device afterwards. Excluded files
+    // were filtered out of deviceFiles, so consult the raw index for them —
+    // a folder containing one must never be removed.
+    const survivors = [...deviceFiles.keys()].filter((p) => !deleting.has(p));
+    for (const [p, e] of device) if (!e.isDir && isExcluded(p, excludes)) survivors.push(p);
+
+    const candidates = new Set();
     for (const dir of deviceDirs) {
       if (localDirs.has(dir) || isExcluded(dir, excludes)) continue;
-      if (!prev[dir] && !hasStateUnder(prev, dir)) continue; // never synced; leave it alone
-      doomed.push(dir);
+      // In two-way a folder we have never seen is not ours to remove; push is
+      // an explicit mirror, so it removes surplus folders either way.
+      if (mode === 'two-way' && !prev[dir] && !hasStateUnder(prev, dir)) continue;
+      candidates.add(dir);
     }
+
+    // remove() deletes recursively, so a folder may only go once nothing
+    // beneath it survives — no surviving file, and no surviving subfolder.
+    const doomed = [...candidates].filter((dir) => {
+      const prefix = `${dir}/`;
+      if (survivors.some((p) => p.startsWith(prefix))) return false;
+      for (const other of deviceDirs) {
+        if (other !== dir && other.startsWith(prefix) && !candidates.has(other)) return false;
+      }
+      return true;
+    });
+
     doomed.sort((a, b) => depth(b) - depth(a) || b.localeCompare(a));
     for (const dir of doomed) plan.rmdirDevice.push({ relPath: dir });
   }
 
+  // A local folder that shares no paths at all with the device usually means
+  // the device root is wrong — e.g. pointing at "E:/amiibo" while the local
+  // folder itself contains an "amiibo" directory, which shifts every relative
+  // path by one level and makes a sync look like a full replacement.
+  plan.warnings = [];
+  const overlap = [...localFiles.keys()].filter((p) => deviceFiles.has(p)).length;
+  if (localFiles.size > 0 && deviceFiles.size > 0 && overlap === 0) {
+    plan.warnings.push(
+      `No path is shared between the ${localFiles.size} local and ${deviceFiles.size} device files. ` +
+        `Check that the device folder matches your local folder's contents — if your local folder ` +
+        `*contains* a subfolder mirroring the device root, point at that subfolder instead.`
+    );
+  }
+
   plan.stats = {
+    overlap,
     upload: plan.upload.length,
     download: plan.download.length,
     moveDevice: plan.moveDevice.length,
@@ -293,6 +335,7 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
     mkdirDevice: plan.mkdirDevice.length,
     mkdirLocal: plan.mkdirLocal.length,
     rmdirDevice: plan.rmdirDevice.length,
+    wouldDelete: plan.wouldDelete.length,
     unchanged: plan.unchanged.length,
     conflicts: plan.conflicts.length,
     blocked: plan.blocked.length,

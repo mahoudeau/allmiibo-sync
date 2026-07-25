@@ -79,6 +79,18 @@ would be uploaded, downloaded, moved, deleted, skipped or blocked, with a time
 estimate. Deletions are off by default and, when enabled, always ask for
 confirmation.
 
+**`push` and `pull` mirror; `two-way` reconciles.** In `push`, anything on the
+device that is not in your local folder is surplus and will be removed when
+deletions are enabled — the same on the first run as on the hundredth, without
+consulting the sync state. `pull` does the reverse. `two-way` is different by
+necessity: a file missing from one side there is ambiguous (never synced, or
+deleted since), so only the recorded state can decide, and anything unrecognised
+is left alone.
+
+Even with deletions **off**, the plan still lists what *would* be removed under
+`NOT DELETED`. Surplus files are never silently folded into the "unchanged"
+count — you see the list before choosing whether to enable deletion.
+
 Safety properties, each following from a verified device behaviour:
 
 - **Files are deleted individually, never by removing their folder.** On this
