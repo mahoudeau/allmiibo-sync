@@ -612,19 +612,23 @@ That is dominated by per-command latency, not bandwidth: each chunk is a
 separate acknowledged write, and the device commits to external SPI flash
 between them.
 
-Practical consequences for a 540-byte dump (open + 3 writes + close ≈ 5
-round-trips): roughly **0.5 s per file**.
+A 540-byte dump is open + 3 writes + close, and the fixed cost of open and
+close dominates, so the real per-file time is far above what the chunk rate
+alone suggests. Measured on hardware, not estimated:
 
-| Operation | Estimate |
+| Operation | Measured |
 |---|---|
-| One 540-byte dump | ~0.5 s |
-| The observed 862-file library | ~7 minutes |
-| Its 465 KB, data only | ~4 minutes |
+| One 540-byte upload, empty drive | ~1.0 s |
+| One 540-byte upload, full drive | ~2.5 s |
+| One 540-byte download | ~0.4 s |
+| One delete | 66 ms empty · 240 ms full |
+| Full replace of a 1049-dump library (delete + re-upload, from empty) | ~26 min |
+| A push onto a nearly full drive (the same scale) | ~48 min |
 
 **Implications:** transfer the minimum. Never re-upload unchanged files; prefer
 `rename` over re-upload for moves; report progress continuously; and make a
-long push resumable, since a disconnect seven minutes in should not restart
-from zero.
+long push resumable, since a disconnect deep into a 25-to-50-minute run should
+not restart from zero.
 
 ---
 

@@ -1,0 +1,38 @@
+MIT License
+
+Copyright (c) 2026 Mathieu Mahoudeau
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+EXCEPTION — bundled amiibo database
+
+`web/data/amiibo-db.js` is a generated file. Its amiibo *name* table is derived
+from solosky/pixl.js (`fw/application/src/amiidb/db_amiibo.c`), which is
+licensed under the GNU General Public License, version 2. That generated file is
+therefore distributed under the GPL-2.0, whose full text is in
+`LICENSE.GPL-2.0`, not under the MIT terms above. Its series and type labels and
+release dates come from N3evin/AmiiboAPI (and the 8bitDream fork), MIT-licensed.
+
+The MIT license above covers all other source in this repository.
+
+amiibo, character, and game names and artwork are the property of Nintendo and
+their respective owners. This project bundles none of that artwork and no amiibo
+data; see the README for details.

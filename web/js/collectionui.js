@@ -15,6 +15,7 @@ for (const id of [
   'pickFolder', 'scan', 'connect', 'scanDevice', 'stop', 'folderName',
   'status', 'progress', 'stats', 'series', 'skipped', 'search', 'copyMissing',
   'mOwned', 'mMissing', 'mDevice', 'mExtra', 'mTotal', 'viewToggle', 'sortMode',
+  'forget',
 ]) els[id] = document.getElementById(id);
 
 let rootHandle = null;
@@ -29,6 +30,41 @@ let namesById = new Map();    // id -> filenames you gave its dumps
 let deviceIds = null;
 let collection = null;
 let stopRequested = false;
+
+// Coming back from a detail page re-runs this module, and rescanning ~1000
+// files takes seconds. The scan results are cached per tab and restored
+// instantly; the Scan button remains the way to refresh after folder changes.
+const CACHE_KEY = 'collectionScan';
+
+function saveScanCache() {
+  try {
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+      folderName: els.folderName.textContent,
+      localIds: [...localIds],
+      filesById: [...filesById],
+      namesById: [...namesById],
+      vehiclesById: [...vehiclesById].map(([id, m]) => [id, [...m]]),
+      deviceIds: deviceIds ? [...deviceIds] : null,
+    }));
+  } catch {}
+}
+
+function restoreScanCache() {
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    if (!raw) return false;
+    const c = JSON.parse(raw);
+    localIds = new Set(c.localIds);
+    filesById = new Map(c.filesById);
+    namesById = new Map(c.namesById);
+    vehiclesById = new Map(c.vehiclesById.map(([id, m]) => [id, new Map(m)]));
+    deviceIds = c.deviceIds ? new Set(c.deviceIds) : null;
+    if (c.folderName) els.folderName.textContent = c.folderName;
+    return localIds.size > 0;
+  } catch {
+    return false;
+  }
+}
 // Which artwork tier the lists use. The repo ships 96px thumbs; a deployed or
 // image-fetched copy also has the 256px med tier, which is what Retina wants.
 // Probed once at boot instead of letting ~950 img tags each 404 and fall back.
@@ -42,6 +78,8 @@ function setStatus(text, kind = '') {
 function refresh() {
   els.scan.disabled = !rootHandle;
   els.scanDevice.disabled = !(transport?.connected && rootHandle);
+  // Something to forget = a remembered folder or a cached scan.
+  els.forget.disabled = !rootHandle && localIds.size === 0 && !deviceIds;
 }
 
 // ---- sources ------------------------------------------------------------
@@ -96,6 +134,7 @@ els.scan.addEventListener('click', async () => {
     }
 
     render();
+    saveScanCache();
     renderSkipped(ignored, unrecognised);
     setStatus(
       `${dumps} dumps in ${folders} folders — ${localIds.size} distinct amiibos` +
@@ -160,6 +199,7 @@ els.scanDevice.addEventListener('click', async () => {
     }
 
     render();
+    saveScanCache();
     setStatus(
       stopRequested
         ? `Stopped early — ${deviceIds.size} amiibos identified on the device so far`
@@ -376,7 +416,17 @@ function paint() {
   }
 
   function makeRow(item, label, hasLocal, hasDevice) {
-    const row = document.createElement('div');
+    // Each amiibo opens its detail page; owned/device state travels in the
+    // URL so the page stays stateless.
+    const row = document.createElement('a');
+    const q = new URLSearchParams({ id: item.id });
+    if (hasLocal) q.set('owned', '1');
+    if (hasDevice) q.set('device', '1');
+    const heldVehicles = vehiclesById.get(item.id);
+    if (heldVehicles?.size) {
+      q.set('vehicles', [...heldVehicles.keys()].filter((v) => heldVehicles.get(v).local).join(','));
+    }
+    row.href = `./amiibo.html?${q}`;
     row.className = `item${hasLocal ? '' : ' missing'}`;
     row.title = `${item.id}  ${item.typeName}`;
 
@@ -493,6 +543,22 @@ els.viewToggle.addEventListener('click', () => {
 
 try { applyView(localStorage.getItem('collectionView') === 'cards' ? 'cards' : 'compact'); } catch {}
 
+els.forget.addEventListener('click', async () => {
+  try { sessionStorage.removeItem(CACHE_KEY); } catch {}
+  await localfs.forgetDirectory();
+  rootHandle = null;
+  deviceIds = null;
+  localIds = new Set();
+  filesById = new Map();
+  namesById = new Map();
+  vehiclesById = new Map();
+  els.folderName.textContent = '';
+  els.skipped.hidden = true;
+  render();
+  setStatus('Folder forgotten — showing the full amiibo database. Choose a local folder to mark what you own.');
+  refresh();
+});
+
 els.sortMode.addEventListener('change', () => {
   try { localStorage.setItem('collectionSort', els.sortMode.value); } catch {}
   paint();
@@ -532,8 +598,17 @@ els.copyMissing.addEventListener('click', async () => {
     if (probe.ok) artDir = './data/images/med';
   } catch {}
 
+  // The whole database is bundled, so the collection is useful with no folder
+  // at all — show every amiibo, all marked missing, and let a scan fill in
+  // what is owned. Render this first so the page is never blank.
+  render();
+
   if (!localfs.available()) {
-    setStatus('File System Access API unavailable — use Chrome or Edge over http://localhost', 'err');
+    setStatus(
+      'Showing the full amiibo database. To mark what you own, use Chrome or ' +
+        'Edge over http://localhost or https — this browser cannot read a local folder.',
+      'warn'
+    );
     els.pickFolder.disabled = true;
     return;
   }
@@ -543,10 +618,16 @@ els.copyMissing.addEventListener('click', async () => {
   if (restored) {
     rootHandle = restored;
     els.folderName.textContent = restored.name;
-    refresh();
+  }
+  refresh();
+
+  if (restoreScanCache()) {
+    render();
+    setStatus(`${localIds.size} amiibos (cached) — press Scan collection to refresh`, 'ok');
+  } else if (restored) {
     els.scan.click();
   } else {
-    refresh();
+    setStatus('Showing the full amiibo database — choose a local folder to mark what you own.');
   }
 })();
 

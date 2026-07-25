@@ -52,6 +52,15 @@ async function rememberHandle(handle) {
   }
 }
 
+// Forget the remembered folder so the next load starts clean.
+export async function forgetDirectory() {
+  try {
+    await idb('readwrite', (s) => s.delete(HANDLE_KEY));
+  } catch {
+    // Nothing to forget, or storage unavailable — either way, done.
+  }
+}
+
 // Returns the previously chosen folder if permission is still granted, else null.
 export async function restoreDirectory({ prompt = false } = {}) {
   let handle;

@@ -10,5 +10,5 @@
     "update-db": "node tools/update-db.mjs",
     "fetch-images": "node tools/fetch-amiibo-images.mjs"
   },
-  "license": "MIT"
+  "license": "MIT AND GPL-2.0-only"
 }

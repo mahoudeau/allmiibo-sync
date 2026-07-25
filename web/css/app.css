@@ -81,3 +81,22 @@ pre, .logbox {
   background: var(--panel); color: var(--muted); font-size: .9rem; border-radius: 0 6px 6px 0;
 }
 .note.caution { border-left-color: var(--warn); }
+
+/* Shared footer — layout mirrors ziip.mathieu.dev, colours are ours. */
+.siteFooter { border-top: 1px solid var(--border); margin-top: 2rem; }
+.fInner { max-width: 60rem; margin: 0 auto; padding: 1.25rem 1.25rem 1.5rem;
+          display: flex; flex-direction: column; gap: .75rem;
+          font-size: .85rem; color: var(--muted); }
+.fRow { display: flex; flex-direction: column; align-items: center;
+        justify-content: space-between; gap: .75rem; }
+@media (min-width: 560px) { .fRow { flex-direction: row; } }
+.siteFooter a { color: inherit; text-decoration: none; transition: color .15s; }
+.siteFooter a:hover { color: var(--fg); }
+.fAuthor { display: inline-flex; align-items: center; gap: .6rem; }
+.fAuthor strong { font-weight: 600; color: var(--fg); }
+.fGithub { display: inline-flex; align-items: center; gap: .4rem; }
+.fMark { width: 1.25rem; height: 1.05rem; }
+.fIcon { width: 1rem; height: 1rem; }
+.fAttrib { margin: 0; font-size: .72rem; text-align: center; }
+@media (min-width: 560px) { .fAttrib { text-align: left; } }
+.fAttrib a { text-decoration: underline; }

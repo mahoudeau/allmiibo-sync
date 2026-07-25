@@ -24,7 +24,8 @@ const GLOBALS = new Set([
   'document', 'window', 'navigator', 'console', 'setTimeout', 'clearTimeout',
   'setInterval', 'clearInterval', 'fetch', 'alert', 'confirm', 'prompt', 'Blob',
   'URL', 'CustomEvent', 'EventTarget', 'FileReader', 'indexedDB', 'crypto',
-  'performance', 'requestAnimationFrame', 'AbortController',
+  'performance', 'requestAnimationFrame', 'AbortController', 'URLSearchParams',
+  'location', 'localStorage', 'history',
   // keywords the bare-call regex would otherwise pick up
   'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'function', 'await',
   'super', 'this', 'new', 'else', 'do', 'try', 'finally', 'yield', 'of', 'in',
@@ -166,6 +167,19 @@ const files = (await readdir(UI_DIR)).filter((f) => f.endsWith('.js'));
 test('the UI modules are all present', () => {
   for (const expected of ['ble.js', 'protocol.js', 'planner.js', 'collectionui.js', 'syncui.js']) {
     assert.ok(files.includes(expected), `${expected} is missing`);
+  }
+});
+
+test('every UI module parses', async () => {
+  // Constructing an AsyncFunction parses without executing — it catches what
+  // the reference check cannot, such as a duplicate declaration.
+  for (const file of files) {
+    const src = await readFile(join(UI_DIR, file), 'utf8');
+    const body = src.replace(/^\s*import\s[^;]*;\s*$/gm, '').replace(/^\s*export\s+/gm, '');
+    assert.doesNotThrow(
+      () => new (Object.getPrototypeOf(async function () {}).constructor)(body),
+      (err) => { throw new Error(`${file} does not parse: ${err.message}`); }
+    );
   }
 });
 

@@ -34,9 +34,11 @@ const BASE = 'https://raw.githubusercontent.com/8bitDream/AmiiboAPI/dev/images';
 const CONCURRENCY = 10;
 
 // Three tiers, three policies:
-//   thumb  96 px  committed to the repo — the only artwork git carries
-//   med   256 px  gitignored; deployed — Retina-sharp lists and cards
-//   full  original gitignored; deployed — the per-amiibo detail page
+//   thumb  96 px  small list icons and the fresh-clone fallback
+//   med   256 px  Retina-sharp lists and cards
+//   full  original the per-amiibo detail page
+// All three are gitignored — Nintendo's artwork, cached locally and deployed,
+// never committed.
 const THUMB_SIZE = 96;
 const MED_SIZE = 256;
 

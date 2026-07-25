@@ -23,11 +23,15 @@ allmiibo-writetest*.json
 # Second local library folder
 /Allmiibo/
 
-# Amiibo artwork tiers: the 96px thumbs ARE committed (the repo's only
-# images); med and full are fetched locally, deployed to the website, and
-# never committed.
-web/data/images/full/
-web/data/images/med/
+# Amiibo artwork is Nintendo's: no tier is committed. All are fetched locally
+# (npm run fetch-images) and deployed to the website, never to the repository.
+web/data/images/
 
 # update-db working files
 tools/.cache/
+
+# Deployment — kept local, never committed (server address + credentials)
+deploy.sh
+.env
+.env.*
+!.env.example

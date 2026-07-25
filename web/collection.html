@@ -26,7 +26,8 @@
   .chip.have { border-style:solid; border-color:var(--ok); color:var(--ok); opacity:1; }
   .chip.dev { border-style:solid; border-color:var(--accent); color:var(--accent); opacity:1; }
   .item { display:flex; align-items:center; gap:.5rem; padding:.3rem .4rem; border-radius:4px;
-          font-size:.88rem; border:1px solid transparent; }
+          font-size:.88rem; border:1px solid transparent; color:inherit; text-decoration:none; }
+  .item:hover { border-color:var(--accent); }
   .item.missing { opacity:.55; }
   .item.missing .dot { background:transparent; border:1px solid var(--muted); }
   .art { width:34px; height:34px; flex:none; display:flex; align-items:center; justify-content:center;
@@ -94,6 +95,7 @@
   <div class="row" style="margin-top:1rem">
     <button id="pickFolder" class="primary">Choose local folder</button>
     <button id="scan" disabled>Scan collection</button>
+    <button id="forget" disabled>Forget folder</button>
     <span id="folderName" class="status" style="margin:0;padding:.3rem .6rem"></span>
   </div>
 
@@ -133,5 +135,6 @@
   <section id="series"></section>
 </main>
 <script type="module" src="./js/collectionui.js"></script>
+<script type="module" src="./js/footer.js"></script>
 </body>
 </html>
