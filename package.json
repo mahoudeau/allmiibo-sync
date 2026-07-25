@@ -1,0 +1,12 @@
+{
+  "name": "allmiibo-sync",
+  "version": "0.1.0",
+  "description": "Folder sync for Allmiibo / PIXL NFC emulator devices over Bluetooth LE",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "serve": "node serve.mjs",
+    "test": "node --test"
+  },
+  "license": "MIT"
+}
