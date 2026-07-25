@@ -383,25 +383,34 @@ them they exercise both TLV tags: `E:/chameleon/slots/00.bin` has
 `notes = "Slot 01wee"`, and `E:/settings.bin` has the `hide` flag set. Both
 decoded correctly, so the TLV parser is confirmed against hardware.
 
-**Filenames contain characters that a naive comparison will trip over.**
-Twelve names contain `_` where the source almost certainly had something else —
-`Mr. Game _ Watch.bin`, `Banjo _ Kazooie.bin`, `Rosalina _ Luma.bin`,
-`Zelda _ Loftwing.bin` (`&`); `Link (Majora_s Mask).bin` (`'`);
-`[MOD _ MAX LEVEL] Wolf Link.bin` (`/`); `Palamute _Canyne Malzeno X_.bin`
-(quotes). Several distinct characters collapse to `_`, so the transform is not
-invertible.
+**The firmware does NOT sanitise filenames.** Twelve names contain `_` where
+the source clearly had something else — `Mr. Game _ Watch.bin`,
+`Banjo _ Kazooie.bin`, `Rosalina _ Luma.bin`, `Zelda _ Loftwing.bin` (`&`);
+`Link (Majora_s Mask).bin` (`'`); `[MOD _ MAX LEVEL] Wolf Link.bin` (`/`).
 
-**Whether the device performs that substitution, or the dump pack simply shipped
-with those names, cannot be determined from a read-only probe.** It matters: if
-the firmware sanitises on write, a local `Mr. Game & Watch.bin` lands as
-`Mr. Game _ Watch.bin` and every subsequent sync sees a missing file and
-re-uploads the library. Writing one file with `&` in its name to a scratch
-folder and reading the directory back settles it — see §8.
+That looks like device-side rewriting, but it is not. The same drive also
+holds, stored literally:
 
-Non-ASCII names survive intact (`Link (Link’s Awakening).bin`,
-`Tatsuhisa “Luke” Kamijō.bin`, `Gakuto Sōgetsu.bin`), so this is not an
-ASCII-only restriction — but such names cost more bytes than characters against
-the caps.
+| Path | Character |
+|---|---|
+| `E:/amiibo/Animal/Figures/13 - Timmy & Tommy.bin` | `&` |
+| `E:/amiibo/Animal/Series 4/390 - O'Hare.bin` | `'` |
+| `E:/amiibo/Animal/Figures/15 - Kapp'n.bin` | `'` |
+| `E:/amiibo/others/Yoshi's` (folder) | `'` |
+
+`&` and `'` survive verbatim on this device, while other files on the *same*
+device have those characters replaced. A filesystem cannot be selectively
+lossy — so the substitution happened in the dump packs before upload, not in
+the firmware.
+
+**Consequence: sync needs no name-mapping layer.** Compare names byte-for-byte.
+(The one character that genuinely cannot appear in a name is `/`, since it is
+the path separator.)
+
+Non-ASCII survives intact — `Link (Link’s Awakening).bin` (U+2019, 29 bytes /
+27 characters), `Tatsuhisa “Luke” Kamijō.bin`, `Gakuto Sōgetsu.bin`. Names are
+plain UTF-8 with no transliteration, but multi-byte characters cost more against
+the byte caps than their character count suggests.
 
 ### 7.2.1 Read performance
 
@@ -445,10 +454,12 @@ Resolved against firmware and hardware:
 - ~~Whether `read_file` returns exactly the size `read_dir` reported~~ — yes,
   verified byte-for-byte on a 160-byte file.
 
+- ~~Does the firmware sanitise filenames on write?~~ — no. `&` and `'` are
+  stored verbatim; the underscores came from the dump packs (§7.2). Sync
+  compares names byte-for-byte.
+
 Still open — all require a write test:
 
-- **Does the firmware sanitise filenames on write?** The highest-value unknown;
-  it decides whether sync needs a name-mapping layer (§7.2).
 - Behaviour of `vfs_create_folder` on an existing path.
 - Whether `vfs_remove` succeeds on a non-empty directory.
 - Whether `vfs_rename` can move an entry between folders or only rename in
