@@ -209,7 +209,7 @@ export function describeAmiibo(id) {
  * @param {Set<string>|Map<string,any>} ownedLocal   IDs present locally
  * @param {Set<string>|Map<string,any>} [ownedDevice] IDs present on the device
  */
-export function buildCollection(ownedLocal, ownedDevice = null) {
+export function buildCollection(ownedLocal, ownedDevice = null, { nameHints = null } = {}) {
   const localSet = ownedLocal instanceof Map ? new Set(ownedLocal.keys()) : new Set(ownedLocal);
   const deviceSet = ownedDevice
     ? ownedDevice instanceof Map
@@ -224,11 +224,23 @@ export function buildCollection(ownedLocal, ownedDevice = null) {
     if (!seriesMap.has(d.series)) {
       seriesMap.set(d.series, { series: d.series, seriesName: d.seriesName, items: [] });
     }
+    // Naming, most trustworthy first. Only the first is a fact; the rest are
+    // labelled as guesses in the UI, because being wrong quietly is worse than
+    // saying "unknown".
+    //   1. the database
+    //   2. the filenames you gave the dumps — no more reliable than whoever
+    //      named them, which may not have been you
+    //   3. the character head, a heuristic that does misfire: the 91 Animal
+    //      Crossing item cards share head 026a0001 with the villager Stinky
+    //      and are emphatically not Stinky
+    //   4. the raw ID
+    const hint = name ? null : nameHints?.get(id);
+    const inferred = name || hint ? null : characterName(id);
+    const source = name ? 'database' : hint ? 'filename' : inferred ? 'inferred' : 'unknown';
     seriesMap.get(d.series).items.push({
       id,
-      // An ID absent from the database can still often be named through its
-      // character head; only fall back to the raw ID when even that fails.
-      name: name ?? characterName(id) ?? `Unknown (${id})`,
+      name: name ?? hint ?? inferred ?? `Unknown (${id})`,
+      nameSource: source,
       inDatabase: known,
       typeName: d.typeName,
       hasLocal: localSet.has(id),

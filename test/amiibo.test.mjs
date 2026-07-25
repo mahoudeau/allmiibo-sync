@@ -169,11 +169,33 @@ test('an entirely unknown head yields nothing rather than a guess', () => {
   assert.equal(characterName('abcdef0000000002'), null);
 });
 
-test('the collection names unlisted amiibos by character', () => {
+test('the collection names unlisted amiibos by character, marked as a guess', () => {
   const c = buildCollection(new Set(['1f01000004c61e03']));
   const item = c.series.flatMap((s) => s.items).find((i) => i.id === '1f01000004c61e03');
   assert.equal(item.name, 'Meta Knight');
+  assert.equal(item.nameSource, 'inferred');
   assert.equal(item.inDatabase, false, 'still flagged as absent from the database');
+});
+
+test('a filename hint outranks the character heuristic, and is labelled as such', () => {
+  // The 91 Animal Crossing item cards share a head with the villager Stinky.
+  // Naming them "Stinky" would be confidently wrong.
+  const id = '026a000100000502';
+  const guessed = buildCollection(new Set([id]));
+  assert.equal(guessed.series.flatMap((s) => s.items).find((i) => i.id === id).name, 'Stinky');
+
+  const hinted = buildCollection(new Set([id]), null, { nameHints: new Map([[id, 'HHD Items']]) });
+  const item = hinted.series.flatMap((s) => s.items).find((i) => i.id === id);
+  assert.equal(item.name, 'HHD Items');
+  assert.equal(item.nameSource, 'filename');
+});
+
+test('a database name is never overridden by a hint', () => {
+  const id = '0181000100440502';
+  const c = buildCollection(new Set([id]), null, { nameHints: new Map([[id, 'Nonsense']]) });
+  const item = c.series.flatMap((s) => s.items).find((i) => i.id === id);
+  assert.equal(item.name, '[AC] 001 - Isabelle');
+  assert.equal(item.nameSource, 'database');
 });
 
 test('vehicles apply to the Kirby Air Riders series', () => {

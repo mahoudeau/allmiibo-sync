@@ -24,6 +24,7 @@ let filesById = new Map(); // how many dumps you hold per amiibo
 // v3 amiibo carry a vehicle that is not part of the amiibo ID, so one ID can
 // stand for several distinct products. Tracked separately per side.
 let vehiclesById = new Map(); // id -> Map<vehicle, {local:bool, device:bool}>
+let namesById = new Map();    // id -> filenames you gave its dumps
 let deviceIds = null;
 let collection = null;
 let stopRequested = false;
@@ -61,6 +62,7 @@ els.scan.addEventListener('click', async () => {
 
     localIds = new Set();
     filesById = new Map();
+    namesById = new Map();
     for (const v of vehiclesById.values()) for (const e of v.values()) e.local = false;
     let files = 0;
     let folders = 0;
@@ -79,6 +81,8 @@ els.scan.addEventListener('click', async () => {
         localIds.add(e.amiiboId);
         filesById.set(e.amiiboId, (filesById.get(e.amiiboId) ?? 0) + 1);
         if (e.vehicle) markVehicle(e.amiiboId, e.vehicle, 'local');
+        if (!namesById.has(e.amiiboId)) namesById.set(e.amiiboId, []);
+        namesById.get(e.amiiboId).push(relPath.slice(relPath.lastIndexOf('/') + 1));
       } else if (isExcluded(relPath)) {
         ignored.push({ relPath, size: e.size });
       } else {
@@ -175,8 +179,34 @@ function markVehicle(id, vehicle, side) {
 
 // ---- rendering ----------------------------------------------------------
 
+// Turn the filenames you gave a group of dumps into one label. With several
+// dumps under one ID their shared prefix is the useful part: 91 files called
+// "hhd items 01.bin" … "hhd items 91.bin" yield "hhd items".
+function labelFromFilenames(names) {
+  const clean = names
+    .map((n) => n.replace(/\.bin$/i, '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\d+\s*-\s*/, '').trim())
+    .filter(Boolean);
+  if (!clean.length) return null;
+  if (clean.length === 1) return clean[0];
+
+  let prefix = clean[0];
+  for (const n of clean.slice(1)) {
+    let i = 0;
+    while (i < prefix.length && i < n.length && prefix[i].toLowerCase() === n[i].toLowerCase()) i++;
+    prefix = prefix.slice(0, i);
+    if (!prefix) break;
+  }
+  prefix = prefix.replace(/[\s\-_#.]*\d*$/, '').trim();
+  return prefix.length >= 3 ? prefix : clean[0];
+}
+
 function render() {
-  collection = buildCollection(localIds, deviceIds);
+  const nameHints = new Map();
+  for (const [id, names] of namesById) {
+    const label = labelFromFilenames(names);
+    if (label) nameHints.set(id, label);
+  }
+  collection = buildCollection(localIds, deviceIds, { nameHints });
   const s = collection.stats;
 
   els.stats.hidden = false;
@@ -305,6 +335,20 @@ function paint() {
       const t = document.createElement('span');
       t.className = 'tag new';
       t.textContent = 'unlisted';
+      t.title = 'Not in the amiibo database — newer than it, most likely';
+      row.append(t);
+    }
+    // Where the name came from. Anything but the database is a guess and says
+    // so: filenames can have been written by anyone, and the character-head
+    // heuristic misreads the Animal Crossing item cards as Stinky.
+    if (item.nameSource === 'filename' || item.nameSource === 'inferred') {
+      const t = document.createElement('span');
+      t.className = 'tag guess';
+      t.textContent = item.nameSource === 'filename' ? 'from filename' : 'guessed';
+      t.title =
+        item.nameSource === 'filename'
+          ? `Taken from your filenames, not the database — ${item.id}`
+          : `Guessed from the character in the ID, which can be wrong — ${item.id}`;
       row.append(t);
     }
     // Several dumps can share one amiibo ID even without vehicles — the 91
