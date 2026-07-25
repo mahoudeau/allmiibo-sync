@@ -204,13 +204,31 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
         continue;
       }
 
-      // No record and no verified device hash: sizes match but every amiibo
-      // dump is 540 bytes, so equal size proves nothing. Do not guess.
-      if (!s && knownDeviceHash === undefined) {
+      // Different sizes settle it without needing a hash: the contents cannot
+      // match. This is the state a failed upload leaves behind — vfs_open_file
+      // creates the file before vfs_write_file fills it, so a push that runs
+      // out of room leaves a 0-byte file where a 540-byte dump should be, and
+      // treating that as unknowable would strand it there permanently.
+      const sizeDiffers = l.size !== d.size;
+
+      // Same size, no record: equal size proves nothing, since every amiibo
+      // dump is 540 bytes. Do not guess.
+      if (!s && knownDeviceHash === undefined && !sizeDiffers) {
         plan.ambiguous.push({
           relPath,
           reason: 'present on both sides with no sync record; content not verified',
         });
+        continue;
+      }
+
+      if (sizeDiffers && !s) {
+        // No record to say which side moved, so direction decides.
+        if (mode === 'pull') {
+          queueLocalDirs(plan, relPath, localDirs);
+          addDownload(plan, relPath, d);
+        } else {
+          addUpload(plan, relPath, l, deviceRoot, deviceDirs, localDirs);
+        }
         continue;
       }
 

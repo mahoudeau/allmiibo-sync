@@ -1050,3 +1050,31 @@ test('the run log records every operation, not only the failures', async () => {
   assert.ok(Number.isFinite(failure.ms), 'with a duration');
   assert.ok(Number.isFinite(failure.at), 'and an offset into the run');
 });
+
+test('a half-written file left by a failed upload is re-uploaded, not skipped', () => {
+  // vfs_open_file creates the file before vfs_write_file fills it, so a push
+  // that runs out of room leaves a 0-byte file behind. With no sync record and
+  // no device hash, treating that as unknowable would strand it forever.
+  const p = plan(
+    { 'a.bin': file(540, 'h1') },
+    { 'a.bin': file(0) },
+    {},
+    { mode: 'push', delete: true }
+  );
+
+  assert.deepEqual(p.upload.map((u) => u.relPath), ['a.bin']);
+  assert.deepEqual(p.ambiguous, []);
+});
+
+test('differing sizes are still unknowable in neither direction, so pull takes the device copy', () => {
+  const p = plan({ 'a.bin': file(540, 'h1') }, { 'a.bin': file(0) }, {}, { mode: 'pull' });
+  assert.deepEqual(p.download.map((d) => d.relPath), ['a.bin']);
+});
+
+test('equal sizes with no record are still left alone', () => {
+  // The case the size rule must not swallow: two 540-byte dumps that may or
+  // may not be the same.
+  const p = plan({ 'a.bin': file(540, 'h1') }, { 'a.bin': file(540) }, {});
+  assert.deepEqual(p.upload, []);
+  assert.equal(p.ambiguous.length, 1);
+});
