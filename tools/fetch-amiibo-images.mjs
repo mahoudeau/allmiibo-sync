@@ -29,9 +29,16 @@ const run = promisify(execFile);
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const FULL_DIR = join(ROOT, 'web/data/images/full');
 const THUMB_DIR = join(ROOT, 'web/data/images/thumb');
+const MED_DIR = join(ROOT, 'web/data/images/med');
 const BASE = 'https://raw.githubusercontent.com/8bitDream/AmiiboAPI/dev/images';
 const CONCURRENCY = 10;
+
+// Three tiers, three policies:
+//   thumb  96 px  committed to the repo — the only artwork git carries
+//   med   256 px  gitignored; deployed — Retina-sharp lists and cards
+//   full  original gitignored; deployed — the per-amiibo detail page
 const THUMB_SIZE = 96;
+const MED_SIZE = 256;
 
 const ids = [...new Set([...Object.keys(AMIIBO_NAMES), ...process.argv.slice(2)])].filter((id) =>
   /^[0-9a-f]{16}$/.test(id)
@@ -39,6 +46,7 @@ const ids = [...new Set([...Object.keys(AMIIBO_NAMES), ...process.argv.slice(2)]
 
 await mkdir(FULL_DIR, { recursive: true });
 await mkdir(THUMB_DIR, { recursive: true });
+await mkdir(MED_DIR, { recursive: true });
 
 const have = new Set(await readdir(FULL_DIR));
 const pending = ids.filter((id) => !have.has(`${id}.png`));
@@ -77,37 +85,43 @@ await Promise.all(
 );
 if (pending.length) console.log();
 
-// ---- thumbnails ----------------------------------------------------------
+// ---- resized tiers --------------------------------------------------------
 // sips ships with macOS and reads the WebP-in-.png files some entries use.
-// Only regenerate what is missing.
+// Only regenerate what is missing in each tier.
 
-const fulls = (await readdir(FULL_DIR)).filter((f) => f.endsWith('.png'));
-const thumbs = new Set(await readdir(THUMB_DIR));
-const toThumb = fulls.filter((f) => !thumbs.has(f));
-console.log(`thumbnails: ${fulls.length - toThumb.length} cached, ${toThumb.length} to generate`);
+async function resizeTier(destDir, size, label) {
+  const fulls = (await readdir(FULL_DIR)).filter((f) => f.endsWith('.png'));
+  const have = new Set(await readdir(destDir));
+  const todo = fulls.filter((f) => !have.has(f));
+  console.log(`${label}: ${fulls.length - todo.length} cached, ${todo.length} to generate`);
 
-for (let i = 0; i < toThumb.length; i += 50) {
-  const batch = toThumb.slice(i, i + 50).map((f) => join(FULL_DIR, f));
-  try {
-    await run('sips', ['-s', 'format', 'png', '-Z', String(THUMB_SIZE), ...batch, '--out', THUMB_DIR]);
-  } catch {
-    // sips batches fail atomically on one bad file; retry singly so one
-    // unreadable image does not cost the other forty-nine.
-    for (const file of batch) {
-      try {
-        await run('sips', ['-s', 'format', 'png', '-Z', String(THUMB_SIZE), file, '--out', THUMB_DIR]);
-      } catch (err) {
-        failed.push(`thumbnail ${file}: ${err.message}`);
+  for (let i = 0; i < todo.length; i += 50) {
+    const batch = todo.slice(i, i + 50).map((f) => join(FULL_DIR, f));
+    try {
+      await run('sips', ['-s', 'format', 'png', '-Z', String(size), ...batch, '--out', destDir]);
+    } catch {
+      // sips batches fail atomically on one bad file; retry singly so one
+      // unreadable image does not cost the other forty-nine.
+      for (const file of batch) {
+        try {
+          await run('sips', ['-s', 'format', 'png', '-Z', String(size), file, '--out', destDir]);
+        } catch (err) {
+          failed.push(`${label} ${file}: ${err.message}`);
+        }
       }
     }
+    process.stdout.write(`\r  ${label} ${Math.min(i + 50, todo.length)}/${todo.length}`);
   }
-  process.stdout.write(`\r  thumbed ${Math.min(i + 50, toThumb.length)}/${toThumb.length}`);
+  if (todo.length) console.log();
 }
-if (toThumb.length) console.log();
+
+await resizeTier(THUMB_DIR, THUMB_SIZE, 'thumb');
+await resizeTier(MED_DIR, MED_SIZE, 'med');
 
 const fullCount = (await readdir(FULL_DIR)).length;
 const thumbCount = (await readdir(THUMB_DIR)).length;
-console.log(`\ndone: ${fullCount} images, ${thumbCount} thumbnails`);
+const medCount = (await readdir(MED_DIR)).length;
+console.log(`\ndone: ${fullCount} full, ${medCount} med, ${thumbCount} thumb`);
 if (missing) console.log(`${missing} id(s) have no artwork upstream (newer than the image set) — the page shows a placeholder`);
 if (failed.length) {
   console.log(`${failed.length} failure(s):`);

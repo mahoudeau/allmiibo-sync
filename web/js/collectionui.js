@@ -29,6 +29,10 @@ let namesById = new Map();    // id -> filenames you gave its dumps
 let deviceIds = null;
 let collection = null;
 let stopRequested = false;
+// Which artwork tier the lists use. The repo ships 96px thumbs; a deployed or
+// image-fetched copy also has the 256px med tier, which is what Retina wants.
+// Probed once at boot instead of letting ~950 img tags each 404 and fall back.
+let artDir = './data/images/thumb';
 
 function setStatus(text, kind = '') {
   els.status.textContent = text;
@@ -313,7 +317,7 @@ function paint() {
     headArt.className = 'seriesArt';
     headArt.loading = 'lazy';
     headArt.alt = '';
-    headArt.src = `./data/images/thumb/${seriesRepresentative(group.series) ?? (items.find((i) => i.hasLocal) ?? items[0]).id}.png`;
+    headArt.src = `${artDir}/${seriesRepresentative(group.series) ?? (items.find((i) => i.hasLocal) ?? items[0]).id}.png`;
     headArt.addEventListener('error', () => headArt.remove());
     const label = document.createElement('span');
     label.textContent = group.seriesName;
@@ -387,7 +391,7 @@ function paint() {
     const img = document.createElement('img');
     img.loading = 'lazy';
     img.alt = '';
-    img.src = `./data/images/thumb/${item.id}.png`;
+    img.src = `${artDir}/${item.id}.png`;
     img.addEventListener('error', () => img.remove());
     art.append(img);
 
@@ -522,6 +526,12 @@ els.copyMissing.addEventListener('click', async () => {
 // ---- boot ---------------------------------------------------------------
 
 (async function boot() {
+  // One request decides the tier for the whole page.
+  try {
+    const probe = await fetch('./data/images/med/0000000000000002.png', { method: 'HEAD' });
+    if (probe.ok) artDir = './data/images/med';
+  } catch {}
+
   if (!localfs.available()) {
     setStatus('File System Access API unavailable — use Chrome or Edge over http://localhost', 'err');
     els.pickFolder.disabled = true;

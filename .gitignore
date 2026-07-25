@@ -23,5 +23,11 @@ allmiibo-writetest*.json
 # Second local library folder
 /Allmiibo/
 
+# Amiibo artwork tiers: the 96px thumbs ARE committed (the repo's only
+# images); med and full are fetched locally, deployed to the website, and
+# never committed.
+web/data/images/full/
+web/data/images/med/
+
 # update-db working files
 tools/.cache/
