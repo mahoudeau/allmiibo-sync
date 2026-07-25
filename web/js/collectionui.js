@@ -21,6 +21,9 @@ let transport = null;
 let client = null;
 let localIds = new Set();
 let filesById = new Map(); // how many dumps you hold per amiibo
+// v3 amiibo carry a vehicle that is not part of the amiibo ID, so one ID can
+// stand for several distinct products. Tracked separately per side.
+let vehiclesById = new Map(); // id -> Map<vehicle, {local:bool, device:bool}>
 let deviceIds = null;
 let collection = null;
 let stopRequested = false;
@@ -58,6 +61,7 @@ els.scan.addEventListener('click', async () => {
 
     localIds = new Set();
     filesById = new Map();
+    for (const v of vehiclesById.values()) for (const e of v.values()) e.local = false;
     let files = 0;
     let folders = 0;
     let dumps = 0;
@@ -74,6 +78,7 @@ els.scan.addEventListener('click', async () => {
         dumps++;
         localIds.add(e.amiiboId);
         filesById.set(e.amiiboId, (filesById.get(e.amiiboId) ?? 0) + 1);
+        if (e.vehicle) markVehicle(e.amiiboId, e.vehicle, 'local');
       } else if (isExcluded(relPath)) {
         ignored.push({ relPath, size: e.size });
       } else {
@@ -138,7 +143,12 @@ els.scanDevice.addEventListener('click', async () => {
     els.progress.value = 0;
 
     deviceIds = new Set();
-    for (const e of index.values()) if (!e.isDir && e.amiiboId) deviceIds.add(e.amiiboId);
+    for (const v of vehiclesById.values()) for (const e of v.values()) e.device = false;
+    for (const e of index.values()) {
+      if (e.isDir || !e.amiiboId) continue;
+      deviceIds.add(e.amiiboId);
+      if (e.vehicle) markVehicle(e.amiiboId, e.vehicle, 'device');
+    }
 
     render();
     setStatus(
@@ -155,6 +165,13 @@ els.scanDevice.addEventListener('click', async () => {
 });
 
 els.stop.addEventListener('click', () => { stopRequested = true; });
+
+function markVehicle(id, vehicle, side) {
+  if (!vehiclesById.has(id)) vehiclesById.set(id, new Map());
+  const forId = vehiclesById.get(id);
+  if (!forId.has(vehicle)) forId.set(vehicle, { local: false, device: false });
+  forId.get(vehicle)[side] = true;
+}
 
 // ---- rendering ----------------------------------------------------------
 
@@ -247,48 +264,18 @@ function paint() {
     const box = document.createElement('div');
     box.className = 'items';
     for (const item of items) {
-      const row = document.createElement('div');
-      row.className = `item${item.hasLocal ? '' : ' missing'}`;
-      row.title = `${item.id}  ${item.typeName}`;
-
-      const dot = document.createElement('span');
-      dot.className = 'dot';
-
-      const nm = document.createElement('span');
-      nm.className = 'nm';
-      nm.textContent = item.name;
-
-      row.append(dot, nm);
-
-      if (item.hasDevice) {
-        const t = document.createElement('span');
-        t.className = 'tag dev';
-        t.textContent = 'device';
-        row.append(t);
+      // A v3 amiibo is a character plus a vehicle, and only the character is
+      // in the amiibo ID. You own each pairing separately, so list them
+      // separately — while completion against the database stays per
+      // character, which is all the database records.
+      const vehicles = vehiclesById.get(item.id);
+      if (vehicles?.size) {
+        for (const [vehicle, where] of [...vehicles].sort((a, b) => a[0].localeCompare(b[0]))) {
+          box.append(makeRow(item, `${item.name} & ${vehicle}`, where.local, where.device));
+        }
+        continue;
       }
-      if (!item.inDatabase) {
-        const t = document.createElement('span');
-        t.className = 'tag new';
-        t.textContent = 'unlisted';
-        row.append(t);
-      }
-      // Several dumps can legitimately share one amiibo ID — 91 Animal
-      // Crossing item cards do, as do the four vehicle pairings of an Air
-      // Riders character. Show the count so the total adds up.
-      const held = filesById.get(item.id) ?? 0;
-      if (held > 1) {
-        const t = document.createElement('span');
-        t.className = 'tag';
-        t.textContent = `×${held} dumps`;
-        row.append(t);
-      }
-
-      const ty = document.createElement('span');
-      ty.className = 'tag';
-      ty.textContent = item.typeName;
-      row.append(ty);
-
-      box.append(row);
+      box.append(makeRow(item, item.name, item.hasLocal, item.hasDevice));
     }
     details.append(box);
     els.series.append(details);
@@ -299,6 +286,51 @@ function paint() {
     p.className = 'sub';
     p.textContent = 'Nothing matches that filter.';
     els.series.append(p);
+  }
+
+  function makeRow(item, label, hasLocal, hasDevice) {
+    const row = document.createElement('div');
+    row.className = `item${hasLocal ? '' : ' missing'}`;
+    row.title = `${item.id}  ${item.typeName}`;
+
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = label;
+
+    row.append(dot, nm);
+
+    if (hasDevice) {
+      const t = document.createElement('span');
+      t.className = 'tag dev';
+      t.textContent = 'device';
+      row.append(t);
+    }
+    if (!item.inDatabase) {
+      const t = document.createElement('span');
+      t.className = 'tag new';
+      t.textContent = 'unlisted';
+      row.append(t);
+    }
+    // Several dumps can share one amiibo ID even without vehicles — the 91
+    // Animal Crossing item cards do. Show the count so the totals add up.
+    // Vehicle rows are one dump each, so it is only useful on a plain row.
+    const held = filesById.get(item.id) ?? 0;
+    if (held > 1 && label === item.name) {
+      const t = document.createElement('span');
+      t.className = 'tag';
+      t.textContent = `×${held} dumps`;
+      row.append(t);
+    }
+
+    const ty = document.createElement('span');
+    ty.className = 'tag';
+    ty.textContent = item.typeName;
+    row.append(ty);
+
+    return row;
   }
 }
 
