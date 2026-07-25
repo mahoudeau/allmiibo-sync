@@ -595,6 +595,19 @@ move detector keyed on content hash is worth having.
 
 16,384 bytes took 8,010 ms — **2.00 KB/s**, about 118 ms per 242-byte chunk
 (8,160 ms / 1.96 KB/s on 2.16.0).
+
+**Write speed degrades as the drive fills.** Across one 1049-upload run onto a
+freshly cleared drive, the first hundred uploads averaged 1.04 s and the last
+hundred 1.68 s; a push onto a nearly full drive averaged 2.5 s per dump. Flash
+allocation, not BLE, is the moving part. Deletes on a mostly empty drive run
+~66 ms against ~240 ms when full, for the same reason. Estimates calibrated at
+one fill level will misestimate at another — err on the full-drive figures.
+
+**A failed upload leaves the file at whatever length was committed.** Observed
+after a push died of a full drive: files of 0 bytes (open succeeded, no chunk
+written), 242 bytes (one chunk), and 484 bytes (two chunks). The planner
+treats a size mismatch as knowably different, so these are re-uploaded on the
+next run rather than stranded.
 That is dominated by per-command latency, not bandwidth: each chunk is a
 separate acknowledged write, and the device commits to external SPI flash
 between them.
