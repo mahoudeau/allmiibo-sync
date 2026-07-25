@@ -12,6 +12,9 @@ import {
   AMIIBO_ID_OFFSET,
   parseVehicle,
   characterName,
+  hasVehicles,
+  amiiboVersion,
+  KNOWN_VEHICLES,
   VEHICLE_CODE_OFFSET,
   VEHICLE_FLAG_OFFSET,
 } from '../web/js/amiibo.js';
@@ -171,4 +174,19 @@ test('the collection names unlisted amiibos by character', () => {
   const item = c.series.flatMap((s) => s.items).find((i) => i.id === '1f01000004c61e03');
   assert.equal(item.name, 'Meta Knight');
   assert.equal(item.inDatabase, false, 'still flagged as absent from the database');
+});
+
+test('vehicles apply to the Kirby Air Riders series', () => {
+  assert.equal(hasVehicles('1f00000004c41e03'), true);  // Kirby, Air Riders
+  assert.equal(hasVehicles('1f01000004c61e03'), true);  // Meta Knight, unlisted
+  assert.equal(hasVehicles('0181000100440502'), false); // Isabelle, Animal Crossing
+});
+
+test('the vehicle line-up is the full known set, so it reads as a checklist', () => {
+  assert.deepEqual(KNOWN_VEHICLES, ['Shadow Star', 'Tank Star', 'Warp Star', 'Winged Star']);
+});
+
+test('the amiibo format version is byte 7', () => {
+  assert.equal(amiiboVersion('1f00000004c41e03'), 3);
+  assert.equal(amiiboVersion('0181000100440502'), 2);
 });

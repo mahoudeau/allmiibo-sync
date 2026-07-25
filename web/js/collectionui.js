@@ -5,7 +5,7 @@
 import { BleTransport } from './ble.js';
 import { AllmiiboClient } from './protocol.js';
 import { walkDevice, hashDeviceIndex } from './sync.js';
-import { buildCollection, describeAmiibo, DUMP_SIZES } from './amiibo.js';
+import { buildCollection, describeAmiibo, DUMP_SIZES, KNOWN_VEHICLES, hasVehicles } from './amiibo.js';
 import { isExcluded } from './planner.js';
 import * as localfs from './localfs.js';
 
@@ -268,8 +268,7 @@ function paint() {
       // in the amiibo ID. You own each pairing separately, so list them
       // separately — while completion against the database stays per
       // character, which is all the database records.
-      const vehicles = vehiclesById.get(item.id);
-      box.append(makeRow(item, item.name, item.hasLocal, item.hasDevice, vehicles));
+      box.append(makeRow(item, item.name, item.hasLocal, item.hasDevice));
     }
     details.append(box);
     els.series.append(details);
@@ -282,7 +281,7 @@ function paint() {
     els.series.append(p);
   }
 
-  function makeRow(item, label, hasLocal, hasDevice, vehicles) {
+  function makeRow(item, label, hasLocal, hasDevice) {
     const row = document.createElement('div');
     row.className = `item${hasLocal ? '' : ' missing'}`;
     row.title = `${item.id}  ${item.typeName}`;
@@ -324,22 +323,36 @@ function paint() {
     ty.textContent = item.typeName;
     row.append(ty);
 
-    if (!vehicles?.size) return row;
+    if (!hasVehicles(item.id)) return row;
 
-    // A v3 amiibo is a character plus a vehicle, and only the character is in
-    // the amiibo ID. Keep one row per character — that is what completion is
-    // measured against — and hang the pairings you own off it.
+    // An Air Riders amiibo is a character plus a vehicle, and only the
+    // character is in the amiibo ID. Keep one row per character — that is what
+    // completion is measured against — and show the whole vehicle line-up
+    // beneath it, since every character takes every vehicle.
+    const owned = vehiclesById.get(item.id) ?? new Map();
+    const all = [...new Set([...KNOWN_VEHICLES, ...owned.keys()])].sort();
+
     const wrap = document.createElement('div');
     wrap.className = 'withVehicles';
+
+    const tally = document.createElement('span');
+    tally.className = 'tag';
+    tally.textContent = `${[...owned.values()].filter((w) => w.local).length} / ${all.length} vehicles`;
+    row.append(tally);
     wrap.append(row);
 
     const chips = document.createElement('div');
     chips.className = 'vehicles';
-    for (const [vehicle, where] of [...vehicles].sort((a, b) => a[0].localeCompare(b[0]))) {
+    for (const vehicle of all) {
+      const where = owned.get(vehicle);
       const chip = document.createElement('span');
-      chip.className = `chip${where.device ? ' dev' : ''}`;
+      chip.className = `chip${where?.local ? ' have' : ''}${where?.device ? ' dev' : ''}`;
       chip.textContent = vehicle;
-      chip.title = where.device ? `${vehicle} — also on the device` : vehicle;
+      chip.title = where?.device
+        ? `${vehicle} — held, and on the device`
+        : where?.local
+          ? `${vehicle} — held`
+          : `${vehicle} — not in your dumps`;
       chips.append(chip);
     }
     wrap.append(chips);

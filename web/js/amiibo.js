@@ -98,6 +98,35 @@ export const VEHICLE_SIGNATURES = Object.freeze({
   'PC6V28:04': 'Tank Star',
 });
 
+// Every character takes every vehicle, so this doubles as the per-character
+// checklist. It is only as complete as what has been observed — a Hop Star is
+// announced alongside Chef Kawasaki and is not here yet — so treat a missing
+// chip as "not seen in your dumps", not as proof the pairing does not exist.
+export const KNOWN_VEHICLES = Object.freeze([
+  ...new Set(Object.values(VEHICLE_SIGNATURES)),
+].sort());
+
+/** Amiibo format version — byte 7 of the ID. 2 is standard, 3 is Air Riders. */
+export function amiiboVersion(id) {
+  if (!id || id.length !== 16) return null;
+  return parseInt(id.slice(14, 16), 16);
+}
+
+export const SERIES_KIRBY_AIR_RIDERS = 0x1e;
+
+/**
+ * Whether an amiibo pairs with a vehicle. Scoped to the Kirby Air Riders
+ * series rather than to the v3 format: v3 is a tag/format version, and a later
+ * v3 series need not use vehicles at all.
+ *
+ * Within the series every character takes every vehicle, so the full vehicle
+ * list applies to each of them.
+ */
+export function hasVehicles(id) {
+  if (!id || id.length !== 16) return false;
+  return parseInt(id.slice(12, 14), 16) === SERIES_KIRBY_AIR_RIDERS;
+}
+
 /**
  * Vehicle carried by a v3 dump, or null when the dump is not one.
  * Returns { code, name }, with name null for a vehicle not yet catalogued.

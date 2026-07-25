@@ -22,8 +22,9 @@
   .withVehicles { grid-column:1 / -1; }
   .vehicles { display:flex; flex-wrap:wrap; gap:.3rem; padding:0 0 .35rem 1.55rem; }
   .chip { font-size:.72rem; padding:.1rem .45rem; border-radius:99px;
-          border:1px solid var(--border); color:var(--muted); }
-  .chip.dev { border-color:var(--accent); color:var(--accent); }
+          border:1px dashed var(--border); color:var(--muted); opacity:.6; }
+  .chip.have { border-style:solid; border-color:var(--ok); color:var(--ok); opacity:1; }
+  .chip.dev { border-style:solid; border-color:var(--accent); color:var(--accent); opacity:1; }
   .item { display:flex; align-items:center; gap:.5rem; padding:.3rem .4rem; border-radius:4px;
           font-size:.88rem; border:1px solid transparent; }
   .item.missing { opacity:.55; }
@@ -53,9 +54,10 @@
     differ in UID and save data.
     <br>
     Kirby Air Riders amiibo are a character plus a vehicle, and only the
-    character is in the amiibo ID. Pairings you hold are listed individually;
-    completion counts the character once, because that is all the database
-    records.
+    character is in the amiibo ID. Every character takes every vehicle, so the
+    full line-up is shown per character: solid means you hold that pairing,
+    dashed means you do not. Completion still counts the character once,
+    because that is all the database records.
   </div>
 
   <div class="row" style="margin-top:1rem">
