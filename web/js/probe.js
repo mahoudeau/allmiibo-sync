@@ -5,7 +5,7 @@
 // optionally reads one file back to exercise the download path.
 
 import { BleTransport } from './ble.js';
-import { AllmiiboClient, joinPath } from './protocol.js';
+import { AllmiiboClient, joinPath, driveRoot } from './protocol.js';
 import { toHex } from './bytes.js';
 
 const els = {
@@ -108,17 +108,29 @@ els.probe.addEventListener('click', async () => {
       }
     });
 
-    const drive = report.drives?.drives?.[0];
-    if (!drive) throw new Error('no drive reported; cannot walk filesystem');
-
-    // The official UI derives the root from the first three characters of the
-    // drive name, e.g. "0:/".
-    const root = drive.name.slice(0, 3);
-    log('info', `walking from root "${root}" (drive name "${drive.name}")`);
+    const drives = report.drives?.drives ?? [];
+    if (drives.length === 0) throw new Error('no drive reported; cannot walk filesystem');
 
     const maxDepth = Math.max(1, Number(els.maxDepth.value) || 4);
-    report.tree = await walk(root, 0, maxDepth);
-    renderTree(report.tree, root);
+    report.tree = [];
+
+    for (const drive of drives) {
+      // Roots come from the drive label ('I' internal, 'E' external), not the
+      // human-readable name.
+      const root = driveRoot(drive);
+
+      if (drive.status !== 0) {
+        log('warn', `skipping drive ${root} ("${drive.name}") — status ${drive.status}, not available`);
+        report.tree.push({ root, name: drive.name, skipped: true, status: drive.status });
+        continue;
+      }
+
+      log('info', `walking ${root} ("${drive.name}", ${drive.usedSize} of ${drive.totalSize} bytes used)`);
+      const children = await walk(root, 0, maxDepth);
+      report.tree.push({ root, name: drive.name, children });
+    }
+
+    renderTree(report.tree);
 
     log(
       'ok',
@@ -223,9 +235,13 @@ async function walk(path, depth, maxDepth) {
   return out;
 }
 
+// Shallowest file first, so the sample read stays cheap.
 function firstFile(nodes) {
-  for (const n of nodes) {
-    if (!n.isDir) return n;
+  const list = nodes ?? [];
+  for (const n of list) {
+    if (n.isDir === false) return n;
+  }
+  for (const n of list) {
     if (n.children) {
       const found = firstFile(n.children);
       if (found) return found;
@@ -234,8 +250,8 @@ function firstFile(nodes) {
   return null;
 }
 
-function renderTree(nodes, root) {
-  const lines = [root];
+function renderTree(driveNodes) {
+  const lines = [];
   const render = (list, prefix) => {
     list.forEach((n, i) => {
       const last = i === list.length - 1;
@@ -248,8 +264,13 @@ function renderTree(nodes, root) {
       if (n.children) render(n.children, prefix + (last ? '   ' : '│  '));
     });
   };
-  render(nodes, '');
-  els.tree.textContent = lines.join('\n');
+  for (const drive of driveNodes) {
+    const flag = drive.skipped ? `  [unavailable, status ${drive.status}]` : '';
+    lines.push(`${drive.root}  (${drive.name})${flag}`);
+    if (drive.children?.length) render(drive.children, '');
+    else if (!drive.skipped) lines.push('   (empty)');
+  }
+  els.tree.textContent = lines.join('\n') || '(empty)';
 }
 
 // ---- report output ------------------------------------------------------

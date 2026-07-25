@@ -26,10 +26,28 @@ export const CMD = {
   UPDATE_META: 26,
 };
 
-export const OPEN_MODE = { read: 8, write: 22 };
+// enum vfs_mode_t in the firmware (fw/application/src/mod/vfs/vfs.h).
+export const MODE = {
+  APPEND: 1 << 0,
+  TRUNC: 1 << 1,
+  CREATE: 1 << 2,
+  READONLY: 1 << 3,
+  WRITEONLY: 1 << 4,
+};
 
+export const OPEN_MODE = {
+  read: MODE.READONLY, // 8
+  write: MODE.WRITEONLY | MODE.CREATE | MODE.TRUNC, // 22 — creates and truncates
+};
+
+// The firmware caps these at 48 and 64 including the NUL terminator.
 export const MAX_PATH_BYTES = 63;
 export const MAX_NAME_BYTES = 47;
+
+// Drive labels are fixed in firmware: 'I' internal, 'E' external.
+export function driveRoot(drive) {
+  return `${drive.label}:/`;
+}
 
 export class ProtocolError extends Error {
   constructor(message, { cmd, status } = {}) {
@@ -233,7 +251,10 @@ export class AllmiiboClient {
     const modeByte = OPEN_MODE[mode];
     if (modeByte === undefined) throw new Error(`unknown open mode: ${mode}`);
 
-    const payload = new ByteWriter(64).string(path).u8(modeByte).toUint8Array();
+    // The firmware reads the mode with buff_get_u32, so send four bytes. The
+    // official web client sends only one and relies on the frame buffer being
+    // zeroed underneath it.
+    const payload = new ByteWriter(64).string(path).u32(modeByte).toUint8Array();
     const { data } = await this._send(CMD.OPEN_FILE, payload, (r) => ({ fileId: r.u8() }));
     return data.fileId;
   }

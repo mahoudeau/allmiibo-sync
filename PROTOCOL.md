@@ -9,8 +9,15 @@ Both clients speak the **identical** wire protocol. The PIXL bundle additionally
 implements `vfs_read_file` (opcode 20), which the allmiibo page never calls —
 this is the missing half that makes device→local sync possible.
 
-Everything below is derived from reading those bundles. Items marked
-**[unverified]** have not yet been confirmed against real hardware.
+The device firmware is open source, which makes it the authority for anything
+the clients left ambiguous:
+
+- [`solosky/pixl.js`](https://github.com/solosky/pixl.js)
+- `fw/application/src/mod/df/df_proto_vfs.c` — command handlers
+- `fw/application/src/mod/vfs/vfs.h` — limits, mode flags, error codes
+
+Everything below has been cross-checked against that firmware. Confirmed
+against hardware running **Pixl.js 2.11.2**.
 
 ---
 
@@ -95,8 +102,18 @@ Reassembly (mirroring the client's accumulator):
 
 A single-notification response is parsed directly.
 
-`status == 0` means success; any non-zero value is an error. The client only
-ever checks `!= 0`, so specific error codes are **[unverified]**.
+`status` is binary — the firmware only ever emits these two values:
+
+```c
+typedef enum { DF_STATUS_OK = 0, DF_STATUS_ERR = 1 } df_status_t;
+```
+
+There is no detailed error reporting on the wire. Internally the VFS layer has
+a richer set (`VFS_ERR_NOOBJ = -90`, `VFS_ERR_NOSPC = -91`,
+`VFS_ERR_OBJEX = -4`, `VFS_ERR_UNSUPT = -99`, …) but `df_proto_vfs.c` collapses
+them all to `DF_STATUS_ERR`; the source even carries a `// TODO mapping error`
+where that happens. A failed command therefore says *that* it failed, never
+*why*.
 
 ### 3.4 Concurrency
 
@@ -140,15 +157,43 @@ u8     type        // 0 = regular file, non-zero = directory
 meta   metadata
 ```
 
-### 4.4 Path constraints
+### 4.4 Paths and constraints
 
-Enforced client-side before sending:
+Every path is drive-prefixed and the firmware validates the prefix strictly:
 
-- Full path: **≤ 63 bytes**
-- Final path component (filename): **≤ 47 bytes**
+```c
+static bool validate_path(char *path) {
+    if (path[0] != 'I' && path[0] != 'E') return false;
+    if (path[1] != ':' || path[2] != '/')  return false;
+    return true;
+}
+```
 
-Paths are drive-prefixed, e.g. `0:/folder/file.bin`; the drive `label` is a
-single ASCII character and the UI builds the root as `name.substr(0, 3)`.
+So a path looks like `E:/folder/file.bin`. The two drive labels are fixed:
+
+| Label | Root | Drive |
+|---|---|---|
+| `I` | `I:/` | internal flash |
+| `E` | `E:/` | external flash |
+
+**The root must be built from the drive's `label`, not its `name`.** The `name`
+field is a human-readable string such as `"External Flash"`. The official UI
+gets away with `name.substr(0, 3)` only because it renders its own drive rows;
+applying that to the value returned by `vfs_get_drive_list` yields `"Ext"`,
+which fails `validate_path`. See §7.1.
+
+The firmware strips the first two bytes (`VFS_DRIVE_LABEL_LEN`) and passes the
+remainder — `/folder/file.bin` — to the filesystem driver.
+
+Size limits, from `vfs.h` (these include the NUL terminator, hence the
+clients' 47/63):
+
+| Constant | Value | Effective limit |
+|---|---|---|
+| `VFS_MAX_NAME_LEN` | 48 | filename ≤ 47 bytes |
+| `VFS_MAX_PATH_LEN` | 64 | path ≤ 63 bytes |
+| `VFS_MAX_META_LEN` | 128 | — |
+| `VFS_MAX_FOLDER_SIZE` | 32 | entries per folder |
 
 ---
 
@@ -175,26 +220,52 @@ Opcodes 3–15 are unused by both clients.
 ### 5.1 Drive list entry
 
 ```
-u8     status
-u8     label        // single ASCII char, e.g. '0'
-string name
+u8     status       // 0 = available, 1 = unavailable
+u8     label        // 'I' or 'E'
+string name         // human-readable, e.g. "External Flash"
 u32    total_size
 u32    used_size
 ```
 
-The client reads at most one entry even when `count > 1`.
+`count` is `vfs_drive_enabled(INT) + vfs_drive_enabled(EXT)`, so it can be 2.
+The official client reads only the first entry; parse all of them.
+
+Observed on hardware (Pixl.js 2.11.2): `count = 1`, `status = 0`,
+`label = 'E'`, `name = "External Flash"`, 966,601 of 1,920,401 bytes used.
+
+> **Firmware quirk.** In the internal-drive branch, `df_proto_vfs.c` calls
+> `vfs_get_driver(VFS_DRIVE_EXT)` where it plainly means `VFS_DRIVE_INT`, so a
+> device with internal flash enabled reports the *external* drive's stats under
+> label `'I'`. Do not trust `total_size`/`used_size` for the `I` drive.
 
 ### 5.2 Open modes
 
-`vfs_open_file` mode byte, exactly as the client sends it:
+The mode is a **u32**, read by the firmware with `buff_get_u32`. Both official
+clients write a single byte and get away with it only because the frame buffer
+is zeroed beneath them — send all four bytes.
 
-| Mode | Byte |
+Flags are `enum vfs_mode_t` in `vfs.h`:
+
+| Flag | Value |
 |---|---|
-| `"r"` (read) | `8` (0x08) |
-| `"w"` (write) | `22` (0x16) |
+| `VFS_MODE_APPEND` | 1 |
+| `VFS_MODE_TRUNC` | 2 |
+| `VFS_MODE_CREATE` | 4 |
+| `VFS_MODE_READONLY` | 8 |
+| `VFS_MODE_WRITEONLY` | 16 |
 
-These look like FatFs-style flag bits but the mapping is **[unverified]**;
-send the literal values above.
+The combinations the clients use:
+
+| Mode | Value | Meaning |
+|---|---|---|
+| `"r"` | `8` | `READONLY` |
+| `"w"` | `22` | `WRITEONLY \| CREATE \| TRUNC` — creates if absent, truncates if present |
+
+Note that `"w"` **truncates an existing file**, so a failed write leaves the
+destination empty rather than untouched.
+
+Only one file is open at a time: opening a new file while another is open
+silently closes the previous handle.
 
 ---
 
@@ -240,12 +311,35 @@ error, still issue `vfs_close_file`.
 vfs_create_folder(path)
 ```
 
-Not recursive — create parents first, one level at a time. **[unverified]**
-whether creating an existing folder returns non-zero status.
+Not recursive — create parents first, one level at a time. The handler is a
+thin wrapper over the driver's `create_dir`, returning `DF_STATUS_ERR` on any
+failure. Whether an already-existing folder counts as a failure is left to the
+filesystem driver and is still unconfirmed on hardware.
+
+### 6.5 Remove
+
+`vfs_remove` first calls `stat_file`, then dispatches to `remove_dir` or
+`remove_file` based on the entry type — so one command handles both. A missing
+path returns `DF_STATUS_ERR`. Whether `remove_dir` succeeds on a non-empty
+folder depends on the driver (LittleFS refuses; SPIFFS has no real
+directories) and is still unconfirmed.
 
 ---
 
 ## 7. Notes for the sync engine
+
+### 7.1 Deriving the root path
+
+Build the root as `` `${drive.label}:/` ``. Reusing the official UI's
+`name.substr(0, 3)` against the drive-list response produces `"Ext"` from
+`"External Flash"`, which fails `validate_path`.
+
+The failure mode is quiet: `open_dir` fails, the handler returns
+`DF_STATUS_ERR`, and a client that treats an error as "empty directory" reports
+a perfectly healthy device as having no files. Confirmed on hardware — a walk
+from `"Ext"` returned zero entries against a drive with 966 KB in use.
+
+### 7.2 Change detection
 
 - **No modification times.** `vfs_read_dir` returns name, size, type and
   metadata only. Change detection cannot use mtime on the device side.
@@ -266,9 +360,21 @@ whether creating an existing folder returns non-zero status.
 
 ## 8. Open questions
 
-- Meaning of non-zero `status` values.
+Resolved against firmware and hardware:
+
+- ~~Meaning of non-zero `status` values~~ — binary only, `OK = 0`, `ERR = 1` (§3.3).
+- ~~Open-mode flag semantics~~ — `enum vfs_mode_t`, and the field is a u32 (§5.2).
+- ~~Whether more than one drive is reported~~ — up to 2, labels `I` and `E` (§5.1).
+- ~~Root path format~~ — `E:/` / `I:/`, built from `label` (§4.4).
+- ~~Directory type value~~ — `VFS_TYPE_REG = 0`, `VFS_TYPE_DIR = 1`.
+
+Still open:
+
 - Behaviour of `vfs_create_folder` on an existing path.
-- Whether `vfs_remove` works on non-empty directories.
-- Maximum practical throughput and whether the device tolerates
+- Whether `vfs_remove` succeeds on a non-empty directory.
+- Whether `VFS_MAX_FOLDER_SIZE` (32) is a hard cap on entries per folder, and
+  what happens on overflow.
+- Maximum practical throughput, and whether the device tolerates
   write-without-response.
-- Whether more than one drive is ever reported.
+- Whether `vfs_rename` can move an entry between folders or only rename in
+  place.

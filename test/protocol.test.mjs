@@ -6,7 +6,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { AllmiiboClient, CMD, WRITE_CHUNK, HEADER_LEN } from '../web/js/protocol.js';
+import {
+  AllmiiboClient,
+  CMD,
+  WRITE_CHUNK,
+  HEADER_LEN,
+  OPEN_MODE,
+  driveRoot,
+} from '../web/js/protocol.js';
 import { ByteWriter } from '../web/js/bytes.js';
 
 const MORE = 0x8000;
@@ -97,13 +104,14 @@ test('drive list parses a single drive entry', async () => {
   const t = new FakeTransport();
   const c = client(t);
 
+  // Values as reported by real hardware (Pixl.js 2.11.2).
   const payload = new ByteWriter(64)
     .u8(1)
     .u8(0)
-    .u8('0'.charCodeAt(0))
-    .string('0:/')
-    .u32(8_000_000)
-    .u32(1_234_567)
+    .u8('E'.charCodeAt(0))
+    .string('External Flash')
+    .u32(1_920_401)
+    .u32(966_601)
     .toUint8Array();
   t.onWrite = () => t.respond(CMD.DRIVE_LIST, 0, payload);
 
@@ -111,11 +119,30 @@ test('drive list parses a single drive entry', async () => {
   assert.equal(count, 1);
   assert.deepEqual(drives[0], {
     status: 0,
-    label: '0',
-    name: '0:/',
-    totalSize: 8_000_000,
-    usedSize: 1_234_567,
+    label: 'E',
+    name: 'External Flash',
+    totalSize: 1_920_401,
+    usedSize: 966_601,
   });
+});
+
+test('the drive root comes from the label, not the human-readable name', () => {
+  assert.equal(driveRoot({ label: 'E', name: 'External Flash' }), 'E:/');
+  assert.equal(driveRoot({ label: 'I', name: 'Internal Flash' }), 'I:/');
+});
+
+test('open_file sends the mode as a little-endian u32', async () => {
+  const t = new FakeTransport();
+  const c = client(t);
+
+  t.onWrite = () => t.respond(CMD.OPEN_FILE, 0, new Uint8Array([1]));
+  await c.openFile('E:/a.bin', 'read');
+
+  const frame = t.writes[0];
+  const mode = frame.subarray(frame.length - 4);
+  assert.deepEqual([...mode], [OPEN_MODE.read, 0, 0, 0]);
+  assert.equal(OPEN_MODE.read, 8, 'VFS_MODE_READONLY');
+  assert.equal(OPEN_MODE.write, 22, 'VFS_MODE_WRITEONLY | CREATE | TRUNC');
 });
 
 test('read_dir parses entries and classifies type 0 as a regular file', async () => {
