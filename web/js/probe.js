@@ -195,6 +195,7 @@ async function walk(path, depth, maxDepth) {
   report.stats.readDirCalls++;
 
   let entries;
+  const t0 = performance.now();
   try {
     entries = await client.readDir(path);
   } catch (err) {
@@ -202,6 +203,16 @@ async function walk(path, depth, maxDepth) {
     report.errors.push(`read_dir ${path}: ${err.message}`);
     log('err', `read_dir ${path}: ${err.message}`);
     return [];
+  }
+  const ms = Math.round(performance.now() - t0);
+
+  const files = entries.filter((e) => !e.isDir).length;
+  const dirs = entries.length - files;
+  log('info', `  ${path} — ${entries.length} entries (${files} files, ${dirs} folders) in ${ms}ms`);
+
+  // VFS_MAX_FOLDER_SIZE is 32 in firmware; flag folders at or above it.
+  if (entries.length >= 32) {
+    log('warn', `  ${path} holds ${entries.length} entries — at or above the firmware's 32-entry guide`);
   }
 
   const out = [];
