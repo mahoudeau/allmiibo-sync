@@ -23,7 +23,8 @@ pulled from someone else's script at runtime.
   862 files across 44 folders, 0 errors, file read matching byte-for-byte. ✅
 - **Write test** — verified: filenames stored verbatim, content round-trips
   exactly, and every remaining protocol question answered. ✅
-- **Sync engine** — next.
+- **Sync engine** — implemented, 28 planner tests passing. Not yet run against
+  hardware.
 
 Three hardware findings shape the sync design:
 
@@ -62,28 +63,62 @@ renamed, deleted, formatted, or flashed. It will:
 It then produces a JSON report you can save or copy — useful for confirming the
 open questions listed at the end of PROTOCOL.md.
 
+### Syncing
+
+Open <http://localhost:8080/sync.html>, connect the device, choose a local
+folder, pick a direction, and press **Scan & plan**.
+
+| Direction | Meaning |
+|---|---|
+| `push` | local is master; the device mirrors it |
+| `pull` | device is master; the local folder mirrors it |
+| `two-way` | reconcile both sides against the last sync |
+
+**Every run is a dry run until you press Apply.** The plan lists exactly what
+would be uploaded, downloaded, moved, deleted, skipped or blocked, with a time
+estimate. Deletions are off by default and, when enabled, always ask for
+confirmation.
+
+Safety properties, each following from a verified device behaviour:
+
+- **Files are deleted individually, never by removing their folder.** On this
+  firmware `remove` deletes a non-empty folder recursively with no guard.
+- **Folders are only created when the scan shows them missing**, because
+  `create_folder` errors on an existing path and status is binary — so
+  "already exists" is indistinguishable from a real failure.
+- **A file that only moved is renamed on the device** rather than re-uploaded.
+- **Destination paths are validated before anything is transferred**, so an
+  over-long path is reported up front rather than failing mid-copy.
+- **Device-managed files are excluded**: `settings.bin`, `key_retail.bin`.
+- **State is saved as it goes**, so a disconnect part-way through a long push
+  resumes rather than restarting.
+
+### Why "verify same-size files" exists
+
+Every amiibo dump is exactly 540 bytes, so file size cannot detect a content
+change. The tool records a SHA-256 per path at the end of each sync and uses
+that. On the *first* run there is no record, so files present on both sides
+with the same size are genuinely undecidable — they are listed as skipped
+rather than guessed at.
+
+Ticking **Verify** reads each such file back off the device to compare hashes.
+That is correct but slow: roughly 0.2 s per file, so about three minutes for a
+860-file library. Leave it off if you know which side is authoritative and just
+want a `push`.
+
 ## Tests
 
 ```sh
 npm test
 ```
 
-Runs against a simulated device using `node:test`. Covers request framing,
-multi-notification reassembly, command serialisation, chunked file writes,
-error-status propagation, path/notes limits, and disconnect handling.
-
-## Planned usage
-
-```sh
-allmiibo-sync push ./my-amiibo        # local is master
-allmiibo-sync pull ./my-amiibo        # device is master
-allmiibo-sync sync ./my-amiibo        # two-way, reconciled against sync state
-allmiibo-sync push ./my-amiibo --dry-run --delete
-```
-
-- `--dry-run` prints the full plan without touching either side.
-- `--delete` propagates deletions; off by default.
-- Re-running with no changes transfers nothing.
+No hardware needed. Protocol tests run against a simulated device covering
+framing, multi-notification reassembly, command serialisation, chunked writes,
+error-status propagation and disconnect handling. Planner tests cover the
+reconciliation rules and the safety properties listed above — that folders are
+never removed as a shortcut for their contents, that deletions require opt-in,
+that equal size is not mistaken for equal content, and that over-long paths are
+blocked rather than attempted.
 
 ## How it works
 
@@ -99,14 +134,26 @@ plus a content hash recorded in a local sync-state file. See
 ## Layout
 
 ```
-PROTOCOL.md            reverse-engineered wire protocol
-serve.mjs              zero-dependency static server (Node built-ins only)
-web/index.html         probe UI, styles inline
-web/js/bytes.js        little-endian codecs, string and metadata TLV
-web/js/ble.js          Web Bluetooth transport (Nordic UART Service)
-web/js/protocol.js     framing, reassembly, command queue, VFS commands
-web/js/probe.js        read-only probe UI logic
-test/protocol.test.mjs protocol tests against a simulated device
+PROTOCOL.md              reverse-engineered wire protocol
+serve.mjs                zero-dependency static server (Node built-ins only)
+
+web/sync.html            sync UI
+web/index.html           read-only probe UI
+web/write-test.html      write-test UI
+web/css/app.css          shared styles
+
+web/js/bytes.js          little-endian codecs, string and metadata TLV
+web/js/ble.js            Web Bluetooth transport (Nordic UART Service)
+web/js/protocol.js       framing, reassembly, command queue, VFS commands
+web/js/planner.js        reconciliation logic — pure, no I/O
+web/js/localfs.js        local folder access, hashing, sync state
+web/js/sync.js           device walk and plan executor
+web/js/syncui.js         sync page logic
+web/js/probe.js          read-only probe logic
+web/js/writetest.js      write-test logic
+
+test/protocol.test.mjs   protocol tests against a simulated device
+test/planner.test.mjs    reconciliation and safety tests
 ```
 
 ## Keep dumps and keys out of git
