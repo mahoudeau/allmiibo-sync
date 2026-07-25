@@ -306,7 +306,11 @@ export class AllmiiboClient {
     await this._send(CMD.CREATE_FOLDER, new ByteWriter(64).string(path).toUint8Array(), null);
   }
 
+  // Validated before sending. The firmware silently truncates an over-long
+  // path (df_buffer.h buff_get_string) and remove() deletes folders
+  // recursively, so an unchecked path here could erase the wrong subtree.
   async remove(path) {
+    assertPath(path);
     await this._send(CMD.REMOVE, new ByteWriter(64).string(path).toUint8Array(), null);
   }
 
@@ -318,6 +322,7 @@ export class AllmiiboClient {
   }
 
   async updateMeta(path, meta) {
+    assertPath(path);
     const w = new ByteWriter(128).string(path);
     writeMeta(w, meta);
     await this._send(CMD.UPDATE_META, w.toUint8Array(), null);

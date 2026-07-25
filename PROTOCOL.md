@@ -195,6 +195,65 @@ clients' 47/63):
 | `VFS_MAX_META_LEN` | 128 | — |
 | `VFS_MAX_FOLDER_SIZE` | 32 | entries per folder |
 
+### 4.5 Over-long paths are silently truncated — enforce client-side
+
+**This is the single most important reason to validate paths before sending.**
+An over-long path does not produce an error. `buff_get_string` in
+`df_buffer.h` clamps and carries on:
+
+```c
+static inline void buff_get_string(buffer_t *buffer, char *string, size_t max_length) {
+    uint16_t length = buff_get_u16(buffer);
+    ...
+    max_length = max_length - 1;                                   // exclude '\0'
+    uint16_t min_length = max_length > length ? length : max_length;
+    buff_get_byte_array(buffer, string, min_length);
+    string[min_length] = '\0';
+    buffer->pos += length - min_length;                            // discard the excess
+}
+```
+
+Handlers read into `char path[VFS_MAX_FULL_PATH_LEN]` (66 bytes), so anything
+longer than 65 bytes is truncated and the command then executes **against the
+truncated path**, reporting `DF_STATUS_OK`.
+
+Consequences, worst first:
+
+- **`vfs_remove` deletes the wrong entry.** Truncation can land the path on a
+  different file, or on a *directory* — and removal is recursive (§9.4). An
+  unvalidated remove can therefore destroy an entire subtree while reporting
+  success.
+- **`vfs_open_file` in write mode creates a file at the truncated path**,
+  typically losing the `.bin` extension, and silently.
+- `vfs_rename` moves to the wrong destination.
+
+There is no memory-safety issue — the clamp is correct and NUL-termination is
+guaranteed. The hazard is purely that the device does something other than what
+was asked, without saying so.
+
+**Enforce every path client-side, on every path-taking command**, including the
+destructive ones.
+
+### 4.6 Why 63 and not 65
+
+The firmware's own ceiling is 65 bytes for a full path: a 66-byte buffer less
+the NUL. After `get_file_path` strips the 2-byte drive label, the driver sees
+≤ 63 characters, which matches `SPIFFS_OBJ_NAME_LEN` (64). SPIFFS is flat — the
+whole path *is* the object name.
+
+Both official clients nonetheless enforce **63 bytes**, two below what the
+firmware would accept. This project keeps 63, for two reasons:
+
+1. Files created outside the official clients' limit could not be managed by
+   the stock web UI, which refuses to send such paths at all.
+2. Two bytes of headroom is not worth being the only tool that can address a
+   given file.
+
+The filename cap of 47 bytes is enforced only by the clients — the firmware
+does not check it separately on the request path, though `vfs_obj_t.name` is a
+48-byte field that directory listings `strncpy` into, so a longer name would be
+truncated in listings regardless.
+
 ---
 
 ## 5. Command reference

@@ -311,6 +311,23 @@ test('oversized paths and filenames are rejected before hitting the wire', async
   assert.equal(t.writes.length, 0);
 });
 
+test('every path-taking command validates before reaching the wire', async () => {
+  const t = new FakeTransport();
+  const c = client(t);
+  const tooLong = `E:/${'z'.repeat(70)}`;
+
+  // The firmware truncates silently rather than erroring, so a command sent
+  // with an over-long path acts on a *different* path than intended.
+  await assert.rejects(() => c.remove(tooLong), /exceeds/);
+  await assert.rejects(() => c.createFolder(tooLong), /exceeds/);
+  await assert.rejects(() => c.openFile(tooLong, 'write'), /exceeds/);
+  await assert.rejects(() => c.rename(tooLong, 'E:/ok.bin'), /exceeds/);
+  await assert.rejects(() => c.rename('E:/ok.bin', tooLong), /exceeds/);
+  await assert.rejects(() => c.updateMeta(tooLong, { notes: '', flags: {} }), /exceeds/);
+
+  assert.equal(t.writes.length, 0, 'nothing may be transmitted');
+});
+
 test('notes longer than 90 bytes are rejected', async () => {
   const t = new FakeTransport();
   const c = client(t);
