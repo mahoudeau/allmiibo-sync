@@ -16,9 +16,11 @@ pulled from someone else's script at runtime.
 
 ## Status
 
-- **Protocol** — fully reverse-engineered and documented. ✅
-- **Client library** — implemented, with 15 tests against a simulated device. ✅
-- **Read-only hardware probe** — ready to run, pending verification on a device.
+- **Protocol** — reverse-engineered, cross-checked against the open-source
+  firmware, and verified on hardware. ✅
+- **Client library** — implemented, with 17 tests against a simulated device. ✅
+- **Read-only hardware probe** — verified against Pixl.js 2.11.2: full walk of
+  862 files across 44 folders, 0 errors, file read matching byte-for-byte. ✅
 - **Sync engine** — not started.
 
 ## Quick start
@@ -97,10 +99,17 @@ web/js/probe.js        read-only probe UI logic
 test/protocol.test.mjs protocol tests against a simulated device
 ```
 
+## Keep dumps and keys out of git
+
+If you sync into a folder inside a clone of this repo, note that a device also
+holds `key_retail.bin` (the amiibo signing keys) alongside your dumps. The
+included `.gitignore` excludes `*.bin` and common sync-target folder names for
+that reason — check `git status` before committing if you change it.
+
 ## Compatibility
 
-Protocol verified identical across the Allmiibo and PIXL web clients. Tested
-against hardware: *(pending)*.
+Protocol verified identical across the Allmiibo and PIXL web clients. Verified
+on hardware: **Pixl.js 2.11.2** (nRF52832, external flash).
 
 ## Disclaimer
 

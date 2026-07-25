@@ -339,7 +339,79 @@ The failure mode is quiet: `open_dir` fails, the handler returns
 a perfectly healthy device as having no files. Confirmed on hardware — a walk
 from `"Ext"` returned zero entries against a drive with 966 KB in use.
 
-### 7.2 Change detection
+### 7.2 Observed layout (Pixl.js 2.11.2, external flash)
+
+Full read-only walk: **862 files, 44 folders, 45 `read_dir` calls, 0 errors**,
+465 KB of content.
+
+```
+E:/amiibolink/          00.bin … 25.bin     AmiiboLink slot emulation
+E:/amiibo/<cat>/[<sub>/] <name>.bin         browsable library, up to 3 levels
+E:/amiibo/fav/          (empty)
+E:/amiibo/data/         (empty)
+E:/chameleon/slots/     00.bin, 01.bin, config.bin
+E:/key_retail.bin       160 B — amiibo signing keys
+E:/settings.bin          17 B — device settings, hidden
+```
+
+846 files are exactly 540 bytes (NTAG215) and 10 are 572; the rest are device
+state, not dumps.
+
+Findings that constrain the sync engine:
+
+**`VFS_MAX_FOLDER_SIZE` is not a per-folder entry cap.** Two folders hold 100
+entries each and listed without error. Large folders are safe.
+
+**The path budget is the binding constraint.** The 63-byte cap covers the whole
+path including the `E:/` prefix. Observed maxima: longest full path **exactly
+63 bytes** (`E:/amiibo/others/Monster Hunter/Palamute _Canyne Malzeno X_.bin`),
+with four files in the 60–63 range and none over. The longest *filename* is
+only 39 bytes against a 47-byte cap — so paths run out of room long before
+names do, and nesting is what costs you. A sync tool must validate each
+destination path before transferring and report what will not fit, rather than
+failing partway through a copy.
+
+**Not everything on the drive is a dump.** `settings.bin` is device
+configuration (and flagged hidden), `key_retail.bin` holds the amiibo signing
+keys, and `chameleon/` is separate emulator state. A whole-drive `pull` would
+sweep these up, and a whole-drive `push` with `--delete` could destroy them.
+Sync should be scoped to a subtree such as `E:/amiibo` and treat device-managed
+files as excluded by default.
+
+**Metadata is real but rare.** Two entries out of 862 carry it, and between
+them they exercise both TLV tags: `E:/chameleon/slots/00.bin` has
+`notes = "Slot 01wee"`, and `E:/settings.bin` has the `hide` flag set. Both
+decoded correctly, so the TLV parser is confirmed against hardware.
+
+**Filenames contain characters that a naive comparison will trip over.**
+Twelve names contain `_` where the source almost certainly had something else —
+`Mr. Game _ Watch.bin`, `Banjo _ Kazooie.bin`, `Rosalina _ Luma.bin`,
+`Zelda _ Loftwing.bin` (`&`); `Link (Majora_s Mask).bin` (`'`);
+`[MOD _ MAX LEVEL] Wolf Link.bin` (`/`); `Palamute _Canyne Malzeno X_.bin`
+(quotes). Several distinct characters collapse to `_`, so the transform is not
+invertible.
+
+**Whether the device performs that substitution, or the dump pack simply shipped
+with those names, cannot be determined from a read-only probe.** It matters: if
+the firmware sanitises on write, a local `Mr. Game & Watch.bin` lands as
+`Mr. Game _ Watch.bin` and every subsequent sync sees a missing file and
+re-uploads the library. Writing one file with `&` in its name to a scratch
+folder and reading the directory back settles it — see §8.
+
+Non-ASCII names survive intact (`Link (Link’s Awakening).bin`,
+`Tatsuhisa “Luke” Kamijō.bin`, `Gakuto Sōgetsu.bin`), so this is not an
+ASCII-only restriction — but such names cost more bytes than characters against
+the caps.
+
+### 7.2.1 Read performance
+
+A 160-byte file took **176 ms** end to end (open + read + close, three
+round-trips). At roughly 60 ms per command, hashing all 862 files to detect
+changes would cost on the order of two and a half minutes. Size-first
+comparison, with content hashing reserved for ambiguous cases, matters more
+than it would on a faster link.
+
+### 7.3 Change detection
 
 - **No modification times.** `vfs_read_dir` returns name, size, type and
   metadata only. Change detection cannot use mtime on the device side.
@@ -368,13 +440,18 @@ Resolved against firmware and hardware:
 - ~~Root path format~~ — `E:/` / `I:/`, built from `label` (§4.4).
 - ~~Directory type value~~ — `VFS_TYPE_REG = 0`, `VFS_TYPE_DIR = 1`.
 
-Still open:
+- ~~Whether `VFS_MAX_FOLDER_SIZE` (32) caps entries per folder~~ — it does not;
+  100-entry folders list fine (§7.2).
+- ~~Whether `read_file` returns exactly the size `read_dir` reported~~ — yes,
+  verified byte-for-byte on a 160-byte file.
 
+Still open — all require a write test:
+
+- **Does the firmware sanitise filenames on write?** The highest-value unknown;
+  it decides whether sync needs a name-mapping layer (§7.2).
 - Behaviour of `vfs_create_folder` on an existing path.
 - Whether `vfs_remove` succeeds on a non-empty directory.
-- Whether `VFS_MAX_FOLDER_SIZE` (32) is a hard cap on entries per folder, and
-  what happens on overflow.
-- Maximum practical throughput, and whether the device tolerates
-  write-without-response.
 - Whether `vfs_rename` can move an entry between folders or only rename in
   place.
+- Maximum practical throughput, and whether the device tolerates
+  write-without-response.

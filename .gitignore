@@ -3,3 +3,11 @@ dist/
 *.log
 .DS_Store
 .allmiibo-sync.json
+
+# Never commit amiibo dumps or signing keys — a device drive holds
+# key_retail.bin alongside your library.
+*.bin
+allmiibo-probe*.json
+/sync/
+/amiibo/
+/my-amiibo/
