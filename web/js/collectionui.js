@@ -20,6 +20,7 @@ let rootHandle = null;
 let transport = null;
 let client = null;
 let localIds = new Set();
+let filesById = new Map(); // how many dumps you hold per amiibo
 let deviceIds = null;
 let collection = null;
 let stopRequested = false;
@@ -56,6 +57,7 @@ els.scan.addEventListener('click', async () => {
     });
 
     localIds = new Set();
+    filesById = new Map();
     let files = 0;
     let folders = 0;
     let dumps = 0;
@@ -71,6 +73,7 @@ els.scan.addEventListener('click', async () => {
       if (e.amiiboId) {
         dumps++;
         localIds.add(e.amiiboId);
+        filesById.set(e.amiiboId, (filesById.get(e.amiiboId) ?? 0) + 1);
       } else if (isExcluded(relPath)) {
         ignored.push({ relPath, size: e.size });
       } else {
@@ -269,6 +272,17 @@ function paint() {
         t.textContent = 'unlisted';
         row.append(t);
       }
+      // Several dumps can legitimately share one amiibo ID — 91 Animal
+      // Crossing item cards do, as do the four vehicle pairings of an Air
+      // Riders character. Show the count so the total adds up.
+      const held = filesById.get(item.id) ?? 0;
+      if (held > 1) {
+        const t = document.createElement('span');
+        t.className = 'tag';
+        t.textContent = `×${held} dumps`;
+        row.append(t);
+      }
+
       const ty = document.createElement('span');
       ty.className = 'tag';
       ty.textContent = item.typeName;
