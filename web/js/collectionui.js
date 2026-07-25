@@ -219,6 +219,38 @@ function render() {
   paint();
 }
 
+// Files that are not amiibo dumps, split into harmless system clutter and
+// anything genuinely unexpected — the latter is worth seeing.
+function renderSkipped(ignored, unrecognised) {
+  els.skipped.textContent = '';
+  if (!ignored.length && !unrecognised.length) {
+    els.skipped.hidden = true;
+    return;
+  }
+  els.skipped.hidden = false;
+
+  const block = (title, items, note) => {
+    if (!items.length) return;
+    const d = document.createElement('details');
+    const sm = document.createElement('summary');
+    sm.textContent = `${title} (${items.length})`;
+    d.append(sm);
+    const pre = document.createElement('pre');
+    pre.textContent =
+      (note ? `${note}\n\n` : '') +
+      items.map((i) => `${String(i.size).padStart(8)} B  ${i.relPath}`).join('\n');
+    d.append(pre);
+    els.skipped.append(d);
+  };
+
+  block(
+    'Not recognised as amiibo dumps',
+    unrecognised,
+    `Recognised dump sizes: ${Object.entries(DUMP_SIZES).map(([n, l]) => `${n} (${l})`).join(', ')}.`
+  );
+  block('System files, ignored by sync too', ignored);
+}
+
 function currentFilter() {
   return document.querySelector('input[name=filter]:checked').value;
 }

@@ -201,7 +201,13 @@ want a `push`.
 npm test
 ```
 
-No hardware needed. Protocol tests run against a simulated device covering
+No hardware needed. A static check guards the page modules, which touch
+`document` and so cannot be imported under `node:test`: every function they
+call must be defined or imported. That exists because a refactor deleted a
+render function and left its call site, and nothing caught it until the page
+threw.
+
+Protocol tests run against a simulated device covering
 framing, multi-notification reassembly, command serialisation, chunked writes,
 error-status propagation and disconnect handling. Planner tests cover the
 reconciliation rules and the safety properties listed above — that folders are
