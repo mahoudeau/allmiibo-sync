@@ -536,3 +536,149 @@ export function flattenPlan(plan) {
   for (const d of plan.rmdirDevice) ops.push({ op: 'rmdirDevice', ...d });
   return ops;
 }
+
+/**
+ * Plan a sync by amiibo identity rather than by path.
+ *
+ * Path matching is useless across libraries that are organised differently —
+ * two copies of one collection can share zero paths — so this asks "is this
+ * amiibo on the other side at all, under any name?".
+ *
+ * Identity is the amiibo ID, plus the vehicle for Air Riders, falling back to
+ * the content hash when neither distinguishes two dumps. That keeps all 91
+ * Animal Crossing item cards and all four vehicle pairings, which an ID-only
+ * rule would collapse into one.
+ *
+ * Destinations mirror the source layout: a push keeps your local folder
+ * structure on the device. Anything that will not fit the device's 63-byte
+ * path limit is reported rather than truncated, since the firmware truncates
+ * silently (PROTOCOL.md §4.5).
+ */
+export function planIdentitySync({ local, device, deviceRoot, options = {} }) {
+  const direction = options.direction ?? 'both'; // 'push' | 'pull' | 'both'
+  const excludes = options.excludes || DEFAULT_EXCLUDES;
+
+  const identityOf = (e) => {
+    if (!e.amiiboId) return null;
+    return `${e.amiiboId}:${e.vehicle ?? e.hash ?? ''}`;
+  };
+
+  const index = (map) => {
+    const byIdentity = new Map();
+    for (const [relPath, e] of map) {
+      if (e.isDir || isExcluded(relPath, excludes)) continue;
+      const key = identityOf(e);
+      if (!key) continue;
+      if (!byIdentity.has(key)) byIdentity.set(key, []);
+      byIdentity.get(key).push({ relPath, ...e });
+    }
+    return byIdentity;
+  };
+
+  const localBy = index(local);
+  const deviceBy = index(device);
+
+  const plan = {
+    mode: `identity-${direction}`,
+    deviceRoot,
+    mkdirDevice: [],
+    mkdirLocal: [],
+    upload: [],
+    download: [],
+    moveDevice: [],
+    deleteDevice: [],
+    deleteLocal: [],
+    rmdirDevice: [],
+    wouldDelete: [],
+    conflicts: [],
+    blocked: [],
+    unchanged: [],
+    ambiguous: [],
+    warnings: [],
+  };
+
+  const deviceDirs = new Set();
+  const localDirs = new Set();
+  for (const [p, e] of device) if (e.isDir) deviceDirs.add(p);
+  for (const [p, e] of local) if (e.isDir) localDirs.add(p);
+
+  let onBothSides = 0;
+
+  if (direction === 'push' || direction === 'both') {
+    for (const [key, entries] of localBy) {
+      if (deviceBy.has(key)) {
+        onBothSides++;
+        plan.unchanged.push(entries[0].relPath);
+        continue;
+      }
+      // One dump per identity is enough; the rest are copies of it.
+      const source = entries[0];
+      const why = checkDestination(deviceRoot, source.relPath);
+      if (why) {
+        plan.blocked.push({ relPath: source.relPath, action: 'upload', reason: why, identity: key });
+        continue;
+      }
+      queueDeviceDirs(plan, source.relPath, deviceDirs, deviceRoot);
+      plan.upload.push({
+        relPath: source.relPath,
+        size: source.size,
+        hash: source.hash,
+        amiiboId: source.amiiboId,
+        vehicle: source.vehicle ?? null,
+      });
+    }
+  }
+
+  if (direction === 'pull' || direction === 'both') {
+    for (const [key, entries] of deviceBy) {
+      if (localBy.has(key)) {
+        if (direction === 'pull') {
+          onBothSides++;
+          plan.unchanged.push(entries[0].relPath);
+        }
+        continue;
+      }
+      const source = entries[0];
+      queueLocalDirs(plan, source.relPath, localDirs);
+      plan.download.push({
+        relPath: source.relPath,
+        size: source.size,
+        amiiboId: source.amiiboId,
+        vehicle: source.vehicle ?? null,
+      });
+    }
+  }
+
+  const unidentified = [...local, ...device].filter(
+    ([p, e]) => !e.isDir && !isExcluded(p, excludes) && !e.amiiboId
+  ).length;
+  if (unidentified) {
+    plan.warnings.push(
+      `${unidentified} file(s) carry no readable amiibo ID and are left alone — ` +
+        `identity sync can only move what it can identify.`
+    );
+  }
+
+  plan.stats = {
+    onBothSides,
+    upload: plan.upload.length,
+    download: plan.download.length,
+    moveDevice: 0,
+    deleteDevice: 0,
+    deleteLocal: 0,
+    mkdirDevice: plan.mkdirDevice.length,
+    mkdirLocal: plan.mkdirLocal.length,
+    rmdirDevice: 0,
+    wouldDelete: 0,
+    unchanged: plan.unchanged.length,
+    conflicts: 0,
+    blocked: plan.blocked.length,
+    ambiguous: 0,
+    localIdentities: localBy.size,
+    deviceIdentities: deviceBy.size,
+    uploadBytes: plan.upload.reduce((n, u) => n + u.size, 0),
+    downloadBytes: plan.download.reduce((n, d) => n + d.size, 0),
+  };
+  plan.stats.estimatedSeconds = estimateSeconds(plan);
+  return plan;
+}

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 
 import {
   planSync,
+  planIdentitySync,
   flattenPlan,
   checkDestination,
   devicePath,
@@ -566,4 +567,129 @@ test('operating-system metadata is never uploaded to the device', () => {
     {}
   );
   assert.deepEqual(p.upload.map((u) => u.relPath), ['Zelda/Link.bin']);
+});
+
+// ---- identity sync ------------------------------------------------------
+
+const dump = (id, extra = {}) => ({ size: 540, isDir: false, amiiboId: id, ...extra });
+
+function idPlan(local, device, options = {}) {
+  return planIdentitySync({
+    local: index(local),
+    device: index(device),
+    deviceRoot: ROOT,
+    options,
+  });
+}
+
+test('identity sync ignores paths entirely', () => {
+  // The same dump, filed completely differently on each side — the real case
+  // across two copies of one collection, which shared zero paths.
+  const p = idPlan(
+    { 'My Stuff/Link.bin': dump('ID-LINK', { hash: 'h1' }) },
+    { 'loz/link.bin': dump('ID-LINK', { hash: 'h1' }) }
+  );
+  assert.deepEqual(p.upload, []);
+  assert.deepEqual(p.download, []);
+  assert.equal(p.stats.onBothSides, 1);
+});
+
+test('a second dump of an amiibo already held counts as a separate item', () => {
+  // The accepted cost of not collapsing on ID alone: a re-scan of the same
+  // figure has a different UID, so it reads as another item and transfers.
+  // Erring this way keeps the 91 item cards and the four vehicle pairings,
+  // which collapsing would silently discard.
+  const p = idPlan(
+    { 'mine/Link.bin': dump('ID-LINK', { hash: 'scan-a' }) },
+    { 'theirs/Link.bin': dump('ID-LINK', { hash: 'scan-b' }) },
+    { direction: 'push' }
+  );
+  assert.equal(p.upload.length, 1);
+});
+
+test('identity sync uploads an amiibo the device lacks, keeping the local layout', () => {
+  const p = idPlan(
+    { 'Zelda/Link.bin': dump('ID-LINK', { hash: 'h1' }) },
+    {},
+    { direction: 'push' }
+  );
+  assert.deepEqual(p.upload.map((u) => u.relPath), ['Zelda/Link.bin']);
+  assert.deepEqual(p.mkdirDevice.map((m) => m.relPath), ['Zelda']);
+});
+
+test('identity sync downloads an amiibo only the device has', () => {
+  const p = idPlan({}, { 'loz/rare.bin': dump('ID-RARE') }, { direction: 'pull' });
+  assert.deepEqual(p.download.map((d) => d.relPath), ['loz/rare.bin']);
+  assert.deepEqual(p.mkdirLocal.map((m) => m.relPath), ['loz']);
+});
+
+test('push never writes locally and pull never writes to the device', () => {
+  const both = { 'a.bin': dump('ID-A', { hash: 'h1' }) };
+  const push = idPlan(both, {}, { direction: 'push' });
+  assert.deepEqual(push.download, []);
+  const pull = idPlan(both, {}, { direction: 'pull' });
+  assert.deepEqual(pull.upload, []);
+  assert.deepEqual(pull.mkdirDevice, []);
+});
+
+test('vehicle pairings are transferred individually', () => {
+  // One amiibo ID, four products. An ID-only rule would move just one.
+  const local = {};
+  for (const v of ['Warp Star', 'Winged Star', 'Shadow Star', 'Tank Star']) {
+    local[`kirby/${v}.bin`] = { size: 2048, isDir: false, amiiboId: 'ID-KIRBY', vehicle: v, hash: `h-${v}` };
+  }
+  const device = { 'k/warp.bin': { size: 2048, isDir: false, amiiboId: 'ID-KIRBY', vehicle: 'Warp Star', hash: 'x' } };
+
+  const p = idPlan(local, device, { direction: 'push' });
+  assert.equal(p.upload.length, 3, 'the three vehicles the device lacks');
+  assert.ok(!p.upload.some((u) => u.vehicle === 'Warp Star'));
+});
+
+test('dumps that differ only in content are treated as separate items', () => {
+  // The 91 Animal Crossing item cards share an ID and have no vehicle, so
+  // content is what tells them apart. Collapsing them would lose 90.
+  const local = {};
+  for (let i = 0; i < 5; i++) local[`hhd/${i}.bin`] = dump('ID-HHD', { hash: `h${i}` });
+
+  const p = idPlan(local, {}, { direction: 'push' });
+  assert.equal(p.upload.length, 5);
+});
+
+test('a duplicate of an amiibo already held transfers only once', () => {
+  const p = idPlan(
+    { 'a/Link.bin': dump('ID-LINK', { hash: 'same' }), 'b/Link copy.bin': dump('ID-LINK', { hash: 'same' }) },
+    {},
+    { direction: 'push' }
+  );
+  assert.equal(p.upload.length, 1, 'identical dumps are one identity');
+});
+
+test('an over-long destination is blocked, not truncated', () => {
+  const long = `others/Monster Hunter/${'x'.repeat(45)}.bin`;
+  const p = idPlan({ [long]: dump('ID-X', { hash: 'h' }) }, {}, { direction: 'push' });
+  assert.deepEqual(p.upload, []);
+  assert.equal(p.blocked.length, 1);
+});
+
+test('files with no readable amiibo ID are left alone and reported', () => {
+  const p = idPlan(
+    { 'notes.txt': { size: 10, isDir: false, hash: 'h' }, 'a.bin': dump('ID-A', { hash: 'h1' }) },
+    {},
+    { direction: 'push' }
+  );
+  assert.deepEqual(p.upload.map((u) => u.relPath), ['a.bin']);
+  assert.equal(p.warnings.length, 1);
+  assert.match(p.warnings[0], /no readable amiibo ID/);
+});
+
+test('device-managed files are never identity-synced', () => {
+  const p = idPlan({}, { 'key_retail.bin': dump('ID-K'), 'settings.bin': dump('ID-S') }, { direction: 'pull' });
+  assert.deepEqual(p.download, []);
+});
+
+test('identity sync never deletes anything', () => {
+  const p = idPlan({ 'mine.bin': dump('ID-A', { hash: 'h' }) }, { 'theirs.bin': dump('ID-B', { hash: 'h2' }) });
+  assert.deepEqual(p.deleteDevice, []);
+  assert.deepEqual(p.deleteLocal, []);
+  assert.deepEqual(p.rmdirDevice, []);
 });
