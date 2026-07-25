@@ -8,8 +8,13 @@
 //   - firmware: amiibo_helper.c reads
 //       head = to_little_endian_int32(&ntag->data[84]);
 //       tail = to_little_endian_int32(&ntag->data[88]);
-//   - measured against 1035 real dumps, where byte 7 of the ID is 0x02 in
-//     every single one.
+//   - measured against 2084 real dumps across every format seen, including
+//     2048-byte NTAG I2C 2K images used by the newest releases.
+//
+// Note that the trailing ID byte is NOT invariably 0x02: Kirby Air Riders
+// carries 0x03. An earlier version rejected those dumps outright on that
+// assumption, so validity is now decided by dump length rather than by
+// guessing at a magic byte.
 //
 // The firmware also defines AMII_ID_OFFSET 476, and writes the ID to both 84
 // and 476 when *generating* a tag. In retail dumps 476 falls inside encrypted
@@ -20,11 +25,14 @@ import { AMIIBO_NAMES, AMIIBO_SERIES, AMIIBO_TYPES } from '../data/amiibo-db.js'
 export const AMIIBO_ID_OFFSET = 84;
 export const AMIIBO_ID_SIZE = 8;
 
-// Known dump lengths, from the firmware's ntag_def.h.
+// Known dump lengths, from the firmware's ntag_def.h. A file of any other
+// length is not treated as a dump, which keeps device state such as
+// settings.bin and key_retail.bin from being mistaken for amiibos.
 export const DUMP_SIZES = {
-  540: 'NTAG215',
   532: 'TagMo',
+  540: 'NTAG215',
   572: 'Thenaya',
+  2048: 'NTAG I2C 2K', // newer releases — Kirby Air Riders and later
 };
 
 // Figure type (byte 3) and amiibo series (byte 6). Both tables come from
@@ -38,23 +46,73 @@ const hex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).jo
 
 /**
  * Extract the amiibo ID from a dump. Returns a 16-character lowercase hex
- * string, or null if the bytes do not look like an amiibo dump.
+ * string, or null if the bytes are not a dump of a recognised length.
  *
- * Thenaya dumps are 32 bytes longer than a plain NTAG215 image; the extra
- * bytes could sit at either end, so both placements are tried and the one
- * whose trailing ID byte is 0x02 wins.
+ * The ID sits at byte 84 in every format observed, including the 2048-byte
+ * NTAG I2C 2K images used by newer releases.
  */
 export function parseAmiiboId(bytes) {
   const u = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  const candidates = [AMIIBO_ID_OFFSET];
-  if (u.length > 540) candidates.push(AMIIBO_ID_OFFSET + (u.length - 540));
+  if (!DUMP_SIZES[u.length]) return null;
 
+  const candidates = [AMIIBO_ID_OFFSET];
+  // Thenaya dumps carry 32 extra bytes that could sit at either end.
+  if (u.length === 572) candidates.push(AMIIBO_ID_OFFSET + 32);
+
+  const read = (offset) =>
+    offset + AMIIBO_ID_SIZE <= u.length ? hex(u.subarray(offset, offset + AMIIBO_ID_SIZE)) : null;
+  const plausible = (id) => id && !/^0+$/.test(id) && !/^f+$/.test(id);
+
+  // Prefer an offset the database recognises; that is what disambiguates the
+  // two possible Thenaya placements.
   for (const offset of candidates) {
-    if (offset + AMIIBO_ID_SIZE > u.length) continue;
-    const id = u.subarray(offset, offset + AMIIBO_ID_SIZE);
-    if (id[7] === 0x02) return hex(id);
+    const id = read(offset);
+    if (id && AMIIBO_NAMES[id]) return id;
+  }
+  for (const offset of candidates) {
+    const id = read(offset);
+    if (plausible(id)) return id;
   }
   return null;
+}
+
+// ---- v3 / NTAG I2C 2K vehicle identity ----------------------------------
+//
+// Kirby Air Riders amiibo are two pieces: the character figure carries the
+// tag, the vehicle acts as the antenna. The amiibo ID identifies the
+// *character only* — all four vehicles for one character share an ID — and the
+// vehicle lives in the tag's SRAM buffer at pages 0xF0–0xFF.
+//
+// Within that buffer, bytes 979–984 of the dump hold an ASCII part code and
+// byte 988 a discriminator. Measured across 16 dumps (4 characters × 4
+// vehicles): the signature is identical across characters and unique per
+// vehicle. Background: AmiiboAPI issue #243, and xSke's write-up there.
+
+export const VEHICLE_CODE_OFFSET = 979;
+export const VEHICLE_FLAG_OFFSET = 988;
+
+export const VEHICLE_SIGNATURES = Object.freeze({
+  'PB4W17:02': 'Warp Star',
+  'PB4W17:04': 'Winged Star',
+  'PB5T42:04': 'Shadow Star',
+  'PC6V28:04': 'Tank Star',
+});
+
+/**
+ * Vehicle carried by a v3 dump, or null when the dump is not one.
+ * Returns { code, name }, with name null for a vehicle not yet catalogued.
+ */
+export function parseVehicle(bytes) {
+  const u = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (u.length !== 2048) return null;
+
+  const raw = u.subarray(VEHICLE_CODE_OFFSET, VEHICLE_CODE_OFFSET + 6);
+  if (![...raw].every((c) => c >= 0x20 && c < 0x7f)) return null;
+
+  const code = `${String.fromCharCode(...raw)}:${u[VEHICLE_FLAG_OFFSET]
+    .toString(16)
+    .padStart(2, '0')}`;
+  return { code, name: VEHICLE_SIGNATURES[code] ?? null };
 }
 
 /** Break an ID into its documented fields. */

@@ -132,8 +132,12 @@ The amiibo ID is the stable identity, so that is what the collection view and
 the content comparison both use. Two caveats, both real:
 
 - The ID identifies a *model*, not always a distinct figure. Skylanders light
-  and dark variants share an ID, as do all 91 Animal Crossing Happy Home
-  item cards. "Same ID, different bytes" is reported rather than collapsed.
+  and dark variants share an ID, as do all 91 Animal Crossing Happy Home item
+  cards, and all four vehicle pairings of a Kirby Air Riders character. "Same
+  ID, different bytes" is reported rather than collapsed.
+- Newer amiibo (Kirby Air Riders onward) are **v3**: 2048-byte NTAG I2C 2K
+  dumps whose ID ends in `03` rather than `02`. They parse, and their vehicle
+  is decoded from the tag's SRAM buffer — see PROTOCOL.md §10.6.
 - The bundled table has 932 entries and predates the newest releases, so a
   dump can be recognised as an amiibo yet have no name. Those are listed as
   *unlisted* rather than hidden.

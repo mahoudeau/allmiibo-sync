@@ -10,6 +10,9 @@ import {
   amiiboName,
   buildCollection,
   AMIIBO_ID_OFFSET,
+  parseVehicle,
+  VEHICLE_CODE_OFFSET,
+  VEHICLE_FLAG_OFFSET,
 } from '../web/js/amiibo.js';
 
 // A minimal stand-in for a dump: 540 bytes with an ID at offset 84.
@@ -98,4 +101,49 @@ test('an unknown series byte degrades to the raw value rather than guessing', ()
 
 test('the Block figure type is known', () => {
   assert.equal(decodeAmiiboId('0000000400000002').typeName, 'Block');
+});
+
+// ---- v3 dumps (NTAG I2C 2K) --------------------------------------------
+
+test('a v3 dump parses even though its trailing ID byte is 0x03', () => {
+  // Kirby Air Riders. An earlier version required 0x02 here and rejected the
+  // whole series; the trailing byte is an amiibo format version, not a
+  // constant.
+  const u = new Uint8Array(2048);
+  u[0] = 0x04;
+  u.set(Uint8Array.from('1f00000004c41e03'.match(/../g).map((h) => parseInt(h, 16))), 84);
+  assert.equal(parseAmiiboId(u), '1f00000004c41e03');
+});
+
+test('v3 series and name resolve', () => {
+  assert.equal(decodeAmiiboId('1f00000004c41e03').seriesName, 'Kirby Air Riders');
+  assert.equal(amiiboName('1f00000004c41e03'), 'Kirby');
+  assert.equal(amiiboName('1f03010004c91e03'), 'Bandana Waddle Dee');
+});
+
+test('a file of an unrecognised length is not treated as a dump', () => {
+  // key_retail.bin is 160 bytes; settings.bin 17. Neither is an amiibo.
+  assert.equal(parseAmiiboId(new Uint8Array(160)), null);
+  assert.equal(parseAmiiboId(new Uint8Array(17)), null);
+});
+
+test('the vehicle is read from the SRAM buffer of a v3 dump', () => {
+  const u = new Uint8Array(2048);
+  u.set(Uint8Array.from('PB4W17', (c) => c.charCodeAt(0)), VEHICLE_CODE_OFFSET);
+  u[VEHICLE_FLAG_OFFSET] = 0x02;
+  assert.deepEqual(parseVehicle(u), { code: 'PB4W17:02', name: 'Warp Star' });
+
+  u[VEHICLE_FLAG_OFFSET] = 0x04;
+  assert.equal(parseVehicle(u).name, 'Winged Star');
+});
+
+test('an uncatalogued vehicle returns its code rather than nothing', () => {
+  const u = new Uint8Array(2048);
+  u.set(Uint8Array.from('PZ9Q99', (c) => c.charCodeAt(0)), VEHICLE_CODE_OFFSET);
+  u[VEHICLE_FLAG_OFFSET] = 0x07;
+  assert.deepEqual(parseVehicle(u), { code: 'PZ9Q99:07', name: null });
+});
+
+test('non-v3 dumps carry no vehicle', () => {
+  assert.equal(parseVehicle(new Uint8Array(540)), null);
 });

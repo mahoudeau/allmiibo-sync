@@ -1,7 +1,7 @@
 // Local folder access via the File System Access API, plus SHA-256 hashing.
 // Browser-only (Chrome/Edge). No dependencies.
 
-import { parseAmiiboId } from './amiibo.js';
+import { parseAmiiboId, parseVehicle } from './amiibo.js';
 
 const DB_NAME = 'allmiibo-sync';
 const STORE = 'handles';
@@ -95,6 +95,7 @@ export async function walkLocal(rootHandle, { onProgress = () => {} } = {}) {
           // Free here — the bytes are already in hand — and it is the only
           // reliable way to tell which amiibo a dump actually is.
           amiiboId: parseAmiiboId(buf),
+          vehicle: parseVehicle(buf)?.name ?? parseVehicle(buf)?.code ?? null,
           isDir: false,
           lastModified: f.lastModified,
         });

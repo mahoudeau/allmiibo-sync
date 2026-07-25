@@ -686,3 +686,49 @@ From `ntag_def.h`, all seen in the wild:
 532 is a truncation, so offset 84 still holds. 572 carries 32 extra bytes; the
 tool tries offset 84 first and then 84 + 32, accepting whichever gives a
 trailing ID byte of `0x02`.
+
+### 10.6 v3 amiibo (NTAG I2C 2K)
+
+Releases from Kirby Air Riders (November 2025) onward use a different tag —
+**NXP NTAG I²C Plus 2K**, dumping to **2048 bytes**. The firmware already
+anticipates the size as `NTAG_I2C_2K_DATA_SIZE`.
+
+Two things break naive parsers:
+
+**The trailing ID byte is not always `0x02`.** These carry `0x03`; it is an
+amiibo *format version*, not a constant. Of the 932 database entries, 930 are
+v2 and 2 are v3. A validity check of `id[7] === 0x02` silently rejects the
+entire series — use the dump length instead.
+
+**The ID is still at byte 84.** Confirmed against real dumps and against xSke's
+page-level analysis, where pages `0x15`–`0x16` (= bytes 84–91) hold
+`1f030100 04c91e03`. The 64 bytes of new data sit at `0x80`–`0xA0`, after the
+ID, so the offset is unaffected.
+
+#### Vehicle identity lives outside the amiibo ID
+
+An Air Riders amiibo is two pieces: the character figure carries the tag, the
+vehicle acts as its antenna. **The amiibo ID identifies the character only** —
+all four vehicles for one character share an ID.
+
+The vehicle is in the tag's SRAM buffer at pages `0xF0`–`0xFF`. Measured across
+16 dumps (4 characters × 4 vehicles), files for one character differ *only*
+within that range — 21–22 bytes — and the signature is identical across
+characters:
+
+| Bytes 979–984 | Byte 988 | Vehicle |
+|---|---|---|
+| `PB4W17` | `0x02` | Warp Star |
+| `PB4W17` | `0x04` | Winged Star |
+| `PB5T42` | `0x04` | Shadow Star |
+| `PC6V28` | `0x04` | Tank Star |
+
+Bytes 975–978 vary per physical tag, so they are not part of the signature.
+
+Consequences: four dumps of one character are **not duplicates** — they are
+distinct vehicle pairings sharing an ID. Any tool matching purely on amiibo ID
+must report same-ID-different-bytes rather than collapsing it.
+
+Background and credit: [AmiiboAPI issue
+#243](https://github.com/N3evin/AmiiboAPI/issues/243), particularly xSke's
+write-up of the memory layout and SRAM protocol.
