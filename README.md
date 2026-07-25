@@ -40,6 +40,9 @@ Three hardware findings shape the sync design:
 
 ## Quick start
 
+All commands are collected in [COMMANDS.md](COMMANDS.md).
+
+
 Requires Node (any recent version) and Chrome or Edge. Web Bluetooth needs a
 secure context, so the page must be served over `http://localhost` —
 opening it as a `file://` URL will not work.
