@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>allmiibo-sync — write test</title>
+<link rel="stylesheet" href="./css/app.css">
+</head>
+<body>
+<main>
+  <h1>allmiibo-sync — write test</h1>
+  <p class="sub">Confined to <code>E:/_synctest</code>. Cleans up after itself.</p>
+
+  <nav><a href="./index.html">← read-only probe</a></nav>
+
+  <div class="note caution">
+    This page <strong>writes to the device</strong>, but only inside
+    <code>E:/_synctest</code>. It creates that folder, writes test files, then
+    deletes them and the folder — even if a check fails. Nothing outside it is
+    touched, and the run aborts if the folder already contains anything.
+  </div>
+
+  <div class="row" style="margin-top:1rem">
+    <button id="connect" class="primary">Connect</button>
+    <button id="disconnect" disabled>Disconnect</button>
+    <button id="run" disabled>Run write test</button>
+    <button id="cleanup" disabled>Clean up only</button>
+    <label><input id="keep" type="checkbox"> Leave test folder in place</label>
+  </div>
+
+  <div id="status" class="status">Ready</div>
+
+  <section>
+    <h2>Results</h2>
+    <pre id="results">(not yet run)</pre>
+  </section>
+
+  <section>
+    <h2>Log</h2>
+    <div id="log" class="logbox"></div>
+  </section>
+
+  <div class="row">
+    <button id="copy" disabled>Copy report</button>
+    <button id="save" disabled>Save report JSON</button>
+  </div>
+</main>
+<script type="module" src="./js/writetest.js"></script>
+</body>
+</html>
