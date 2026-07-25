@@ -12,7 +12,7 @@ import * as localfs from './localfs.js';
 const els = {};
 for (const id of [
   'pickFolder', 'scan', 'connect', 'scanDevice', 'stop', 'folderName',
-  'status', 'progress', 'stats', 'series', 'overview', 'skipped', 'search', 'copyMissing',
+  'status', 'progress', 'stats', 'series', 'skipped', 'search', 'copyMissing',
   'mOwned', 'mMissing', 'mDevice', 'mExtra', 'mTotal',
 ]) els[id] = document.getElementById(id);
 
@@ -216,77 +216,7 @@ function render() {
   els.mExtra.textContent = s.notInDatabase;
   els.mTotal.textContent = s.ownedLocal;
 
-  renderOverview();
   paint();
-}
-
-// One chip per series: completion at a glance, and a shortcut into it.
-function renderOverview() {
-  els.overview.textContent = '';
-  els.overview.hidden = false;
-
-  for (const group of collection.series) {
-    const known = group.items.filter((i) => i.inDatabase).length;
-    const owned = group.items.filter((i) => i.hasLocal && i.inDatabase).length;
-    const complete = known > 0 && owned === known;
-
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = `sChip${complete ? ' done' : known ? ' part' : ''}`;
-    chip.title = complete
-      ? `${group.seriesName} — complete`
-      : `${group.seriesName} — ${known - owned} missing`;
-
-    const nm = document.createElement('span');
-    nm.textContent = group.seriesName;
-    const n = document.createElement('b');
-    n.textContent = known ? `${owned}/${known}` : `${group.ownedLocal}`;
-    chip.append(nm, n);
-
-    // Jump to the series and open it.
-    chip.addEventListener('click', () => {
-      const target = [...els.series.querySelectorAll('details')].find(
-        (d) => d.querySelector('summary span')?.textContent === group.seriesName
-      );
-      if (!target) return;
-      target.open = true;
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-
-    els.overview.append(chip);
-  }
-}
-
-// Files that are not amiibo dumps, split into harmless system clutter and
-// anything genuinely unexpected — the latter is worth seeing.
-function renderSkipped(ignored, unrecognised) {
-  els.skipped.textContent = '';
-  if (!ignored.length && !unrecognised.length) {
-    els.skipped.hidden = true;
-    return;
-  }
-  els.skipped.hidden = false;
-
-  const block = (title, items, note) => {
-    if (!items.length) return;
-    const d = document.createElement('details');
-    const sm = document.createElement('summary');
-    sm.textContent = `${title} (${items.length})`;
-    d.append(sm);
-    const pre = document.createElement('pre');
-    pre.textContent =
-      (note ? `${note}\n\n` : '') +
-      items.map((i) => `${String(i.size).padStart(8)} B  ${i.relPath}`).join('\n');
-    d.append(pre);
-    els.skipped.append(d);
-  };
-
-  block(
-    'Not recognised as amiibo dumps',
-    unrecognised,
-    `Recognised dump sizes: ${Object.entries(DUMP_SIZES).map(([n, l]) => `${n} (${l})`).join(', ')}.`
-  );
-  block('System files, ignored by sync too', ignored);
 }
 
 function currentFilter() {
@@ -320,13 +250,30 @@ function paint() {
     const summary = document.createElement('summary');
     const label = document.createElement('span');
     label.textContent = group.seriesName;
+    // Completion is measured against the database, so unlisted extras do not
+    // make a series read as more than complete.
+    const known = group.items.filter((i) => i.inDatabase).length;
+    const owned = group.items.filter((i) => i.hasLocal && i.inDatabase).length;
+    const extra = group.items.filter((i) => !i.inDatabase && i.hasLocal).length;
+
     const count = document.createElement('span');
-    count.className = 'count';
-    count.textContent =
-      group.ownedDevice === null
-        ? `${group.ownedLocal} / ${group.total}`
-        : `${group.ownedLocal} / ${group.total} local · ${group.ownedDevice} on device`;
-    summary.append(label, count);
+    count.className = `count${known && owned === known ? ' done' : known ? ' part' : ''}`;
+    count.textContent = known ? `${owned} / ${known}` : `${group.ownedLocal}`;
+    if (extra) count.textContent += `  +${extra}`;
+    count.title = [
+      known ? `${owned} of ${known} in the database` : 'none of these are in the database',
+      extra ? `${extra} held but unlisted` : null,
+      group.ownedDevice === null ? null : `${group.ownedDevice} on the device`,
+    ].filter(Boolean).join(' · ');
+
+    if (group.ownedDevice !== null) {
+      const dev = document.createElement('span');
+      dev.className = 'count dev';
+      dev.textContent = `${group.ownedDevice} on device`;
+      summary.append(label, dev, count);
+    } else {
+      summary.append(label, count);
+    }
     details.append(summary);
 
     const box = document.createElement('div');

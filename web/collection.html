@@ -14,7 +14,7 @@
   input[type=search] { font:inherit; padding:.35rem .5rem; border:1px solid var(--border);
          border-radius:5px; background:var(--bg); color:var(--fg); min-width:16rem; }
   details { border:1px solid var(--border); border-radius:6px; margin-bottom:.5rem; background:var(--panel); }
-  summary { cursor:pointer; padding:.55rem .8rem; font-weight:600; display:flex; justify-content:space-between; gap:1rem; }
+  summary { cursor:pointer; padding:.55rem .8rem; font-weight:600; display:flex; justify-content:space-between; gap:.6rem; align-items:center; }
   summary::-webkit-details-marker { display:none; }
   summary .count { font-weight:400; color:var(--muted); font-variant-numeric:tabular-nums; }
   .items { display:grid; grid-template-columns:repeat(auto-fill,minmax(23rem,1fr)); gap:.25rem .75rem;
@@ -36,14 +36,10 @@
   .tag.new { border-color:var(--warn); color:var(--warn); }
   .tag.guess { border-style:dashed; font-style:italic; }
   progress { width:100%; height:.5rem; margin-bottom:1rem; }
-  #overview { display:flex; flex-wrap:wrap; gap:.4rem; margin-bottom:1rem; }
-  .sChip { display:inline-flex; align-items:baseline; gap:.4rem; font-size:.78rem;
-           padding:.25rem .6rem; border-radius:99px; border:1px solid var(--border);
-           background:var(--panel); cursor:pointer; }
-  .sChip:hover { border-color:var(--accent); }
-  .sChip b { font-variant-numeric:tabular-nums; font-weight:600; }
-  .sChip.done { border-color:var(--ok); color:var(--ok); }
-  .sChip.part { border-color:var(--warn); color:var(--warn); }
+  summary .count { padding:.1rem .5rem; border-radius:99px; border:1px solid transparent; }
+  summary .count.done { border-color:var(--ok); color:var(--ok); }
+  summary .count.part { border-color:var(--warn); color:var(--warn); }
+  summary .count.dev { border-color:var(--accent); color:var(--accent); margin-left:auto; }
 </style>
 </head>
 <body>
@@ -100,8 +96,6 @@
     <input id="search" type="search" placeholder="Search name or ID…">
     <button id="copyMissing">Copy missing list</button>
   </div>
-
-  <section id="overview" hidden></section>
 
   <section id="skipped" hidden></section>
 
