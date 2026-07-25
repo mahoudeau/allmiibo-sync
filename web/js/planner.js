@@ -316,6 +316,18 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
   // folder itself contains an "amiibo" directory, which shifts every relative
   // path by one level and makes a sync look like a full replacement.
   plan.warnings = [];
+
+  // Scope is whatever root is configured. At a bare drive root the sweep
+  // includes device-managed trees such as amiibolink/ and chameleon/, which
+  // are only protected by being outside the default root.
+  if (allowDelete && /^[IE]:\/?$/.test(deviceRoot.trim())) {
+    plan.warnings.push(
+      `Device folder is the whole drive (${deviceRoot}) and deletions are enabled. ` +
+        `That puts amiibolink/, chameleon/ and anything else on the drive in scope. ` +
+        `Point at a subfolder such as E:/amiibo unless you really mean to mirror the entire drive.`
+    );
+  }
+
   const overlap = [...localFiles.keys()].filter((p) => deviceFiles.has(p)).length;
   if (localFiles.size > 0 && deviceFiles.size > 0 && overlap === 0) {
     plan.warnings.push(
@@ -399,6 +411,82 @@ export function estimateSeconds(plan) {
   ms += plan.mkdirDevice.length * CMD_MS;
   ms += plan.rmdirDevice.length * CMD_MS;
   return Math.round(ms / 1000);
+}
+
+/**
+ * Compare the two sides by content alone, ignoring names and folders.
+ *
+ * Path-based sync cannot answer "is this dump on the device anywhere?" once a
+ * file has been renamed or refiled. This groups both sides by content hash
+ * instead, so a dump counts as present if its bytes exist anywhere on the
+ * other side.
+ *
+ * Every device entry must carry a `hash`, which means reading each file back
+ * (~0.2 s each) — the caller decides when that is worth it.
+ *
+ * Note that two dumps of the same character are not necessarily identical:
+ * UID and save data differ, so this finds byte-identical copies, not "do I
+ * have this character somewhere".
+ */
+export function compareByContent({ local, device, excludes = DEFAULT_EXCLUDES }) {
+  const byHash = (index) => {
+    const map = new Map();
+    for (const [relPath, e] of index) {
+      if (e.isDir || isExcluded(relPath, excludes)) continue;
+      if (!e.hash) continue;
+      if (!map.has(e.hash)) map.set(e.hash, []);
+      map.get(e.hash).push({ relPath, size: e.size });
+    }
+    return map;
+  };
+
+  const localByHash = byHash(local);
+  const deviceByHash = byHash(device);
+
+  const missingLocally = [];
+  const missingOnDevice = [];
+  const relocated = [];
+  const duplicateOnDevice = [];
+  const duplicateLocally = [];
+
+  for (const [hash, entries] of deviceByHash) {
+    const localEntries = localByHash.get(hash);
+    if (!localEntries) {
+      for (const e of entries) missingLocally.push({ ...e, hash });
+    } else if (!entries.some((d) => localEntries.some((l) => l.relPath === d.relPath))) {
+      // Same bytes on both sides, but filed somewhere else.
+      relocated.push({ hash, device: entries.map((e) => e.relPath), local: localEntries.map((e) => e.relPath) });
+    }
+    if (entries.length > 1) duplicateOnDevice.push({ hash, paths: entries.map((e) => e.relPath) });
+  }
+
+  for (const [hash, entries] of localByHash) {
+    if (!deviceByHash.has(hash)) {
+      for (const e of entries) missingOnDevice.push({ ...e, hash });
+    }
+    if (entries.length > 1) duplicateLocally.push({ hash, paths: entries.map((e) => e.relPath) });
+  }
+
+  const sortByPath = (a, b) => a.relPath.localeCompare(b.relPath);
+  missingLocally.sort(sortByPath);
+  missingOnDevice.sort(sortByPath);
+
+  return {
+    missingLocally,
+    missingOnDevice,
+    relocated,
+    duplicateOnDevice,
+    duplicateLocally,
+    stats: {
+      deviceFiles: [...deviceByHash.values()].reduce((n, e) => n + e.length, 0),
+      localFiles: [...localByHash.values()].reduce((n, e) => n + e.length, 0),
+      deviceUnique: deviceByHash.size,
+      localUnique: localByHash.size,
+      missingLocally: missingLocally.length,
+      missingOnDevice: missingOnDevice.length,
+      relocated: relocated.length,
+    },
+  };
 }
 
 // Flat, ordered list of operations for the executor: folders before the files

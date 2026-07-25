@@ -42,6 +42,28 @@ export async function walkDevice(client, deviceRoot, { onProgress = () => {}, ma
   return index;
 }
 
+// Hash every file on the device by reading it back. At ~0.2 s per dump this
+// is minutes for a full library, so it is only ever run on request. Returns a
+// copy of the index with hashes filled in; already-hashed entries are skipped
+// so an interrupted run can be resumed cheaply.
+export async function hashDeviceIndex(client, deviceRoot, index, { onProgress = () => {}, shouldStop = () => false } = {}) {
+  const out = new Map(index);
+  const pending = [...index].filter(([, e]) => !e.isDir && !e.hash);
+  let done = 0;
+
+  for (const [relPath, entry] of pending) {
+    if (shouldStop()) break;
+    try {
+      const bytes = await client.readFile(devicePath(deviceRoot, relPath));
+      out.set(relPath, { ...entry, hash: await sha256(bytes) });
+    } catch (err) {
+      out.set(relPath, { ...entry, hashError: err.message });
+    }
+    onProgress(++done, pending.length, relPath);
+  }
+  return out;
+}
+
 // Read and hash selected device files so same-size files can be compared.
 // Each costs a full read (~0.2 s for a dump), so the caller decides which.
 export async function verifyDeviceHashes(client, deviceRoot, relPaths, { onProgress = () => {} } = {}) {

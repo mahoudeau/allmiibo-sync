@@ -3,13 +3,13 @@
 
 import { BleTransport } from './ble.js';
 import { AllmiiboClient } from './protocol.js';
-import { planSync, flattenPlan } from './planner.js';
-import { walkDevice, verifyDeviceHashes, applyPlan, ambiguousPaths } from './sync.js';
+import { planSync, flattenPlan, compareByContent } from './planner.js';
+import { walkDevice, verifyDeviceHashes, hashDeviceIndex, applyPlan, ambiguousPaths } from './sync.js';
 import * as localfs from './localfs.js';
 
 const els = {};
 for (const id of [
-  'connect', 'disconnect', 'pickFolder', 'scan', 'apply', 'stop',
+  'connect', 'disconnect', 'pickFolder', 'scan', 'apply', 'audit', 'stop',
   'deviceRoot', 'mode', 'allowDelete', 'verify',
   'status', 'folderName', 'planBox', 'log', 'progress',
 ]) els[id] = document.getElementById(id);
@@ -42,6 +42,7 @@ function refreshButtons() {
   els.connect.disabled = connected;
   els.disconnect.disabled = !connected;
   els.scan.disabled = !(connected && rootHandle);
+  els.audit.disabled = !(connected && rootHandle);
   els.apply.disabled = !(plan && hasWork(plan));
 }
 
@@ -260,6 +261,99 @@ els.apply.addEventListener('click', async () => {
   els.planBox.textContent += '\n\n(applied — re-scan to see the current state)';
   refreshButtons();
 });
+
+// ---- content comparison (read-only) -------------------------------------
+
+els.audit.addEventListener('click', async () => {
+  els.audit.disabled = true;
+  els.scan.disabled = true;
+  els.stop.disabled = false;
+  stopRequested = false;
+  plan = null;
+  els.planBox.textContent = '';
+
+  try {
+    const deviceRoot = els.deviceRoot.value.trim() || 'E:/amiibo';
+
+    setStatus('Reading local folder…');
+    const local = await localfs.walkLocal(rootHandle, {
+      onProgress: (n) => { if (n % 100 === 0) setStatus(`Reading local folder… ${n} files`); },
+    });
+
+    setStatus('Listing device…');
+    let device = await walkDevice(client, deviceRoot, {
+      onProgress: (n) => { if (n % 50 === 0) setStatus(`Listing device… ${n} files`); },
+    });
+
+    const toHash = [...device.values()].filter((e) => !e.isDir).length;
+    log('info', `hashing ${toHash} device files — roughly ${fmtDuration(Math.round(toHash * 0.22))}`);
+
+    const t0 = Date.now();
+    device = await hashDeviceIndex(client, deviceRoot, device, {
+      shouldStop: () => stopRequested,
+      onProgress: (done, total) => {
+        els.progress.value = (done / total) * 100;
+        if (done % 10 === 0 || done === total) {
+          const rate = done / Math.max(1, (Date.now() - t0) / 1000);
+          const left = Math.round((total - done) / Math.max(rate, 0.01));
+          setStatus(`Hashing ${done}/${total} — about ${fmtDuration(left)} left`);
+        }
+      },
+    });
+    els.progress.value = 0;
+
+    const report = compareByContent({ local, device });
+    renderAudit(report, stopRequested);
+    setStatus(
+      stopRequested ? 'Comparison stopped early — results are partial' : 'Comparison complete',
+      stopRequested ? 'warn' : 'ok'
+    );
+  } catch (err) {
+    setStatus(`Comparison failed: ${err.message}`, 'err');
+    log('err', err.message);
+  }
+
+  els.stop.disabled = true;
+  refreshButtons();
+});
+
+function renderAudit(r, partial) {
+  const lines = [];
+  if (partial) lines.push('PARTIAL — stopped before every file was read.\n');
+
+  lines.push(`device: ${r.stats.deviceFiles} files, ${r.stats.deviceUnique} distinct by content`);
+  lines.push(`local:  ${r.stats.localFiles} files, ${r.stats.localUnique} distinct by content`);
+  lines.push('');
+  lines.push('Matched by content, so name and folder do not matter.');
+  lines.push('');
+
+  const section = (title, items, fmt) => {
+    if (!items.length) return;
+    lines.push(`${title} (${items.length})`);
+    for (const item of items.slice(0, 300)) lines.push(`   ${fmt(item)}`);
+    if (items.length > 300) lines.push(`   … and ${items.length - 300} more`);
+    lines.push('');
+  };
+
+  section('ON DEVICE, NOT IN YOUR LOCAL FOLDER', r.missingLocally, (m) => `${m.relPath}  (${m.size} B)`);
+  section('LOCAL ONLY, NOT ON THE DEVICE', r.missingOnDevice, (m) => `${m.relPath}  (${m.size} B)`);
+  section('SAME CONTENT, DIFFERENT LOCATION', r.relocated, (m) =>
+    `device: ${m.device.join(', ')}\n        local:  ${m.local.join(', ')}`
+  );
+  section('DUPLICATED ON DEVICE', r.duplicateOnDevice, (d) => d.paths.join('  =  '));
+  section('DUPLICATED LOCALLY', r.duplicateLocally, (d) => d.paths.join('  =  '));
+
+  if (!r.missingLocally.length && !r.missingOnDevice.length) {
+    lines.push('Every dump on the device has a byte-identical copy locally, and vice versa.');
+  }
+
+  lines.push('');
+  lines.push('Note: two dumps of the same character still differ if their UID or save');
+  lines.push('data differs, so this finds byte-identical copies — not "do I have this');
+  lines.push('character somewhere".');
+
+  els.planBox.textContent = lines.join('\n');
+}
 
 els.stop.addEventListener('click', () => {
   stopRequested = true;

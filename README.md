@@ -105,6 +105,25 @@ Safety properties, each following from a verified device behaviour:
 - **State is saved as it goes**, so a disconnect part-way through a long push
   resumes rather than restarting.
 
+### Compare by content
+
+Path-based sync cannot answer "is this dump on the device anywhere?" once a
+file has been renamed or refiled. **Compare by content** reads every file off
+the device, hashes it, and matches purely on bytes — names and folders ignored.
+It reports:
+
+- dumps on the device with no byte-identical copy in your local folder
+- local dumps not on the device
+- files present on both sides under different names or folders
+- duplicates within each side
+
+It is strictly read-only and can be stopped part-way, but it costs a full read
+per file — roughly 0.2 s each, so about three minutes for an 860-file library.
+
+One limit worth knowing: two dumps of the *same character* are not necessarily
+identical, since UID and save data differ. This finds byte-identical copies,
+not "do I own this character somewhere".
+
 ### Why "verify same-size files" exists
 
 Every amiibo dump is exactly 540 bytes, so file size cannot detect a content

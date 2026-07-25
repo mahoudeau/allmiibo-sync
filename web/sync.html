@@ -30,6 +30,10 @@
   <div class="note">
     Nothing is written until you review the plan and press <strong>Apply</strong>.
     Deletions are off by default and always ask for confirmation.
+    <br>
+    <strong>Compare by content</strong> is read-only: it reads every file off the
+    device to find dumps whose bytes exist nowhere in your local folder, whatever
+    they are named. Slow — roughly 0.2 s per file.
   </div>
 
   <div class="row" style="margin-top:1rem">
@@ -60,6 +64,7 @@
   <div class="row">
     <button id="scan" class="primary" disabled>Scan &amp; plan</button>
     <button id="apply" disabled>Apply plan</button>
+    <button id="audit" disabled>Compare by content</button>
     <button id="stop" disabled>Stop</button>
   </div>
 

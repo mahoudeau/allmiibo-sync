@@ -10,6 +10,7 @@ import {
   checkDestination,
   devicePath,
   isExcluded,
+  compareByContent,
 } from '../web/js/planner.js';
 
 const ROOT = 'E:/amiibo';
@@ -227,6 +228,59 @@ test('a folder is not removed while a subfolder survives', () => {
   assert.deepEqual(p.rmdirDevice, [], 'a/b survives, so a cannot be removed recursively');
 });
 
+test('every device-touching operation stays under the device root', () => {
+  // Containment is the core safety property: nothing the planner emits may
+  // resolve outside the configured root, whatever the inputs look like.
+  const p = plan(
+    {
+      'Zelda/Link.bin': file(540, 'h1'),
+      'New/Moved.bin': file(540, 'hMoved'),
+      'Empty': dir(),
+    },
+    {
+      'Zelda/Link.bin': file(540),
+      'Old/Moved.bin': file(540),
+      'Surplus/junk.bin': file(540),
+      Old: dir(),
+      Surplus: dir(),
+    },
+    {
+      'Zelda/Link.bin': { size: 540, hash: 'h0' },
+      'Old/Moved.bin': { size: 540, hash: 'hMoved' },
+      'Surplus/junk.bin': { size: 540, hash: 'hJunk' },
+    },
+    { delete: true }
+  );
+
+  const touched = [];
+  for (const op of flattenPlan(p)) {
+    if (op.op === 'mkdirLocal' || op.op === 'deleteLocal') continue;
+    if (op.op === 'moveDevice') touched.push(op.from, op.to);
+    else touched.push(op.relPath);
+  }
+
+  assert.ok(touched.length > 0, 'the fixture must actually exercise device operations');
+  for (const rel of touched) {
+    const full = devicePath(ROOT, rel);
+    assert.ok(full.startsWith(`${ROOT}/`), `${full} escapes ${ROOT}`);
+    assert.ok(!rel.includes('..'), `${rel} contains a parent traversal`);
+  }
+});
+
+test('a bare drive root plus deletions is flagged', () => {
+  const p = plan({}, { 'amiibolink/00.bin': file(540) }, {}, { delete: true });
+  const atRoot = planSync({
+    local: index({}),
+    device: index({ 'amiibolink/00.bin': file(540) }),
+    state: { entries: {} },
+    deviceRoot: 'E:/',
+    options: { delete: true },
+  });
+  assert.deepEqual(p.warnings, []);
+  assert.equal(atRoot.warnings.length, 1);
+  assert.match(atRoot.warnings[0], /whole drive/i);
+});
+
 test('a warning fires when the two sides share no paths at all', () => {
   // The classic misconfiguration: local folder contains "amiibo/", device root
   // is already "E:/amiibo", so every relative path is shifted by one level.
@@ -384,4 +438,66 @@ test('the estimate reflects the measured ~2 KB/s link', () => {
 
 test('an unknown mode is rejected', () => {
   assert.throws(() => plan({}, {}, {}, { mode: 'sideways' }), /unknown mode/);
+});
+
+// ---- content comparison -------------------------------------------------
+
+test('content comparison finds device files with no local copy, whatever the name', () => {
+  const r = compareByContent({
+    local: index({ 'Whatever I Called It.bin': file(540, 'hA') }),
+    device: index({ 'Zelda/Link.bin': file(540, 'hA'), 'Zelda/Rare.bin': file(540, 'hB') }),
+  });
+
+  assert.deepEqual(r.missingLocally.map((m) => m.relPath), ['Zelda/Rare.bin']);
+  assert.deepEqual(r.missingOnDevice, []);
+  // hA is on both sides under different names, so it is relocated, not missing.
+  assert.equal(r.relocated.length, 1);
+  assert.deepEqual(r.relocated[0].device, ['Zelda/Link.bin']);
+  assert.deepEqual(r.relocated[0].local, ['Whatever I Called It.bin']);
+});
+
+test('content comparison reports local files absent from the device', () => {
+  const r = compareByContent({
+    local: index({ 'a.bin': file(540, 'hA'), 'b.bin': file(540, 'hB') }),
+    device: index({ 'a.bin': file(540, 'hA') }),
+  });
+  assert.deepEqual(r.missingOnDevice.map((m) => m.relPath), ['b.bin']);
+  assert.deepEqual(r.missingLocally, []);
+});
+
+test('identical paths and content are not reported as relocated', () => {
+  const r = compareByContent({
+    local: index({ 'Zelda/Link.bin': file(540, 'hA') }),
+    device: index({ 'Zelda/Link.bin': file(540, 'hA') }),
+  });
+  assert.deepEqual(r.relocated, []);
+  assert.deepEqual(r.missingLocally, []);
+  assert.deepEqual(r.missingOnDevice, []);
+});
+
+test('content comparison surfaces duplicates on each side', () => {
+  const r = compareByContent({
+    local: index({ 'x.bin': file(540, 'hA'), 'copy of x.bin': file(540, 'hA') }),
+    device: index({ 'one.bin': file(540, 'hA'), 'two.bin': file(540, 'hA') }),
+  });
+  assert.deepEqual(r.duplicateOnDevice[0].paths.sort(), ['one.bin', 'two.bin']);
+  assert.deepEqual(r.duplicateLocally[0].paths.sort(), ['copy of x.bin', 'x.bin']);
+});
+
+test('content comparison ignores device-managed files', () => {
+  const r = compareByContent({
+    local: index({}),
+    device: index({ 'key_retail.bin': file(160, 'hK'), 'settings.bin': file(17, 'hS') }),
+  });
+  assert.deepEqual(r.missingLocally, []);
+});
+
+test('unhashed device entries are skipped rather than misreported as missing', () => {
+  const r = compareByContent({
+    local: index({ 'a.bin': file(540, 'hA') }),
+    device: index({ 'a.bin': { size: 540, isDir: false } }), // never hashed
+  });
+  assert.deepEqual(r.missingLocally, []);
+  // The local file cannot be confirmed present, so it is reported as such.
+  assert.deepEqual(r.missingOnDevice.map((m) => m.relPath), ['a.bin']);
 });
