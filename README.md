@@ -92,6 +92,14 @@ regardless. The plan says how many were skipped and why.
 **Replace device with local** makes the device match your folder exactly,
 including deletions. It always confirms first, with counts.
 
+Deletion order is decided by capacity, not by habit. Normally uploads run
+first, so nothing is destroyed until its replacement is safely on the device.
+But the drive is small — 1.9 MB — and uploading before deleting means it
+briefly holds both copies, which may simply not fit. When the incoming data
+does not fit in the free space as it stands, deletions run first to reclaim the
+room, and the plan says so. If it will not fit even after the deletions, the
+plan refuses to pretend otherwise.
+
 **Smart sync** sends each side the other's changes, using the record of the
 last sync to tell an edit from a deletion. It matches on path, so it works best
 when both sides are laid out the same way.

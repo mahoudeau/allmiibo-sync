@@ -271,7 +271,7 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
       if (mode === 'two-way' && deletedLocally) {
         const knownDeviceHash = d.hash ?? (d.size === s.size ? s.hash : undefined);
         if (knownDeviceHash !== undefined && knownDeviceHash === s.hash) {
-          if (allowDelete) plan.deleteDevice.push({ relPath });
+          if (allowDelete) plan.deleteDevice.push({ relPath, size: d.size });
           else plan.ambiguous.push({ relPath, reason: 'removed locally; --delete is off' });
         } else {
           plan.conflicts.push({
@@ -364,6 +364,43 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
         `Check that the device folder matches your local folder's contents — if your local folder ` +
         `*contains* a subfolder mirroring the device root, point at that subfolder instead.`
     );
+  }
+
+  // Uploading before deleting means the device briefly holds both copies. On a
+  // 1.9 MB drive that can simply not fit, so when the incoming data does not
+  // fit in the free space as it stands, delete first and reclaim the room.
+  //
+  // Upload-first is preferred where it fits: nothing is destroyed until the
+  // new copy is safely on the device.
+  const uploadBytes = plan.upload.reduce((n, u) => n + u.size, 0);
+  const freeingBytes = plan.deleteDevice.reduce((n, d) => n + (d.size ?? 0), 0);
+  const drive = options.drive ?? null;
+
+  if (drive && Number.isFinite(drive.totalSize) && Number.isFinite(drive.usedSize)) {
+    const freeNow = drive.totalSize - drive.usedSize;
+    plan.deleteFirst = uploadBytes > freeNow && freeingBytes > 0;
+    plan.capacity = {
+      totalSize: drive.totalSize,
+      usedSize: drive.usedSize,
+      freeNow,
+      uploadBytes,
+      freeingBytes,
+      freeAfterDeletes: freeNow + freeingBytes,
+      fits: uploadBytes <= freeNow + freeingBytes,
+    };
+
+    if (!plan.capacity.fits) {
+      plan.warnings.push(
+        `Not enough room: ${uploadBytes} bytes to upload, ${freeNow + freeingBytes} bytes free ` +
+          `even after the planned deletions. Remove something first, or sync a smaller folder.`
+      );
+    } else if (plan.deleteFirst) {
+      plan.warnings.push(
+        `Deleting before uploading: ${uploadBytes} bytes will not fit in the ${freeNow} bytes ` +
+          `free now, but will once ${freeingBytes} bytes are reclaimed. The device is left ` +
+          `short of files until the uploads finish — everything removed exists in your local folder.`
+      );
+    }
   }
 
   plan.stats = {
@@ -566,14 +603,25 @@ export function compareByContent({ local, device, excludes = DEFAULT_EXCLUDES, i
 // folders that contained them).
 export function flattenPlan(plan) {
   const ops = [];
+  const deviceDeletes = [
+    ...plan.deleteDevice.map((d) => ({ op: 'deleteDevice', ...d })),
+    ...plan.rmdirDevice.map((d) => ({ op: 'rmdirDevice', ...d })),
+  ];
+
   for (const m of plan.mkdirLocal) ops.push({ op: 'mkdirLocal', ...m });
+
+  // Normally the device only loses files once their replacements are safely
+  // on it. When the incoming data will not fit alongside what is there, that
+  // order is impossible and deletions have to come first.
+  if (plan.deleteFirst) ops.push(...deviceDeletes);
+
   for (const m of plan.mkdirDevice) ops.push({ op: 'mkdirDevice', ...m });
   for (const m of plan.moveDevice) ops.push({ op: 'moveDevice', ...m });
   for (const u of plan.upload) ops.push({ op: 'upload', ...u });
   for (const d of plan.download) ops.push({ op: 'download', ...d });
-  for (const d of plan.deleteDevice) ops.push({ op: 'deleteDevice', ...d });
+
+  if (!plan.deleteFirst) ops.push(...deviceDeletes);
   for (const d of plan.deleteLocal) ops.push({ op: 'deleteLocal', ...d });
-  for (const d of plan.rmdirDevice) ops.push({ op: 'rmdirDevice', ...d });
   return ops;
 }
 

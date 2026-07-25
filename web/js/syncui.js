@@ -138,13 +138,22 @@ els.scan.addEventListener('click', async () => {
     });
     log('ok', `local: ${count(local)} files, ${countDirs(local)} folders`);
 
+    // Capacity comes from the drive list, so the plan can tell whether the
+    // uploads fit alongside what is already there.
+    const drives = await client.getDriveList();
+    const drive = drives.drives.find((d) => `${d.label}:/` === (deviceRoot.match(/^[IE]:\//)?.[0] ?? 'E:/'))
+      ?? drives.drives[0] ?? null;
+    if (drive) {
+      log('info', `drive ${drive.label}:/ — ${drive.usedSize} of ${drive.totalSize} bytes used`);
+    }
+
     setStatus('Reading device…');
     let device = await walkDevice(client, deviceRoot, {
       onProgress: (n) => { if (n % 50 === 0) setStatus(`Reading device… ${n} files`); },
     });
     log('ok', `device: ${count(device)} files, ${countDirs(device)} folders under ${deviceRoot}`);
 
-    plan = buildPlan({ op, local, device, state, deviceRoot });
+    plan = buildPlan({ op, local, device, state, deviceRoot, drive });
 
     // Identity sync compares amiibo IDs, which are inside the files, so the
     // device side has to be read in full first.
@@ -164,7 +173,7 @@ els.scan.addEventListener('click', async () => {
       });
       els.progress.value = 0;
       device = identified;
-      plan = buildPlan({ op, local, device, state, deviceRoot });
+      plan = buildPlan({ op, local, device, state, deviceRoot, drive });
     }
 
     // Same-size files with no sync record cannot be compared without reading
@@ -179,7 +188,7 @@ els.scan.addEventListener('click', async () => {
         const existing = device.get(p);
         if (existing) device.set(p, { ...existing, hash: h });
       }
-      plan = buildPlan({ op, local, device, state, deviceRoot });
+      plan = buildPlan({ op, local, device, state, deviceRoot, drive });
     }
 
     renderPlan(plan);
@@ -192,7 +201,7 @@ els.scan.addEventListener('click', async () => {
   refreshButtons();
 });
 
-function buildPlan({ op, local, device, state, deviceRoot }) {
+function buildPlan({ op, local, device, state, deviceRoot, drive }) {
   switch (op) {
     case 'dump':
       return planDump({
@@ -206,12 +215,16 @@ function buildPlan({ op, local, device, state, deviceRoot }) {
         },
       });
     case 'replace':
-      // A replacement is a mirror: local is master and surplus goes.
-      return planSync({ local, device, state, deviceRoot, options: { mode: 'push', delete: true } });
+      // A replacement is a mirror: local is master and surplus goes. The drive
+      // figures let the planner decide whether uploads can precede deletions.
+      return planSync({
+        local, device, state, deviceRoot,
+        options: { mode: 'push', delete: true, drive },
+      });
     case 'smart':
       return planSync({
         local, device, state, deviceRoot,
-        options: { mode: 'two-way', delete: els.allowDelete.checked },
+        options: { mode: 'two-way', delete: els.allowDelete.checked, drive },
       });
     case 'identity':
       return planIdentitySync({ local, device, deviceRoot, options: { direction: 'both' } });
@@ -248,6 +261,15 @@ function renderPlan(p) {
     identity: 'Sync by amiibo',
   }[currentOp()] ?? p.mode;
   lines.push(`${opLabel}   device root: ${p.deviceRoot}`);
+  if (p.capacity) {
+    const c = p.capacity;
+    lines.push(
+      `device: ${c.usedSize} of ${c.totalSize} bytes used, ${c.freeNow} free` +
+        (c.freeingBytes ? ` (+${c.freeingBytes} reclaimed by deletions)` : '') +
+        (c.uploadBytes ? ` · uploading ${c.uploadBytes}` : '')
+    );
+    if (p.deleteFirst) lines.push('order: DELETE FIRST, then upload — the uploads do not fit otherwise');
+  }
   lines.push(`estimated time: ${fmtDuration(p.stats.estimatedSeconds)} at the measured ~2 KB/s`);
   lines.push('');
 

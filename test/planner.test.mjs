@@ -878,3 +878,75 @@ test('skipping is explained, including what it cannot notice', () => {
   });
   assert.match(p.warnings.join(' '), /would not be noticed/);
 });
+
+// ---- capacity and ordering ----------------------------------------------
+
+const DRIVE = { totalSize: 1_920_401, usedSize: 966_601 }; // as reported by real hardware
+
+test('uploads precede deletions when there is room for both', () => {
+  const p = plan(
+    { 'new.bin': file(540, 'h1') },
+    { 'old.bin': file(540) },
+    { 'old.bin': { size: 540, hash: 'h0' } },
+    { delete: true, drive: DRIVE }
+  );
+
+  assert.equal(p.deleteFirst, false);
+  const ops = flattenPlan(p).map((o) => o.op);
+  assert.ok(ops.indexOf('upload') < ops.indexOf('deleteDevice'),
+    'nothing is destroyed until its replacement is on the device');
+});
+
+test('deletions precede uploads when the incoming data would not fit', () => {
+  // Nearly full drive: the new files only fit once the old ones are gone.
+  const nearlyFull = { totalSize: 10_000, usedSize: 9_000 };
+  const local = {};
+  const device = {};
+  const state = {};
+  for (let i = 0; i < 10; i++) {
+    local[`new${i}.bin`] = file(540, `n${i}`);
+    device[`old${i}.bin`] = file(540);
+    state[`old${i}.bin`] = { size: 540, hash: `o${i}` };
+  }
+
+  const p = plan(local, device, state, { delete: true, drive: nearlyFull });
+
+  assert.equal(p.deleteFirst, true);
+  const ops = flattenPlan(p).map((o) => o.op);
+  assert.ok(ops.indexOf('deleteDevice') < ops.indexOf('upload'),
+    'the room has to be reclaimed before the uploads can land');
+  assert.match(p.warnings.join(' '), /Deleting before uploading/);
+});
+
+test('a plan that cannot fit even after deletions says so', () => {
+  const tiny = { totalSize: 2_000, usedSize: 1_000 };
+  const local = {};
+  for (let i = 0; i < 20; i++) local[`f${i}.bin`] = file(540, `h${i}`);
+
+  const p = plan(local, {}, {}, { delete: true, drive: tiny });
+  assert.equal(p.capacity.fits, false);
+  assert.match(p.warnings.join(' '), /Not enough room/);
+});
+
+test('folder removals travel with the file deletions', () => {
+  const nearlyFull = { totalSize: 6_000, usedSize: 5_600 };
+  const p = plan(
+    { 'new.bin': file(540, 'h') },
+    { 'gone/a.bin': file(540), gone: dir() },
+    { 'gone/a.bin': { size: 540, hash: 'h0' } },
+    { delete: true, drive: nearlyFull }
+  );
+
+  assert.equal(p.deleteFirst, true);
+  const ops = flattenPlan(p).map((o) => o.op);
+  assert.ok(ops.indexOf('deleteDevice') < ops.indexOf('rmdirDevice'), 'files before their folders');
+  assert.ok(ops.indexOf('rmdirDevice') < ops.indexOf('upload'));
+});
+
+test('without drive figures the safe order is kept', () => {
+  const p = plan({ 'a.bin': file(540, 'h') }, { 'b.bin': file(540) },
+    { 'b.bin': { size: 540, hash: 'x' } }, { delete: true });
+  assert.equal(p.capacity, undefined);
+  const ops = flattenPlan(p).map((o) => o.op);
+  assert.ok(ops.indexOf('upload') < ops.indexOf('deleteDevice'));
+});
