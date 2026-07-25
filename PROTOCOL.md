@@ -454,15 +454,91 @@ Resolved against firmware and hardware:
 - ~~Whether `read_file` returns exactly the size `read_dir` reported~~ — yes,
   verified byte-for-byte on a 160-byte file.
 
-- ~~Does the firmware sanitise filenames on write?~~ — no. `&` and `'` are
-  stored verbatim; the underscores came from the dump packs (§7.2). Sync
-  compares names byte-for-byte.
+- ~~Does the firmware sanitise filenames on write?~~ — no. Confirmed twice:
+  by inference from the library (§7.2) and directly by writing `&`, `'`, `"`,
+  `*`, `?` and `:` and reading every one back byte-for-byte (§9).
+- ~~`vfs_create_folder` on an existing path~~ — returns `DF_STATUS_ERR` (§9).
+- ~~`vfs_remove` on a non-empty directory~~ — **succeeds, recursively** (§9).
+- ~~Can `vfs_rename` move between folders?~~ — yes (§9).
+- ~~Practical throughput~~ — ~2 KB/s (§9).
 
-Still open — all require a write test:
+Still open:
 
-- Behaviour of `vfs_create_folder` on an existing path.
-- Whether `vfs_remove` succeeds on a non-empty directory.
-- Whether `vfs_rename` can move an entry between folders or only rename in
-  place.
-- Maximum practical throughput, and whether the device tolerates
-  write-without-response.
+- Whether the device tolerates write-without-response, which is the obvious
+  lever for improving on 2 KB/s.
+- Whether a larger ATT MTU is negotiable.
+
+---
+
+## 9. Write semantics (verified on hardware)
+
+Measured on Pixl.js 2.11.2 by writing to a scratch folder and reading back.
+
+### 9.1 Filenames are stored verbatim
+
+All five probes round-tripped byte-for-byte:
+
+| Written | Stored exactly |
+|---|---|
+| `Mr. Game & Watch.bin` | yes |
+| `Majora's Mask.bin` | yes |
+| `Quote "X".bin` | yes |
+| `Star*Q?.bin` | yes |
+| `Colon:Test.bin` | yes |
+
+Characters that are illegal on FAT (`*`, `?`, `:`, `"`) are accepted — the
+underlying filesystem is not FAT. Only `/` is unavailable, being the separator.
+
+### 9.2 Content round-trips exactly
+
+540 bytes written and read back identical.
+
+### 9.3 `create_folder` is not idempotent
+
+Creating an existing folder returns `DF_STATUS_ERR`. Since status is binary
+(§3.3), "already exists" is indistinguishable from a real failure.
+
+**Implication:** list the parent with `read_dir` and create only when absent.
+Do not create-and-ignore-the-error, or genuine failures pass silently.
+
+### 9.4 `remove` deletes directories recursively
+
+`vfs_remove` on a **non-empty** folder succeeds and takes the contents with it.
+There is no "directory not empty" guard.
+
+**Implication:** this is the most dangerous call in the protocol. A single
+mistargeted `remove` can erase an entire library. A sync tool must never remove
+a directory as a shortcut for removing its contents — delete files
+individually, and treat directory removal as a separate, explicitly confirmed
+step.
+
+### 9.5 `rename` moves between folders
+
+`rename("E:/a/x.bin", "E:/a/sub/moved.bin")` succeeded and the entry appeared
+in the subfolder.
+
+**Implication:** a file that moved between folders can be relocated with one
+command instead of a re-upload. At 2 KB/s that is the difference between
+~0.3 s and ~0.5 s for a 540-byte dump, and far more for anything larger — a
+move detector keyed on content hash is worth having.
+
+### 9.6 Throughput is ~2 KB/s
+
+16,384 bytes took 8,010 ms — **2.00 KB/s**, about 118 ms per 242-byte chunk.
+That is dominated by per-command latency, not bandwidth: each chunk is a
+separate acknowledged write, and the device commits to external SPI flash
+between them.
+
+Practical consequences for a 540-byte dump (open + 3 writes + close ≈ 5
+round-trips): roughly **0.5 s per file**.
+
+| Operation | Estimate |
+|---|---|
+| One 540-byte dump | ~0.5 s |
+| The observed 862-file library | ~7 minutes |
+| Its 465 KB, data only | ~4 minutes |
+
+**Implications:** transfer the minimum. Never re-upload unchanged files; prefer
+`rename` over re-upload for moves; report progress continuously; and make a
+long push resumable, since a disconnect seven minutes in should not restart
+from zero.

@@ -21,7 +21,17 @@ pulled from someone else's script at runtime.
 - **Client library** — implemented, with 17 tests against a simulated device. ✅
 - **Read-only hardware probe** — verified against Pixl.js 2.11.2: full walk of
   862 files across 44 folders, 0 errors, file read matching byte-for-byte. ✅
-- **Sync engine** — not started.
+- **Write test** — verified: filenames stored verbatim, content round-trips
+  exactly, and every remaining protocol question answered. ✅
+- **Sync engine** — next.
+
+Three hardware findings shape the sync design:
+
+- **~2 KB/s.** A 540-byte dump costs ~0.5 s; a full 862-file push is ~7 minutes.
+  Transfer the minimum, show progress, make long runs resumable.
+- **`remove` deletes folders recursively**, with no "not empty" guard. Deleting
+  files individually is the only safe approach.
+- **`rename` moves between folders**, so a relocated file need not be re-uploaded.
 
 ## Quick start
 
