@@ -501,3 +501,55 @@ test('unhashed device entries are skipped rather than misreported as missing', (
   // The local file cannot be confirmed present, so it is reported as such.
   assert.deepEqual(r.missingOnDevice.map((m) => m.relPath), ['a.bin']);
 });
+
+// ---- amiibo identity ----------------------------------------------------
+
+test('content comparison keys on the amiibo ID, not the bytes', async () => {
+  // Two dumps of the same character: same amiibo ID, different UID/save data
+  // and therefore different hashes. Byte comparison would call these distinct.
+  const local = index({ 'mine/Link.bin': { size: 540, hash: 'hA', amiiboId: 'ID-LINK', isDir: false } });
+  const device = index({
+    'theirs/Link copy.bin': { size: 540, hash: 'hB', amiiboId: 'ID-LINK', isDir: false },
+    'theirs/Zelda.bin': { size: 540, hash: 'hC', amiiboId: 'ID-ZELDA', isDir: false },
+  });
+
+  const byId = compareByContent({ local, device });
+  assert.deepEqual(byId.missingLocally.map((m) => m.relPath), ['theirs/Zelda.bin']);
+
+  const byBytes = compareByContent({ local, device, identity: 'bytes' });
+  assert.equal(byBytes.missingLocally.length, 2, 'byte comparison mistakes a re-dump for a new amiibo');
+});
+
+test('files with no amiibo ID fall back to byte comparison', () => {
+  const r = compareByContent({
+    local: index({ 'notes.txt': { size: 10, hash: 'hX', isDir: false } }),
+    device: index({ 'notes.txt': { size: 10, hash: 'hX', isDir: false } }),
+  });
+  assert.deepEqual(r.missingLocally, []);
+  assert.deepEqual(r.missingOnDevice, []);
+});
+
+test('a variant sharing an amiibo ID is reported, not collapsed', () => {
+  // Real case: Skylanders "Hammer Slam Bowser" and "Dark Hammer Slam Bowser"
+  // share ID 0005ff00023a0702 and differ only in data. An ID-only view would
+  // call the dark figure "already held".
+  const r = compareByContent({
+    local: index({ 'Bowser.bin': { size: 540, hash: 'hLight', amiiboId: 'SKY-BOWSER', isDir: false } }),
+    device: index({
+      'Bowser.bin': { size: 540, hash: 'hLight', amiiboId: 'SKY-BOWSER', isDir: false },
+      'Dark Bowser.bin': { size: 540, hash: 'hDark', amiiboId: 'SKY-BOWSER', isDir: false },
+    }),
+  });
+
+  assert.deepEqual(r.missingLocally, [], 'the ID is present locally, so nothing is "missing"');
+  assert.equal(r.variants.length, 1, 'but the extra dump must still surface');
+  assert.deepEqual(r.variants[0].device, ['Dark Bowser.bin']);
+});
+
+test('no variant is reported when both sides hold the same dumps', () => {
+  const both = {
+    'a.bin': { size: 540, hash: 'h1', amiiboId: 'ID-A', isDir: false },
+  };
+  const r = compareByContent({ local: index(both), device: index(both) });
+  assert.deepEqual(r.variants, []);
+});

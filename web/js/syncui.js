@@ -337,6 +337,9 @@ function renderAudit(r, partial) {
 
   section('ON DEVICE, NOT IN YOUR LOCAL FOLDER', r.missingLocally, (m) => `${m.relPath}  (${m.size} B)`);
   section('LOCAL ONLY, NOT ON THE DEVICE', r.missingOnDevice, (m) => `${m.relPath}  (${m.size} B)`);
+  section('SAME AMIIBO, A DUMP THE DEVICE HAS AND YOU DO NOT', r.variants, (m) =>
+    `${m.id}\n        device: ${m.device.join(', ')}\n        local:  ${m.local.join(', ')}`
+  );
   section('SAME CONTENT, DIFFERENT LOCATION', r.relocated, (m) =>
     `device: ${m.device.join(', ')}\n        local:  ${m.local.join(', ')}`
   );

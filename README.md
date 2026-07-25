@@ -23,8 +23,10 @@ pulled from someone else's script at runtime.
   862 files across 44 folders, 0 errors, file read matching byte-for-byte. ✅
 - **Write test** — verified: filenames stored verbatim, content round-trips
   exactly, and every remaining protocol question answered. ✅
-- **Sync engine** — implemented, 28 planner tests passing. Not yet run against
+- **Sync engine** — implemented, planner fully tested. Not yet run against
   hardware.
+- **Collection view** — every amiibo in the database, per series, marked owned
+  or missing. Identity comes from the amiibo ID in each dump.
 
 Three hardware findings shape the sync design:
 
@@ -105,24 +107,57 @@ Safety properties, each following from a verified device behaviour:
 - **State is saved as it goes**, so a disconnect part-way through a long push
   resumes rather than restarting.
 
+### Collection view
+
+Open <http://localhost:8080/collection.html> and choose the folder holding your
+dumps. It lists every amiibo in the bundled database, grouped by series, and
+marks which you have — with filters for owned / missing / not-on-device, a
+search box, and a "copy missing list" button.
+
+Optionally connect the device and press **Add device contents** to also show
+what is on the device. That reads every file, so it takes a few minutes and can
+be stopped part-way.
+
+Identity comes from the **amiibo ID** at bytes 84–91 of each dump, not from the
+filename and not from a content hash — see below.
+
+### Why not compare by hash
+
+Two dumps of the same character are not byte-identical: UID and save data
+differ. Measured on a real collection: **1035 files, 1035 distinct SHA-256
+hashes, but only 943 distinct amiibo IDs.** Hashing reported 92 re-dumps of
+characters already held as brand-new figures.
+
+The amiibo ID is the stable identity, so that is what the collection view and
+the content comparison both use. Two caveats, both real:
+
+- The ID identifies a *model*, not always a distinct figure. Skylanders light
+  and dark variants share an ID, as do all 91 Animal Crossing Happy Home
+  item cards. "Same ID, different bytes" is reported rather than collapsed.
+- The bundled name table has 932 entries and predates the newest releases, so
+  a dump can be recognised as an amiibo yet have no name. Those are listed as
+  *unlisted* rather than hidden.
+
 ### Compare by content
 
-Path-based sync cannot answer "is this dump on the device anywhere?" once a
+Path-based sync cannot answer "is this amiibo on the device anywhere?" once a
 file has been renamed or refiled. **Compare by content** reads every file off
-the device, hashes it, and matches purely on bytes — names and folders ignored.
-It reports:
+the device and matches on amiibo ID, ignoring names and folders. It reports:
 
-- dumps on the device with no byte-identical copy in your local folder
-- local dumps not on the device
+- amiibos on the device you do not hold locally
+- local amiibos not on the device
+- **variants**: the same amiibo ID where the device holds a dump whose bytes
+  you do not have — this is what catches Skylanders dark figures
 - files present on both sides under different names or folders
 - duplicates within each side
 
 It is strictly read-only and can be stopped part-way, but it costs a full read
 per file — roughly 0.2 s each, so about three minutes for an 860-file library.
 
-One limit worth knowing: two dumps of the *same character* are not necessarily
-identical, since UID and save data differ. This finds byte-identical copies,
-not "do I own this character somewhere".
+Validated offline against two real libraries of the same collection filed
+completely differently: **zero shared paths across 1033 files, yet all 943
+amiibo IDs matched**, and the two genuine differences were surfaced as
+variants.
 
 ### Why "verify same-size files" exists
 
@@ -168,11 +203,16 @@ plus a content hash recorded in a local sync-state file. See
 PROTOCOL.md              reverse-engineered wire protocol
 serve.mjs                zero-dependency static server (Node built-ins only)
 
+web/collection.html      collection UI
 web/sync.html            sync UI
 web/index.html           read-only probe UI
 web/write-test.html      write-test UI
 web/css/app.css          shared styles
 
+web/data/amiibo-db.js    932 amiibo IDs -> names (generated, vendored)
+tools/build-amiibo-db.mjs regenerates that table from the firmware source
+
+web/js/amiibo.js         amiibo ID parsing, series/type decoding, collection
 web/js/bytes.js          little-endian codecs, string and metadata TLV
 web/js/ble.js            Web Bluetooth transport (Nordic UART Service)
 web/js/protocol.js       framing, reassembly, command queue, VFS commands
@@ -185,6 +225,7 @@ web/js/writetest.js      write-test logic
 
 test/protocol.test.mjs   protocol tests against a simulated device
 test/planner.test.mjs    reconciliation and safety tests
+test/amiibo.test.mjs     amiibo ID parsing and collection tests
 ```
 
 ## Keep dumps and keys out of git

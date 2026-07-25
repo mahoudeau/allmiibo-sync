@@ -428,14 +428,22 @@ export function estimateSeconds(plan) {
  * UID and save data differ, so this finds byte-identical copies, not "do I
  * have this character somewhere".
  */
-export function compareByContent({ local, device, excludes = DEFAULT_EXCLUDES }) {
+export function compareByContent({ local, device, excludes = DEFAULT_EXCLUDES, identity = 'amiibo' }) {
+  // Identity by amiibo ID, not by bytes. Two dumps of the same character
+  // differ in UID and save data, so byte comparison reports them as different
+  // figures — measured at 1035 local dumps collapsing to 943 amiibo IDs.
+  // Files with no readable ID (not amiibo dumps) fall back to their hash.
+  const keyOf = (e) =>
+    identity === 'amiibo' ? e.amiiboId ?? (e.hash ? `bytes:${e.hash}` : null) : e.hash ?? null;
+
   const byHash = (index) => {
     const map = new Map();
     for (const [relPath, e] of index) {
       if (e.isDir || isExcluded(relPath, excludes)) continue;
-      if (!e.hash) continue;
-      if (!map.has(e.hash)) map.set(e.hash, []);
-      map.get(e.hash).push({ relPath, size: e.size });
+      const key = keyOf(e);
+      if (!key) continue;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push({ relPath, size: e.size, hash: e.hash, amiiboId: e.amiiboId });
     }
     return map;
   };
@@ -446,6 +454,7 @@ export function compareByContent({ local, device, excludes = DEFAULT_EXCLUDES })
   const missingLocally = [];
   const missingOnDevice = [];
   const relocated = [];
+  const variants = [];
   const duplicateOnDevice = [];
   const duplicateLocally = [];
 
@@ -453,9 +462,25 @@ export function compareByContent({ local, device, excludes = DEFAULT_EXCLUDES })
     const localEntries = localByHash.get(hash);
     if (!localEntries) {
       for (const e of entries) missingLocally.push({ ...e, hash });
-    } else if (!entries.some((d) => localEntries.some((l) => l.relPath === d.relPath))) {
-      // Same bytes on both sides, but filed somewhere else.
-      relocated.push({ hash, device: entries.map((e) => e.relPath), local: localEntries.map((e) => e.relPath) });
+    } else {
+      if (!entries.some((d) => localEntries.some((l) => l.relPath === d.relPath))) {
+        // Same amiibo on both sides, but filed somewhere else.
+        relocated.push({ hash, device: entries.map((e) => e.relPath), local: localEntries.map((e) => e.relPath) });
+      }
+      // The amiibo matches but the device holds a dump whose bytes are absent
+      // locally. Real case: Skylanders light and dark variants share one ID,
+      // so an ID-only view would call the dark figure "already held".
+      if (identity === 'amiibo') {
+        const localBytes = new Set(localEntries.map((e) => e.hash).filter(Boolean));
+        const extra = entries.filter((e) => e.hash && !localBytes.has(e.hash));
+        if (extra.length && localBytes.size) {
+          variants.push({
+            id: entries[0].amiiboId ?? hash,
+            device: extra.map((e) => e.relPath),
+            local: localEntries.map((e) => e.relPath),
+          });
+        }
+      }
     }
     if (entries.length > 1) duplicateOnDevice.push({ hash, paths: entries.map((e) => e.relPath) });
   }
@@ -475,6 +500,7 @@ export function compareByContent({ local, device, excludes = DEFAULT_EXCLUDES })
     missingLocally,
     missingOnDevice,
     relocated,
+    variants,
     duplicateOnDevice,
     duplicateLocally,
     stats: {
@@ -485,6 +511,7 @@ export function compareByContent({ local, device, excludes = DEFAULT_EXCLUDES })
       missingLocally: missingLocally.length,
       missingOnDevice: missingOnDevice.length,
       relocated: relocated.length,
+      variants: variants.length,
     },
   };
 }

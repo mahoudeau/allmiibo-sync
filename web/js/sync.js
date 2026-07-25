@@ -5,6 +5,7 @@
 // push is around seven minutes.
 
 import { joinPath } from './protocol.js';
+import { parseAmiiboId } from './amiibo.js';
 import { devicePath, isExcluded, DEFAULT_EXCLUDES } from './planner.js';
 import {
   readLocalFile,
@@ -55,7 +56,7 @@ export async function hashDeviceIndex(client, deviceRoot, index, { onProgress = 
     if (shouldStop()) break;
     try {
       const bytes = await client.readFile(devicePath(deviceRoot, relPath));
-      out.set(relPath, { ...entry, hash: await sha256(bytes) });
+      out.set(relPath, { ...entry, hash: await sha256(bytes), amiiboId: parseAmiiboId(bytes) });
     } catch (err) {
       out.set(relPath, { ...entry, hashError: err.message });
     }

@@ -8,6 +8,17 @@ dist/
 # key_retail.bin alongside your library.
 *.bin
 allmiibo-probe*.json
+allmiibo-writetest*.json
+
+# Common local library folders. Listed in several cases on purpose: git only
+# matches these case-insensitively when core.ignorecase is set, which is the
+# default on macOS but not on Linux.
 /sync/
 /amiibo/
+/Amiibo/
+/AMIIBO/
 /my-amiibo/
+/My-Amiibo/
+
+# Second local library folder
+/Allmiibo/

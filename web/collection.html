@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>allmiibo-sync — collection</title>
+<link rel="stylesheet" href="./css/app.css">
+<style>
+  .bar { display:flex; flex-wrap:wrap; gap:1.25rem; padding:.75rem 1rem; border:1px solid var(--border);
+         border-radius:6px; background:var(--panel); margin-bottom:1rem; }
+  .bar .metric { display:flex; flex-direction:column; }
+  .bar .metric b { font-size:1.25rem; font-variant-numeric:tabular-nums; }
+  .bar .metric span { color:var(--muted); font-size:.8rem; }
+  input[type=search] { font:inherit; padding:.35rem .5rem; border:1px solid var(--border);
+         border-radius:5px; background:var(--bg); color:var(--fg); min-width:16rem; }
+  details { border:1px solid var(--border); border-radius:6px; margin-bottom:.5rem; background:var(--panel); }
+  summary { cursor:pointer; padding:.55rem .8rem; font-weight:600; display:flex; justify-content:space-between; gap:1rem; }
+  summary::-webkit-details-marker { display:none; }
+  summary .count { font-weight:400; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .items { display:grid; grid-template-columns:repeat(auto-fill,minmax(19rem,1fr)); gap:.25rem;
+           padding:.5rem .8rem .8rem; }
+  .item { display:flex; align-items:center; gap:.5rem; padding:.3rem .4rem; border-radius:4px;
+          font-size:.88rem; border:1px solid transparent; }
+  .item.missing { opacity:.55; }
+  .item.missing .dot { background:transparent; border:1px solid var(--muted); }
+  .dot { width:.6rem; height:.6rem; border-radius:50%; background:var(--ok); flex:none; }
+  .item .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tag { font-size:.7rem; padding:.05rem .3rem; border-radius:3px; border:1px solid var(--border); color:var(--muted); }
+  .tag.dev { border-color:var(--accent); color:var(--accent); }
+  .tag.new { border-color:var(--warn); color:var(--warn); }
+  progress { width:100%; height:.5rem; margin-bottom:1rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>allmiibo-sync — collection</h1>
+  <p class="sub">Every amiibo in the database, and whether you have it.</p>
+
+  <nav>
+    <a href="./sync.html">sync</a>
+    <a href="./index.html">read-only probe</a>
+    <a href="./write-test.html">write test</a>
+  </nav>
+
+  <div class="note">
+    Identity comes from the amiibo ID inside each dump (bytes 84–91), not from
+    the filename and not from a content hash — two dumps of the same character
+    differ in UID and save data.
+  </div>
+
+  <div class="row" style="margin-top:1rem">
+    <button id="pickFolder" class="primary">Choose local folder</button>
+    <button id="scan" disabled>Scan collection</button>
+    <span id="folderName" class="status" style="margin:0;padding:.3rem .6rem"></span>
+  </div>
+
+  <div class="row">
+    <button id="connect">Connect device</button>
+    <button id="scanDevice" disabled>Add device contents (slow)</button>
+    <button id="stop" disabled>Stop</button>
+  </div>
+
+  <div id="status" class="status">Choose the folder holding your dumps.</div>
+  <progress id="progress" value="0" max="100"></progress>
+
+  <div class="bar" id="stats" hidden>
+    <div class="metric"><b id="mOwned">–</b><span>owned locally</span></div>
+    <div class="metric"><b id="mMissing">–</b><span>missing</span></div>
+    <div class="metric"><b id="mDevice">–</b><span>on device</span></div>
+    <div class="metric"><b id="mExtra">–</b><span>not in database</span></div>
+    <div class="metric"><b id="mTotal">–</b><span>known amiibos</span></div>
+  </div>
+
+  <div class="row">
+    <label class="inline"><input type="radio" name="filter" value="all" checked> All</label>
+    <label class="inline"><input type="radio" name="filter" value="owned"> Owned</label>
+    <label class="inline"><input type="radio" name="filter" value="missing"> Missing</label>
+    <label class="inline"><input type="radio" name="filter" value="notondevice"> Not on device</label>
+    <input id="search" type="search" placeholder="Search name or ID…">
+    <button id="copyMissing">Copy missing list</button>
+  </div>
+
+  <section id="series"></section>
+</main>
+<script type="module" src="./js/collectionui.js"></script>
+</body>
+</html>

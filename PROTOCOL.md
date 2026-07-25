@@ -601,3 +601,88 @@ round-trips): roughly **0.5 s per file**.
 `rename` over re-upload for moves; report progress continuously; and make a
 long push resumable, since a disconnect seven minutes in should not restart
 from zero.
+
+---
+
+## 10. Amiibo identity inside a dump
+
+Not part of the BLE protocol, but essential for any tool that reasons about
+*which amiibo* a file holds.
+
+### 10.1 The amiibo ID is at bytes 84–91
+
+```c
+// fw/application/src/amiibo_helper.c
+uint32_t head = to_little_endian_int32(&ntag->data[84]);
+uint32_t tail = to_little_endian_int32(&ntag->data[88]);
+const db_amiibo_t *amd = get_amiibo_by_id(head, tail);
+```
+
+The firmware also defines `AMII_ID_OFFSET 476` and writes the ID to *both* 84
+and 476 when generating a tag, but in retail dumps offset 476 falls inside
+encrypted data and reads as noise. Measured across 1035 real dumps: offset 84
+yields a valid ID in every case, offset 476 in none.
+
+### 10.2 Field layout
+
+16 hex characters, e.g. `0181000100440502`:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0–1 | game / character | |
+| 2 | variant | |
+| 3 | figure type | `00` figure, `01` card, `02` yarn, `03` band |
+| 4–5 | model number | |
+| 6 | amiibo series | see below |
+| 7 | constant | `0x02` in all 1035 dumps measured |
+
+Byte 7 being invariably `0x02` makes a useful validity check when locating the
+ID in a dump of unknown format.
+
+Series byte values, derived by correlating against a verified collection:
+
+| | | | |
+|---|---|---|---|
+| `00` Super Smash Bros. | `01` Super Mario | `02` Chibi-Robo | `03` Yoshi's Woolly World |
+| `04` Splatoon | `05` Animal Crossing | `06` 8-bit Mario | `07` Skylanders |
+| `09` Legend of Zelda | `0a` Shovel Knight | `0c` Kirby | `0d` Pokémon |
+| `0e` Mario Sports Superstars | `0f` Monster Hunter Stories | `10` BoxBoy! | `11` Pikmin |
+| `12` Fire Emblem | `13` Metroid | `15` Mega Man | `16` Diablo |
+| `17` Power Pro Baseball | `18` Monster Hunter Rise | `19` Yu-Gi-Oh! | `1a` Donkey Kong |
+| `1b` Xenoblade | `1d` Street Fighter | `21` Pragmata | |
+
+### 10.3 Why content hashing cannot identify an amiibo
+
+Two dumps of the same character differ in UID and save data, so they hash
+differently. Measured on one collection: **1035 files, 1035 distinct SHA-256
+hashes, but only 943 distinct amiibo IDs.** Byte comparison reported 92
+re-dumps of characters already held as brand-new figures.
+
+Match on the amiibo ID instead.
+
+### 10.4 Where the ID is not enough
+
+The ID identifies a *model*, not always a distinct figure:
+
+- Skylanders light and dark variants share an ID and differ only in data —
+  `Hammer Slam Bowser` and `Dark Hammer Slam Bowser` are both
+  `0005ff00023a0702`.
+- Animal Crossing Happy Home Designer item cards share a single ID
+  (`026a000100000502`) across 91 distinct files.
+
+So "same ID, different bytes" is a real and meaningful state. Report it rather
+than collapsing it.
+
+### 10.5 Dump sizes
+
+From `ntag_def.h`, all seen in the wild:
+
+| Bytes | Format |
+|---|---|
+| 540 | NTAG215, the standard full dump |
+| 532 | TagMo |
+| 572 | Thenaya |
+
+532 is a truncation, so offset 84 still holds. 572 carries 32 extra bytes; the
+tool tries offset 84 first and then 84 + 32, accepting whichever gives a
+trailing ID byte of `0x02`.
