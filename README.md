@@ -139,6 +139,18 @@ Optionally connect the device and press **Add device contents** to also show
 what is on the device. That reads every file, so it takes a few minutes and can
 be stopped part-way.
 
+**Artwork**: `npm run fetch-images` downloads official amiibo artwork from the
+AmiiboAPI repository into `web/data/images/` (gitignored — it is Nintendo's
+artwork, cached locally rather than committed) and generates thumbnails. The
+page then shows each amiibo's picture, greyed out when you lack it, and a
+letter placeholder where no artwork exists upstream. One-time, ~145 MB; the
+page itself never fetches anything external.
+
+**Keeping the database current**: `npm run update-db` re-fetches both upstream
+sources, regenerates `web/data/amiibo-db.js`, prints exactly what was added,
+renamed or removed, and fetches artwork for anything new. A development-time
+command — review the diff and commit.
+
 Identity comes from the **amiibo ID** at bytes 84–91 of each dump, not from the
 filename and not from a content hash — see below.
 

@@ -17,7 +17,7 @@
   summary { cursor:pointer; padding:.55rem .8rem; font-weight:600; display:flex; justify-content:space-between; gap:.6rem; align-items:center; }
   summary::-webkit-details-marker { display:none; }
   summary .count { font-weight:400; color:var(--muted); font-variant-numeric:tabular-nums; }
-  .items { display:grid; grid-template-columns:repeat(auto-fill,minmax(23rem,1fr)); gap:.25rem .75rem;
+  .items { display:grid; grid-template-columns:repeat(auto-fill,minmax(24rem,1fr)); gap:.3rem .75rem;
            padding:.5rem .8rem .8rem; align-items:start; }
   .withVehicles { grid-column:1 / -1; }
   .vehicles { display:flex; flex-wrap:wrap; gap:.3rem; padding:0 0 .35rem 1.55rem; }
@@ -29,6 +29,16 @@
           font-size:.88rem; border:1px solid transparent; }
   .item.missing { opacity:.55; }
   .item.missing .dot { background:transparent; border:1px solid var(--muted); }
+  .art { width:34px; height:34px; flex:none; display:flex; align-items:center; justify-content:center;
+         border-radius:5px; background:var(--bg); border:1px solid var(--border);
+         position:relative; overflow:hidden; }
+  .art::before { content:attr(data-initial); color:var(--muted); font-size:.75rem; font-weight:600;
+                 position:absolute; }
+  .art img { position:relative; max-width:100%; max-height:100%; object-fit:contain;
+             background:var(--bg); }
+  .item.missing .art img { filter:grayscale(1); opacity:.5; }
+  .seriesHead { display:flex; align-items:center; gap:.6rem; min-width:0; }
+  .seriesArt { width:28px; height:28px; object-fit:contain; flex:none; }
   .dot { width:.6rem; height:.6rem; border-radius:50%; background:var(--ok); flex:none; }
   .item .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tag { font-size:.7rem; padding:.05rem .3rem; border-radius:3px; border:1px solid var(--border); color:var(--muted); }

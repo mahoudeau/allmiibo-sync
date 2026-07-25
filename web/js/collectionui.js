@@ -280,8 +280,18 @@ function paint() {
     details.open = filter !== 'all' || !!q;
 
     const summary = document.createElement('summary');
+
+    const head = document.createElement('span');
+    head.className = 'seriesHead';
+    const headArt = document.createElement('img');
+    headArt.className = 'seriesArt';
+    headArt.loading = 'lazy';
+    headArt.alt = '';
+    headArt.src = `./data/images/thumb/${(items.find((i) => i.hasLocal) ?? items[0]).id}.png`;
+    headArt.addEventListener('error', () => headArt.remove());
     const label = document.createElement('span');
     label.textContent = group.seriesName;
+    head.append(headArt, label);
     // Completion is measured against the database, so unlisted extras do not
     // make a series read as more than complete.
     const known = group.items.filter((i) => i.inDatabase).length;
@@ -302,9 +312,9 @@ function paint() {
       const dev = document.createElement('span');
       dev.className = 'count dev';
       dev.textContent = `${group.ownedDevice} on device`;
-      summary.append(label, dev, count);
+      summary.append(head, dev, count);
     } else {
-      summary.append(label, count);
+      summary.append(head, count);
     }
     details.append(summary);
 
@@ -336,11 +346,23 @@ function paint() {
     const dot = document.createElement('span');
     dot.className = 'dot';
 
+    // Artwork from the local cache (npm run fetch-images). Newer amiibos have
+    // no upstream art yet; the letter placeholder keeps alignment honest.
+    const art = document.createElement('span');
+    art.className = 'art';
+    art.dataset.initial = (label[0] ?? '?').toUpperCase();
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = '';
+    img.src = `./data/images/thumb/${item.id}.png`;
+    img.addEventListener('error', () => img.remove());
+    art.append(img);
+
     const nm = document.createElement('span');
     nm.className = 'nm';
     nm.textContent = label;
 
-    row.append(dot, nm);
+    row.append(dot, art, nm);
 
     if (hasDevice) {
       const t = document.createElement('span');

@@ -6,7 +6,9 @@
   "private": true,
   "scripts": {
     "serve": "node serve.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "update-db": "node tools/update-db.mjs",
+    "fetch-images": "node tools/fetch-amiibo-images.mjs"
   },
   "license": "MIT"
 }

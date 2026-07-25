@@ -22,3 +22,6 @@ allmiibo-writetest*.json
 
 # Second local library folder
 /Allmiibo/
+
+# update-db working files
+tools/.cache/
