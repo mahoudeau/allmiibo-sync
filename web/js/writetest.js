@@ -29,16 +29,16 @@ const NAME_PROBES = [
 ];
 
 const els = {
-  connect: document.getElementById('connect'),
-  disconnect: document.getElementById('disconnect'),
-  run: document.getElementById('run'),
-  cleanup: document.getElementById('cleanup'),
-  copy: document.getElementById('copy'),
-  save: document.getElementById('save'),
-  keep: document.getElementById('keep'),
-  status: document.getElementById('status'),
-  log: document.getElementById('log'),
-  results: document.getElementById('results'),
+  connect: document.getElementById('w_connect'),
+  disconnect: document.getElementById('w_disconnect'),
+  run: document.getElementById('w_run'),
+  cleanup: document.getElementById('w_cleanup'),
+  copy: document.getElementById('w_copy'),
+  save: document.getElementById('w_save'),
+  keep: document.getElementById('w_keep'),
+  status: document.getElementById('w_status'),
+  log: document.getElementById('w_log'),
+  results: document.getElementById('w_results'),
 };
 
 let transport = null;

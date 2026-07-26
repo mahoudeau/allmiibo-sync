@@ -259,6 +259,45 @@ body:not([data-adv="on"]) .advanced-only { display:none !important; }
 .wordmark { font-family:var(--pixel); font-size:.95rem; }
 .wordmark .sfx { color:var(--accent); }
 .small { font-size:.7rem; color:var(--muted); }
+
+/* ---- series counter variants ---- */
+.mockRow { display:flex; align-items:center; gap:.6rem; border:2px solid var(--border);
+  background:var(--panel); padding:.55rem .8rem; margin-bottom:.45rem; }
+.mockRow .mName { font-weight:600; }
+.mockRow .mCase { font:11px var(--mono); color:var(--muted); margin-left:auto; }
+.sPill { display:inline-flex; align-items:center; gap:.4rem; font-variant-numeric:tabular-nums;
+  font-size:.82rem; padding:.15rem .5rem; border:2px solid var(--border); color:var(--muted); }
+.sPill .ico { width:.95rem; height:.95rem; display:inline-flex; }
+.sPill .ico svg { width:100%; height:100%; }
+.sPill.full { border-color:var(--ok); color:var(--ok); }
+.sPill.done { background:var(--ok); border-color:var(--ok); color:#10160e; }
+.sPill.part { border-color:var(--warn); color:var(--warn); }
+.sPill .delta { font-size:.72rem; display:inline-flex; align-items:center; gap:.1rem; }
+.sPill .delta.up { color:var(--warn); }
+.sPill .delta.down { color:var(--warn); }
+.sPill.done .delta { color:inherit; }
+.sPill .extra { font-size:.72rem; color:var(--warn); display:inline-flex;
+  align-items:center; gap:.15rem; }
+.sPill.done .extra { color:inherit; }
+
+/* ---- success screens ---- */
+.winWrap { position:relative; border:2px solid var(--border); overflow:hidden;
+  background:var(--bg); padding:2.5rem 1rem; text-align:center; }
+.winWrap .scan { position:absolute; inset:0; pointer-events:none; opacity:.25;
+  background:repeating-linear-gradient(to bottom,#0000 0 2px,#0006 2px 4px); }
+.winBig { font-family:var(--pixel); font-size:1.1rem; color:#fff; margin:.9rem 0 .4rem;
+  text-shadow:3px 3px 0 var(--shadow); }
+.winSub { font-family:var(--pixel); font-size:.55rem; color:var(--ok); margin-bottom:1rem; }
+.winStats { font-family:var(--pixel); font-size:.5rem; color:var(--muted); margin-bottom:1.4rem; }
+.winStars { font-family:var(--pixel); font-size:.8rem; color:var(--warn);
+  letter-spacing:.4em; margin-bottom:.6rem; }
+.winPress { font-family:var(--pixel); font-size:.5rem; color:var(--err);
+  animation:blink 1.1s steps(1) infinite; }
+.winBanner { display:flex; align-items:center; gap:1rem; border:2px solid var(--ok);
+  background:var(--panel); box-shadow:4px 4px 0 var(--shadow); padding:.8rem 1rem; }
+.winBanner .wbTitle { font-family:var(--pixel); font-size:.65rem; color:var(--ok); }
+.winBanner p { margin:.15rem 0 0; font-size:.85rem; color:var(--muted); }
+.winBanner .wbClose { margin-left:auto; }
 </style>
 </head>
 <body data-pal="a" data-adv="off">
@@ -514,6 +553,33 @@ body:not([data-adv="on"]) .advanced-only { display:none !important; }
     </div>
   </div>
 
+  <h2 class="sec">7 · Series counter — one pill, every state <span class="pill">pick / adjust</span></h2>
+  <p class="hint">One unified indicator per series row: <b>owned/known</b> coloured by completion, a bluetooth
+    glyph when device data exists, and deltas — <b>▲n</b> to send (only in your folder), <b>▼n</b> to download
+    (only on the device). Solid green = complete AND fully synced.</p>
+  <div id="counterCases"></div>
+
+  <h2 class="sec">8 · "All synced" success moment <span class="pill">pick one</span></h2>
+  <p class="hint">Shown once when a scan finds your folder and device fully complete and identical.
+    A = full retro victory panel (auto-dismisses / any key). B = quieter inline banner under the stats.</p>
+  <p class="hint"><b>VARIANT A — VICTORY PANEL</b></p>
+  <div class="winWrap" id="winA">
+    <div class="scan"></div>
+    <span id="winPirate"></span>
+    <div class="winStars">★ ★ ★</div>
+    <div class="winBig">ALL SYNCED!</div>
+    <div class="winSub">COLLECTION COMPLETE · DEVICE MATCHES FOLDER</div>
+    <div class="winStats">946 / 946 OWNED · 946 ON DEVICE · 0 MISSING</div>
+    <div class="winPress">▸ PRESS ANY KEY</div>
+  </div>
+  <p class="hint" style="margin-top:1rem"><b>VARIANT B — INLINE BANNER</b></p>
+  <div class="winBanner">
+    <span id="winTrophy"></span>
+    <div><div class="wbTitle">ALL SYNCED!</div>
+    <p>Folder and device are identical — 946 amiibo on both sides.</p></div>
+    <button class="nbtn wbClose">OK</button>
+  </div>
+
   <p class="hint" style="margin-top:2.5rem; border-top:1px solid #24242e; padding-top:1.5rem;">
     Branded footer stays exactly as it is today (author mark + GitHub + attributions) — just re-coloured to whichever
     palette you pick. Not re-shown here to avoid confusion.</p>
@@ -544,6 +610,7 @@ const I = {
   save:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 22H4V20H6V14H8V20H16V14H18V20H20V22ZM4 20H2V4H4V20ZM22 20H20V6H22V20ZM16 14H8V12H16V14ZM12 10H6V6H12V10ZM20 6H18V4H20V6ZM18 4H4V2H18V4Z"/></svg>',
   play:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15 11h-2V9h2zm0 4h-2v-2h2zm-2 2h-2v-2h2zm0-8h-2V7h2zm-2-2H9V5h2zM9 21H7V3h2zm6-8h2v-2h-2zm-6 4h2v2H9z"/></svg>',
   bluetooth:'<svg viewBox="0 0 6 9" fill="currentColor"><rect x="2" y="0" width="1" height="1"/><rect x="2" y="1" width="1" height="1"/><rect x="3" y="1" width="1" height="1"/><rect x="0" y="2" width="1" height="1"/><rect x="2" y="2" width="1" height="1"/><rect x="4" y="2" width="1" height="1"/><rect x="1" y="3" width="1" height="1"/><rect x="2" y="3" width="1" height="1"/><rect x="3" y="3" width="1" height="1"/><rect x="2" y="4" width="1" height="1"/><rect x="1" y="5" width="1" height="1"/><rect x="2" y="5" width="1" height="1"/><rect x="3" y="5" width="1" height="1"/><rect x="0" y="6" width="1" height="1"/><rect x="2" y="6" width="1" height="1"/><rect x="4" y="6" width="1" height="1"/><rect x="2" y="7" width="1" height="1"/><rect x="3" y="7" width="1" height="1"/><rect x="2" y="8" width="1" height="1"/></svg>'
+,  sparkles:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 1h2v4h-2zm0 22h2v-4h-2zM9 5h2v4H9zm0 14h2v-4H9zm4-14h2v4h-2zm0 14h2v-4h-2zM5 9h4v2H5zm14 0h-4v2h4zM1 11h4v2H1zm22 0h-4v2h4zM5 13h4v2H5zm14 0h-4v2h4zm0-12h2v6h-2z"/> <path d="M17 3h6v2h-6zM3 17h2v2H3zm-2 2h2v2H1zm2 2h2v2H3zm2-2h2v2H5z"/></svg>'
 };
 for (const el of document.querySelectorAll('[data-ico]')) el.innerHTML = I[el.dataset.ico] || '';
 
@@ -846,6 +913,35 @@ document.getElementById('advLabel').addEventListener('click', () => {
   document.body.dataset.adv = on ? 'on' : 'off';
   chk.checked = on;
 });
+
+// ---- series counter mock states ----
+const CASES = [
+  { name:'Super Smash Bros.', case:'complete + fully synced', pill:{cls:'done', ico:'check', main:'96/96', bt:true} },
+  { name:'Super Smash Bros.', case:'complete locally, 14 not on device', pill:{cls:'full', main:'96/96', bt:true, up:14} },
+  { name:'Splatoon', case:'device holds 4 you do not', pill:{cls:'part', main:'25/29', bt:true, down:4} },
+  { name:'Zelda', case:'diverged both ways', pill:{cls:'part', main:'20/26', bt:true, up:6, down:2} },
+  { name:'Super Mario Bros.', case:'partial, no device scanned', pill:{cls:'part', main:'12/27'} },
+  { name:'Street Fighter 6', case:'nothing owned', pill:{cls:'', main:'0/63'} },
+  { name:'Monster Hunter', case:'complete + 3 unlisted extras', pill:{cls:'done', ico:'check', main:'8/8', bt:true, extra:3} },
+];
+const cc = document.getElementById('counterCases');
+cc.innerHTML = CASES.map((c) => {
+  const p = c.pill;
+  const bits = [
+    p.ico ? `<span class="ico">${I[p.ico] ?? ''}</span>` : '',
+    `<b>${p.main}</b>`,
+    p.bt ? `<span class="ico">${I.bluetooth}</span>` : '',
+    p.up ? `<span class="delta up">▲${p.up}</span>` : '',
+    p.down ? `<span class="delta down">▼${p.down}</span>` : '',
+    p.extra ? `<span class="extra"><span class="ico">${I.sparkles ?? ''}</span>+${p.extra}</span>` : '',
+  ].join('');
+  return `<div class="mockRow"><span class="mName">${c.name}</span>` +
+    `<span class="sPill ${p.cls}">${bits}</span><span class="mCase">${c.case}</span></div>`;
+}).join('');
+
+// ---- success screen props ----
+document.getElementById('winPirate').innerHTML = grid(PIRATE_BODY + DOCK32, {...pbase, b:'#C9C7C4', H:'#c7281d', F:'#f3efe6'}, 88);
+document.getElementById('winTrophy').innerHTML = `<span class="ico" style="width:2rem;height:2rem;display:inline-flex;color:var(--warn)">${I.save ?? ''}</span>`;
 
 // ---- clickable palettes: apply the chosen palette to the whole page ----
 const palBoards = [...document.querySelectorAll('.palRow .board[data-pal]')];

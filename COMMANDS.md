@@ -18,14 +18,15 @@ accepts one BLE connection at a time.
 | Page | What it does |
 |---|---|
 | <http://localhost:8080/> | 8-bit title screen — leads into collection and sync |
-| <http://localhost:8080/collection.html> | collection tracker — artwork, per-series completion, device comparison |
-| <http://localhost:8080/sync.html> | the four operations: download everything, replace device, smart sync, sync by amiibo |
-| <http://localhost:8080/probe.html> | read-only device probe (walks the filesystem, touches nothing) — Advanced |
-| <http://localhost:8080/write-test.html> | write-behaviour test, confined to `E:/_synctest` — Advanced |
+| <http://localhost:8080/collection.html> | the app: collection tracker + everyday sync (scan folder/device, send/download selections, two-way sync) |
+| <http://localhost:8080/sync.html> | Advanced sync: every operation and option (backup, replace, match, check) |
+| <http://localhost:8080/help.html> | how-to: every feature explained |
+| <http://localhost:8080/debug.html> | device internals: read-only probe + sandboxed write test |
 | <http://localhost:8080/design-lab.html> | the design moodboard the NES skin was chosen from (not deployed) |
 
-The probe and write-test pages are hidden from the navigation until the
-**Advanced** toggle (header → Settings) is on; the URLs always work.
+The Debug page is reached from header → Settings → DEBUG TOOLS (the old
+probe.html / write-test.html URLs redirect there). The **Advanced** toggle in
+Settings reveals extra options on the collection and sync pages.
 
 ## Tests
 
@@ -45,7 +46,7 @@ npm run update-db            # fetch upstream sources, regenerate, report the
 npm run update-db -- --no-images   # same, without the artwork pass
 ```
 
-Sources: `solosky/pixl.js` `db_amiibo.c` (names) and `N3evin/AmiiboAPI`
+Sources: `solosky/pixl.js` `db_amiibo.c` (names) and `8bitDream/AmiiboAPI (fork of N3evin/AmiiboAPI)`
 `amiibo.json` (series and type labels). The command prints exactly what was
 added, renamed or removed. Afterwards:
 
@@ -65,11 +66,12 @@ npm run fetch-images -- <id16> <id16>    # also try extra amiibo IDs
 ```
 
 Images come from the AmiiboAPI repository, keyed by the 16-hex amiibo ID, into
-`web/data/images/full/` with 96 px thumbnails in `web/data/images/thumb/`.
-Both are **gitignored** — it is Nintendo's artwork, cached locally, never
-committed. Already-downloaded files are skipped, so re-runs are cheap. A 404
-for a new amiibo just means no artwork upstream yet; the page shows a
-placeholder.
+three tiers: `web/data/images/full/`, 256 px `med/` for Retina-sharp lists and
+96 px thumbnails in `thumb/`. The same run fetches the four Air Riders vehicle
+renders into `web/data/images/vehicles/`. All of it is **gitignored** — it is
+Nintendo's artwork, cached locally, never committed. Already-downloaded files
+are skipped, so re-runs are cheap. A 404 for a new amiibo just means no
+artwork upstream yet; the page shows a placeholder.
 
 Requires macOS (`sips` generates the thumbnails).
 
@@ -129,7 +131,7 @@ console.log(JSON.stringify({...describeAmiibo(id), vehicle:parseVehicle(b)},null
   not Safari and not `file://`.
 - **Device won't connect** — close every other tab or app holding a connection
   (including the official web tools); the device accepts exactly one.
-- **A run failed midway** — use **Save run log** on the sync page and read the
+- **A run failed midway** — use **RUN LOG drawer (SAVE JSON)** on the sync page and read the
   JSON: every operation is recorded with timing, outcome, and the command and
   status behind any device refusal.
 - **Everything shows as an upload after choosing a folder** — the device root

@@ -44,14 +44,22 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
   .start { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
   a.startBtn {
     font-family: var(--pixel); font-size: .65rem; color: var(--fg); text-decoration: none;
-    display: inline-flex; align-items: center; gap: .55rem;
+    display: inline-flex; align-items: center; justify-content: center; gap: .55rem;
     padding: .9em 1.2em; border: 2px solid var(--border);
     background: var(--panel2); box-shadow: 3px 3px 0 var(--shadow);
   }
   a.startBtn:hover { border-color: var(--accent); }
   a.startBtn:active { transform: translate(3px, 3px); box-shadow: none; }
   a.startBtn.primary { background: var(--accent); border-color: var(--shadow); color: #fff; }
-  .press { font-family: var(--pixel); font-size: .55rem; color: var(--err); margin-top: 2.2rem; }
+  .press { font-family: var(--pixel); font-size: .55rem; color: var(--err); margin-top: 2.2rem;
+    display: inline-flex; align-items: center; gap: .35rem; text-decoration: none; }
+  .startBtn .ico, .press .ico { width: 1.05rem; height: 1.05rem; margin: -.4rem 0; flex: none; }
+  .press .ico { width: .85rem; height: .85rem; }
+  .title { cursor: pointer; }
+  .badPill { font-family: var(--pixel); font-size: .5rem; color: var(--warn);
+    border: 2px solid var(--warn); padding: .35rem .6rem; margin-bottom: 1.4rem;
+    display: inline-block; }
+  .homeNote { text-align: center; color: var(--muted); font-size: .85rem; margin-top: 1.2rem; }
   @media (prefers-reduced-motion: no-preference) {
     .press { animation: blink 1.1s steps(1) infinite; }
   }
@@ -63,33 +71,29 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
 </head>
 <body>
 <main>
-  <div class="title">
+  <div class="title" id="title">
     <div class="scan"></div>
     <div class="logoBig">
       <span data-pirate-mark="120"></span>
       <span class="wm">ALLMIIBO<span class="sfx">-SYNC</span></span>
     </div>
     <div class="tagline">SYNC YOUR AMIIBO COLLECTION OVER BLUETOOTH</div>
+    <span class="badPill" id="badPill" hidden>NEEDS CHROME OR EDGE FOR SYNC</span>
     <div class="start">
-      <a class="startBtn primary" href="./collection.html">&#9654; COLLECTION</a>
-      <a class="startBtn" href="./sync.html">&#9654; SYNC</a>
+      <a class="startBtn primary" href="./collection.html"><span class="ico" data-ico="play"></span>START</a>
     </div>
-    <div class="press">&#9656; PRESS START</div>
+    <a class="press" href="./collection.html"><span class="ico" data-ico="chevronRight"></span>PRESS START</a>
   </div>
 
-  <div class="note homeNotes">
-    Browse the full amiibo database and mark what you own, or keep a local
-    folder and your device in sync — entirely in the browser, over Web
-    Bluetooth (Chrome/Edge). Nothing is uploaded anywhere; the device tools
-    for probing and write-testing live behind the <strong>Advanced</strong>
-    toggle, in the header's Settings on any app page.
-  </div>
+  <p class="homeNote">Runs in your browser. Your files stay on your machine.</p>
 </main>
 <script type="module" src="./js/footer.js"></script>
 <script type="module">
 // No header on the title screen, so draw the mascot (in the stored colourway)
 // ourselves.
 import { pirateMark, FINISHES, DEFAULT_FINISH } from './js/sprite.js';
+import { ICONS } from './js/icons.js';
+for (const el of document.querySelectorAll('[data-ico]')) el.innerHTML = ICONS[el.dataset.ico] ?? '';
 let finish = DEFAULT_FINISH;
 try {
   const i = Number(localStorage.getItem('allmiibo:pirate'));
@@ -99,7 +103,11 @@ for (const el of document.querySelectorAll('[data-pirate-mark]')) {
   el.innerHTML = pirateMark(Number(el.dataset.pirateMark), finish);
 }
 
-// Title screen: ENTER or SPACE presses start.
+// The whole title panel is the start action; ENTER and SPACE work too.
+document.getElementById('title').addEventListener('click', (e) => {
+  if (e.target.closest('a')) return; // real links handle themselves
+  location.href = './collection.html';
+});
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -107,6 +115,11 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
   location.href = './collection.html';
 });
+
+// Detection, not education: one pill when sync can't work here.
+if (!('bluetooth' in navigator) || !('showDirectoryPicker' in window)) {
+  document.getElementById('badPill').hidden = false;
+}
 </script>
 </body>
 </html>

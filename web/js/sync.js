@@ -5,7 +5,7 @@
 // push is around seven minutes.
 
 import { joinPath } from './protocol.js';
-import { parseAmiiboId, parseVehicle } from './amiibo.js';
+import { parseAmiiboId, parseVehicle, parseUid, isHhdItemCards } from './amiibo.js';
 import { devicePath, isExcluded, DEFAULT_EXCLUDES } from './planner.js';
 import {
   readLocalFile,
@@ -19,14 +19,16 @@ import {
 // Walk the device below `deviceRoot` into the planner's index shape:
 //   Map<relPath, {size, isDir}>
 // Sizes only — hashing would cost a full read per file.
-export async function walkDevice(client, deviceRoot, { onProgress = () => {}, maxDepth = 8 } = {}) {
+export async function walkDevice(client, deviceRoot, { onProgress = () => {}, maxDepth = 8, shouldStop = () => false } = {}) {
   const index = new Map();
   let files = 0;
 
   async function walk(relDir, depth) {
+    if (shouldStop()) return;
     const full = devicePath(deviceRoot, relDir);
     const entries = await client.readDir(full);
     for (const e of entries) {
+      if (shouldStop()) return;
       if (e.name === '.' || e.name === '..') continue;
       const relPath = relDir ? `${relDir}/${e.name}` : e.name;
       if (e.isDir) {
@@ -57,7 +59,14 @@ export async function hashDeviceIndex(client, deviceRoot, index, { onProgress = 
     try {
       const bytes = await client.readFile(devicePath(deviceRoot, relPath));
       const v = parseVehicle(bytes);
-      out.set(relPath, { ...entry, hash: await sha256(bytes), amiiboId: parseAmiiboId(bytes), vehicle: v?.name ?? v?.code ?? null });
+      const amiiboId = parseAmiiboId(bytes);
+      out.set(relPath, {
+        ...entry,
+        hash: await sha256(bytes),
+        amiiboId,
+        vehicle: v?.name ?? v?.code ?? null,
+        uid: amiiboId && isHhdItemCards(amiiboId) ? parseUid(bytes) : null,
+      });
     } catch (err) {
       out.set(relPath, { ...entry, hashError: err.message });
     }

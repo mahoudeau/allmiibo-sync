@@ -120,6 +120,32 @@ async function resizeTier(destDir, size, label) {
 await resizeTier(THUMB_DIR, THUMB_SIZE, 'thumb');
 await resizeTier(MED_DIR, MED_SIZE, 'med');
 
+// ---- Kirby Air Riders vehicle art -----------------------------------------
+// Nintendo's own marketing renders: vehicle-only, transparent PNG, resizable
+// through their CDN. Same posture as the amiibo art: fetched locally, never
+// committed (web/data/images/ is gitignored).
+const VEHICLES_DIR = join(ROOT, 'web/data/images/vehicles');
+const VEHICLE_SLUGS = ['warp-star', 'winged-star', 'shadow-star', 'tank-star'];
+const VEHICLE_URL = (slug) =>
+  `https://assets.nintendo.com/image/upload/f_png,w_256/Marketing/ms_j3gnc8ap1/riders-and-machines/gallery-machines/${slug}/machine-2x`;
+
+await mkdir(VEHICLES_DIR, { recursive: true });
+for (const slug of VEHICLE_SLUGS) {
+  const dest = join(VEHICLES_DIR, `${slug}.png`);
+  try {
+    await stat(dest);
+    continue; // already fetched
+  } catch {}
+  try {
+    const res = await fetch(VEHICLE_URL(slug));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await writeFile(dest, Buffer.from(await res.arrayBuffer()));
+    console.log(`vehicle: ${slug}`);
+  } catch (err) {
+    failed.push(`vehicle ${slug}: ${err.message}`);
+  }
+}
+
 const fullCount = (await readdir(FULL_DIR)).length;
 const thumbCount = (await readdir(THUMB_DIR)).length;
 const medCount = (await readdir(MED_DIR)).length;

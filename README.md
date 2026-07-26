@@ -6,7 +6,8 @@ emulator devices over Bluetooth LE.
 The stock web tools (`bt.allmiibo.com`, `pixl.amiibo.xyz`) support only manual,
 one-file-at-a-time transfers and hand-made folders. This project keeps a local
 directory tree — subfolders and all — in sync with the device, with explicit
-control over which side is authoritative.
+control over which side is authoritative, and tracks a collection against the
+full amiibo database while it is at it.
 
 > **Unofficial fan project.** Not affiliated with, endorsed by, or connected to
 > Nintendo, the Pixl.js / AmiiboLink projects, or any device vendor. It ships no
@@ -23,18 +24,22 @@ pulled from someone else's script at runtime.
 
 ## Status
 
-Everything below is verified on hardware (Pixl.js 2.11.2 and 2.16.0).
+Everything below is verified on hardware — **Pixl.js 2.11.2 and 2.16.0**
+(nRF52832, external flash); the protocol is unchanged across those releases,
+and 2.16.0 (January 2026) added on-device emulation for v3 amiibo.
 
 - **Protocol** — reverse-engineered, cross-checked against the open-source
   firmware, verified on hardware. ✅
-- **Client library** — 150+ tests against a simulated device. ✅
-- **Read-only probe** — walks the entire device filesystem, 0 errors, reads
-  byte-exact. ✅
-- **Write test** — filenames stored verbatim, content round-trips exactly. ✅
-- **Sync engine** — all four operations run against a real device. A full
+- **Sync engine** — five named operations, shared by two surfaces. A full
   1914-operation replace of a 1049-dump library completed with zero failures. ✅
-- **Collection view** — every known amiibo with artwork, per-series completion,
-  release-sorted, compact/card views, and a per-amiibo detail page. ✅
+- **The Collection** — the app's home: browse all 947 amiibo, scan a local
+  folder and a folder on the device, sync them, or transfer a hand-picked
+  selection. ✅
+- **Interface** — an 8-bit skin with three themes, an original pirate mascot
+  in twelve colourways, and an Advanced toggle that keeps the expert layer out
+  of the way until asked for. ✅
+- **Tests** — 176 across seven files; the protocol suite runs against a
+  simulated device, the rest are pure. ✅
 
 Three hardware findings shape the sync design:
 
@@ -44,13 +49,6 @@ Three hardware findings shape the sync design:
 - **`remove` deletes folders recursively**, with no "not empty" guard. Files
   are deleted individually.
 - **`rename` moves between folders**, so a relocated file need not be re-uploaded.
-
-## Hosting
-
-The site is static files — the bundled Node server exists only to give Web
-Bluetooth the secure context it requires during local development. To host it
-elsewhere, serve the contents of `web/` from any HTTPS server; HTTPS is what
-Web Bluetooth requires.
 
 ## Quick start
 
@@ -65,208 +63,260 @@ npm run serve          # or: node serve.mjs [port]
 ```
 
 Then open <http://localhost:8080/> — an 8-bit title screen leads into the
-collection and sync pages. The device tools (read-only probe, write test) and
-the expert sync options are tucked behind the **Advanced** toggle in the
-header; theme and mascot colours live under the gear icon, and both survive
-reloads via `localStorage`.
+Collection, which is the whole app. The in-app **HOW TO** page covers every
+feature from the user's side; this README covers the same ground from the
+repository's side.
+
+The chosen folder's handle is remembered (IndexedDB), so the Collection
+reconnects it on the next visit; if the browser has let the permission lapse,
+the folder chip offers **tap to reconnect** instead of silently forgetting.
+Theme, mascot colour, view, sort, filters, operation choices, the device
+folder and the fan-made-cards toggle all persist across reloads and sessions.
 
 Close any other tab connected to the device first — it accepts one BLE
 connection at a time.
 
-### The probe
+### The Collection
 
-**The probe is strictly read-only.** It issues no writes: nothing is created,
-renamed, deleted, formatted, or flashed. It will:
+The page renders the full database immediately — 947 amiibo across 31 series
+(946 database entries plus the curated Happy Home Designer card set),
+greyed out until a source says otherwise. Two sources, either or both:
 
-1. Read the firmware version and BLE address.
-2. List the drive and its used/total capacity.
-3. Walk the whole directory tree (depth configurable).
-4. Optionally read one file back to exercise the download path and confirm the
-   size reported by `read_dir` matches the bytes actually returned.
+- **Your folder** — the OS directory picker, then a scan. Owned amiibo light
+  up; identity comes from the bytes, so filenames are irrelevant.
+- **Your device** — connect over Bluetooth, pick the folder to read in a
+  browser-of-the-device dialog (default `E:/amiibo`), and every file is read
+  back and identified. That costs ~0.2 s per file, so a few minutes for a full
+  library; it shows live progress and can be stopped part-way.
 
-It then produces a JSON report you can save or copy — useful for confirming the
-open questions listed at the end of PROTOCOL.md.
+Both sources live in one **SOURCES** panel. Each source is a chip with its
+controls (rescan, change folder, forget) and its own detail line right below:
+the folder shows owned count, completion bar and dump-file total; the device
+shows its amiibo count and a bar for how much of the union is synced. One
+line at the panel's foot gives the verdict — **ALL SYNCED** when the two
+sides are identical, otherwise the synced percentage with what's left
+(`15 to send · 5 to fetch`). The first time a state reaches identical, an
+old-game victory overlay plays once; the counts under each source double as
+filter shortcuts.
+The toolbar has search (press `/`), filter pills with live counts, three
+sorts (release, name, completion), a **CARDS** / **LIST** toggle, and a `⋯`
+menu (**COPY MISSING LIST**, **SCAN REPORT**, expand/collapse all). Every
+series row carries one tally pill — owned/total, a check when complete, a
+bluetooth mark once a device is scanned, ▲/▼ deltas for what still needs to
+move, and a sparkle count for dumps newer than the database. Each
+amiibo opens a detail page with full-resolution artwork, your actual
+filenames, a copy-able ID, prev/next navigation (arrow keys work), the rest
+of its series, and its character variants. Scans are cached per tab, so
+returning from a detail page is instant.
 
-### Syncing
+With both sources connected:
 
-Open <http://localhost:8080/sync.html>, connect the device, choose a local
-folder, pick an operation, and press **Scan & plan**.
+- **SYNC** fills the gaps in both directions — downloads what only the device
+  has, uploads what only the folder has, deletes nothing, and leaves the two
+  sides identical. You review counts, sizes, a time estimate and the device's
+  capacity before anything is written.
+- **SELECT** turns the grid into a picker: choose amiibo, then **SEND TO
+  DEVICE** or **DOWNLOAD** moves exactly those. Only amiibo missing on the
+  receiving side are transferred.
 
-| Operation | Direction | Deletes | Matches on |
-|---|---|---|---|
-| **Download everything** | device → local | no | nothing — takes it all |
-| **Replace device with local** | local → device | **yes** | path |
-| **Smart sync** | both | optional | path, against the last sync |
-| **Sync by amiibo** | both | no | amiibo identity |
+### Vehicles and card sets
 
-**Download everything** is a backup: it copies the whole device into your
-folder, keeping the device's layout, and writes nothing back.
+Two products break the one-ID-one-amiibo rule, and each gets a tailored
+presentation instead of 90-odd duplicate rows:
 
-Run it a second time and it skips what it already has, so only new or changed
-files cost you time. A file is skipped when it was downloaded before, the local
-copy still hashes to what was written, and the device file is still the same
-size. Every dump is 540 bytes, so a device-side edit that kept the size is the
-one case this cannot notice — tick **download everything again** to re-fetch
-regardless. The plan says how many were skipped and why.
+- **Kirby Air Riders vehicles.** Every rider can be paired with four
+  machines (Warp Star, Winged Star, Shadow Star, Tank Star), and each pairing
+  is its own dump under the same ID. The collection cell shows a `n/4` tally;
+  the detail page shows the four machines as image cards — official renders
+  fetched locally by `fetch-images`, greyed until you hold that pairing.
+- **The fan-made Happy Home Designer cards.** A community-made pack of 91
+  item-unlock cards for the 3DS game — not official Nintendo cards. All 91
+  carry one fabricated amiibo ID, so the collection shows them as a single
+  curated entry (with original card-stack pixel art and a `n/91` pill), and
+  the detail page lists every card with its item count and a taste of what it
+  unlocks. Individual cards are recognised by their NFC UID against a small
+  vendored index (`web/data/hhd-cards.js`).
 
-**Replace device with local** makes the device match your folder exactly,
-including deletions. It always confirms first, with counts.
+The set is shown by default; collectors who track only official amiibo can
+switch it off — Settings → **COLLECTION** — which removes it from the list
+and every total (947 becomes 946), so an official-only collection can read
+complete. The switch is display-only: sync still treats the card files like
+any other files.
 
-**It really does replace.** Everything under the device folder is deleted, then
-the whole local folder is written back — nothing skipped, nothing trusted. A
-mirror that skips files it believes are already correct is a different
-operation, and that belief cannot be checked: a device file of the right size
-and the wrong contents is indistinguishable from a good one without reading it
-back at 2 kB/s. If you want only the differences moved, use **Smart sync**.
+### Advanced sync
 
-Deleting comes first, so only the final state has to fit rather than both
-copies at once. Capacity is checked against what a file actually *occupies*,
-not its contents: a 540-byte dump costs about 1.3 kB once filesystem overhead
-is counted, so a 1049-dump library needs ~1.4 MB rather than the 590 kB its
-bytes suggest.
+You only need this page if the Collection's SYNC is too polite. The
+**Advanced** toggle (header → Settings) adds it to the navigation; it walks
+three steps — connect, choose, review — and offers all five operations:
 
-Expect it to be slow. A full replace of a ~1000-dump library — clear the
-device, then re-upload everything — took about **26 minutes** on real hardware;
-a push onto an already-full drive is slower still (~2.5 s per dump). The plan
-shows a time estimate before you commit.
+| Operation | Direction | Deletes | Matches on | Visible |
+|---|---|---|---|---|
+| **BACKUP** | device → local | no | nothing — takes it all | always |
+| **SYNC** | both | opt-in | path, against the last sync | always |
+| **MATCH** | both | no | amiibo identity | Advanced |
+| **REPLACE** | local → device | **yes** | path | Advanced |
+| **CHECK** | read-only report | no | file content | Advanced |
 
-**Smart sync** sends each side the other's changes, using the record of the
-last sync to tell an edit from a deletion. It matches on path, so it works best
-when both sides are laid out the same way.
+Options live inside the operation they belong to and are remembered per
+operation:
 
-**Sync by amiibo** ignores folders and filenames and asks only whether each
-amiibo is on the other side — the right choice when the two layouts differ.
-Identity is the amiibo ID plus the vehicle for Air Riders, falling back to file
-content — so the 91 Happy Home Designer item cards (all one ID) and the four
-vehicle pairings of each Air Riders character transfer individually rather than
-collapsing to one each. It reads every device file first to identify it, which
-takes a few minutes, and never deletes.
+- **BACKUP**: *Re-download files I already have* and *Include system files*.
+  A second run skips what it already holds — a file is skipped when it was
+  downloaded before, the local copy still hashes to what was written, and the
+  device file is still the same size. Every dump is 540 bytes, so a
+  device-side edit that kept the size is the one case this cannot notice;
+  the first option re-fetches regardless, and the plan says how many were
+  skipped and why.
+- **SYNC**: *Also delete — removals carry over* and *Verify doubtful files
+  (slow)*. It uses the record of the last sync to tell an edit from a
+  deletion, and matches on path, so it works best when both sides are laid
+  out the same way.
+- **MATCH** ignores folders and filenames and asks only whether each amiibo
+  is on the other side — the right choice when the two layouts differ.
+  Identity is the amiibo ID plus the vehicle for Air Riders, falling back to
+  file content, so the 91 Happy Home Designer item cards (one shared ID) and
+  the four vehicle pairings of an Air Riders character transfer individually.
+  It reads every device file first, which takes a few minutes, and never
+  deletes.
+- **REPLACE really does replace.** Everything under the device folder is
+  deleted, then the whole local folder is written back — nothing skipped,
+  nothing trusted. A mirror that skips files it believes correct is a
+  different operation, and that belief cannot be checked: a device file of
+  the right size and the wrong contents is indistinguishable without reading
+  it back at 2 KB/s. If you want only the differences moved, use **SYNC**.
+  It confirms first, with counts, in a hold-to-think dialog.
+- **CHECK** answers "is this amiibo on the device *anywhere*?" once files
+  have been renamed or refiled: it reads every device file and matches on
+  content — reporting what each side is missing, variants (the same amiibo
+  where the device holds bytes you do not have — this is what catches
+  Skylanders dark figures), files relocated under different names, and
+  duplicates within each side. Validated against two copies of one collection
+  filed completely differently: zero shared paths, yet every amiibo matched,
+  and the only genuine differences surfaced as variants.
 
-**Every operation is a dry run until you press Apply.** The plan lists exactly
-what would be uploaded, downloaded, moved, deleted, skipped or blocked, with a
-time estimate.
+**Every operation is a dry run until you press APPLY.** The review shows
+summary tiles, warnings in plain language, a capacity meter, and per-action
+file lists; deletions ask again. The **RUN LOG** drawer (Advanced) keeps the
+whole run — **SAVE JSON** exports the plan, the capacity figures, and every
+operation with its duration, outcome and, where the device refused, the
+command and status it returned. Useful when something fails 300 operations
+into a 48-minute push.
 
-**Save run log** writes the whole run to JSON: the plan, the capacity figures,
-and every operation with its duration, outcome, and — where the device refused
-— the command and status it returned. Useful when something fails 300
-operations into a 48-minute push.
+### Debug tools
 
-### Collection view
+Settings → **DEBUG TOOLS** opens the device-internals page (the old
+`probe.html` / `write-test.html` URLs redirect there):
 
-Open <http://localhost:8080/collection.html> and choose the folder holding your
-dumps. It lists every amiibo in the database, grouped by series, and marks
-which you have — with:
+- The **probe** is strictly read-only — firmware version, drive capacity, a
+  full directory walk, optionally one file read back to confirm sizes are
+  honest. It produces a JSON report, useful against the open questions at the
+  end of PROTOCOL.md.
+- The **write test** writes only inside `E:/_synctest`, aborts if that folder
+  is not empty, and cleans up after itself even when a check fails.
 
-- **artwork** on every entry, greyed out when unowned
-- a curated figure per series on the header, with the series' release year
-- **sort** by release date or name, and a **compact / card** view toggle
-- filters for owned / missing / not-on-device, a search box, and a
-  "copy missing list" button
-- per-series completion counts and a top-line owned/missing summary
+### The interface
 
-Each amiibo links to a **detail page** (`amiibo.html`) with its full-resolution
-artwork, character, series, release date, format (v2/v3), raw ID, and — for
-Kirby Air Riders — the vehicle line-up. The scan is cached per tab, so
-returning from a detail page is instant; **Scan collection** refreshes it.
+The skin is deliberate 8-bit: square corners, hard shadows, a vendored pixel
+font for chrome and system stacks for data, steps()-eased micro-animations
+that respect `prefers-reduced-motion`, and inline-SVG pixel icons. Three
+switchable themes (console-shell grey, CRT indigo, near-black) and an
+original pirate mascot in twelve colourways live under Settings; the
+**ADVANCED** toggle there is the app's single progressive-disclosure axis —
+default mode stays lean, Advanced reveals the expert operations and details.
+Settings also holds the **COLLECTION** toggle for the fan-made HHD card set
+— on by default, switched off by official-only collectors.
 
-Optionally connect the device and press **Add device contents** to also mark
-what is on the device. That reads every file, so it takes a few minutes and can
-be stopped part-way.
+If you are curious how the look was chosen,
+[`web/design-lab.html`](web/design-lab.html) is the actual moodboard used to
+pick the theme, the font pairing, and the pirate (from a line-up that at
+various points included a snail, a viking that was supposed to be a pirate,
+and a rice farmer that was also supposed to be a pirate). It ships in the
+repo, works offline, and is best enjoyed by clicking every pirate.
 
-**Artwork** (`npm run fetch-images`) downloads official artwork from AmiiboAPI
-into three tiers: 96 px thumbnails, 256 px for Retina-sharp lists, and
-full-size for the detail page. It is Nintendo's artwork, so **no tier is
-committed to the repository** — all three are cached locally and deployed to
-your own host. A fresh clone therefore shows letter placeholders until you run
-`fetch-images`; the page uses the sharpest tier present and never fetches
-anything at runtime.
-
-**Keeping the database current** (`npm run update-db`) re-fetches both upstream
-sources, regenerates `web/data/amiibo-db.js`, prints exactly what was added,
-renamed or removed, and fetches artwork for anything new. See below.
-
-Identity comes from the **amiibo ID** at bytes 84–91 of each dump, not from the
-filename and not from a content hash — see below.
-
-### Why identity is the amiibo ID, not a content hash
+## How amiibo are identified
 
 The collection needs each dump to map to a catalogued amiibo, and a content
-hash cannot do that: the same amiibo dumped twice differs in UID and save data,
-so it hashes differently. Measured on one real library, **1035 dumps produced
-1035 distinct SHA-256 hashes but only 943 distinct amiibo IDs** — hashing would
-have treated re-scans of amiibos already owned as brand-new, unrecognised
-blobs. So both the collection view and the content comparison key on the amiibo
-ID.
+hash cannot do that: the same amiibo dumped twice differs in UID and save
+data, so it hashes differently. Measured on one real library, **1035 dumps
+produced 1035 distinct SHA-256 hashes but only 943 distinct amiibo IDs** —
+hashing would have treated re-scans of amiibos already owned as brand-new,
+unrecognised blobs. So identity is the **amiibo ID** inside each dump, with
+file content as the tiebreaker where one ID covers several products.
 
 Three caveats, all real:
 
-- The ID identifies a *model*, not always a distinct file. The clearest case is
-  **Animal Crossing: Happy Home Designer** (the Nintendo 3DS game), which
-  shipped 91 item-unlock cards that all carry a single shared figure ID — those
-  account for almost all of the ~90 shared-ID dumps in the measurement above.
-  Skylanders light/dark variants, and the four vehicle pairings of a Kirby Air
-  Riders character, likewise share one ID. The tool falls back to file content
-  to keep these distinct and reports "same ID, different bytes" rather than
-  collapsing them.
+- The ID identifies a *model*, not always a distinct file. The clearest case
+  is the fan-made **Animal Crossing: Happy Home Designer** item-card pack: 91
+  community-crafted cards (not official Nintendo products) that all carry one
+  fabricated figure ID, so the individual cards are told apart by the 7-byte
+  NFC UID inside each dump. Skylanders light/dark variants, and the four
+  vehicle pairings of a Kirby Air Riders character, likewise share one ID.
+  The tool falls back to vehicle bytes or file content to keep all of these
+  distinct rather than collapsing them.
 - Newer amiibo (Kirby Air Riders onward) are **v3**: 2048-byte NTAG I2C 2K
   dumps whose ID ends in `03` rather than `02`. They parse, and their vehicle
   is decoded from the tag's SRAM buffer — see PROTOCOL.md §10.6.
 - A dump can be recognised as an amiibo yet be newer than the database, so it
-  has no name. Those are listed as *unlisted*, named by their character where
-  the character is already known from an earlier figure.
+  has no name. Those are marked as new, named by their character where the
+  character is already known from an earlier figure.
 
-### About the database
+**The database** (`web/data/amiibo-db.js`, 946 entries across 31 series and
+5 types) is generated by `tools/build-amiibo-db.mjs` from two public sources
+and vendored — nothing is fetched at runtime:
 
-`web/data/amiibo-db.js` is generated by `tools/build-amiibo-db.mjs` from two
-public sources and vendored — nothing is fetched at runtime:
-
-- **[solosky/pixl.js](https://github.com/solosky/pixl.js)** `db_amiibo.c` — the
-  table the device itself uses. Its names are more specific than the
-  alternative (`[AC] 001 - Isabelle` rather than `Isabelle`), which matters for
-  a collection list.
-- **[8bitDream/AmiiboAPI](https://github.com/8bitDream/AmiiboAPI)** `amiibo.json`
-  (MIT) — an actively maintained fork of
+- **[solosky/pixl.js](https://github.com/solosky/pixl.js)** `db_amiibo.c` —
+  the table the device itself uses. Its names are more specific than the
+  alternative (`[AC] 001 - Isabelle` rather than `Isabelle`), which matters
+  for a collection list.
+- **[8bitDream/AmiiboAPI](https://github.com/8bitDream/AmiiboAPI)**
+  `amiibo.json` (MIT) — an actively maintained fork of
   [N3evin/AmiiboAPI](https://github.com/N3evin/AmiiboAPI), providing
   amiibo-series and figure-type labels plus release dates. Chosen over the
   upstream because the fork adds the newest releases (Kirby Air Riders v3,
-  Mario Wonder, Splatoon Raiders, Pragmata…) while remaining a verified strict
-  superset — no upstream entries dropped or corrupted.
+  Mario Wonder, Splatoon Raiders, Pragmata…) while remaining a verified
+  strict superset — no upstream entries dropped or corrupted.
 
-**946 entries.** `update-db` prints every added, renamed or removed entry, so a
-bad upstream edit can't slip into a commit unreviewed.
+`npm run update-db` re-fetches both sources, regenerates the file, prints
+every added, renamed or removed entry — so a bad upstream edit can't slip
+into a commit unreviewed — and fetches artwork for anything new.
 
-### Compare by content
+**Artwork** (`npm run fetch-images`) downloads official artwork from
+AmiiboAPI into three tiers: 96 px thumbnails, 256 px for Retina-sharp lists,
+and full-size for the detail page — plus the four Air Riders vehicle renders
+from Nintendo's asset CDN. It is Nintendo's artwork, so **no tier is
+committed to the repository** — everything is cached locally and deployed to
+your own host. A fresh clone shows letter placeholders until you run
+`fetch-images`; the page uses the sharpest tier present and never fetches
+anything at runtime.
 
-Path-based sync cannot answer "is this amiibo on the device anywhere?" once a
-file has been renamed or refiled. **Compare by content** reads every file off
-the device and matches on amiibo ID, ignoring names and folders. It reports:
+## Design notes
 
-- amiibos on the device you do not hold locally
-- local amiibos not on the device
-- **variants**: the same amiibo ID where the device holds a dump whose bytes
-  you do not have — this is what catches Skylanders dark figures
-- files present on both sides under different names or folders
-- duplicates within each side
+- **Speed.** A full replace of a ~1000-dump library — clear the device, then
+  re-upload everything — took about **26 minutes** on real hardware; a push
+  onto an already-full drive is slower still (~2.5 s per dump). Every plan
+  shows a time estimate before you commit, calibrated against real runs
+  rather than the per-chunk figure, which proved five times optimistic.
+- **Capacity.** Deleting comes first, so only the final state has to fit
+  rather than both copies at once. Capacity is checked against what a file
+  actually *occupies*, not its contents: a 540-byte dump costs about 1.3 kB
+  once filesystem overhead is counted, so a 1049-dump library needs ~1.4 MB
+  rather than the 590 kB its bytes suggest.
+- **Why "verify doubtful files" exists.** Every dump is exactly 540 bytes, so
+  size cannot detect a content change. A SHA-256 per path is recorded at the
+  end of each sync; on the *first* run there is no record, so files present
+  on both sides at the same size are genuinely undecidable — they are listed
+  as unverified rather than guessed at. The option reads each one back to
+  compare hashes: correct but slow, at roughly 0.2 s per file.
+- **No modification times.** The device reports none, so change detection is
+  file size plus the recorded hash — see [PROTOCOL.md](PROTOCOL.md).
 
-It is strictly read-only and can be stopped part-way, but it costs a full read
-per file — roughly 0.2 s each, so a few minutes for a full library.
+## How it works
 
-Validated offline against two copies of one collection filed completely
-differently: **zero shared paths, yet every amiibo ID matched**, and the only
-genuine differences were surfaced as variants.
-
-### Why "verify same-size files" exists
-
-Every amiibo dump is exactly 540 bytes, so file size cannot detect a content
-change. The tool records a SHA-256 per path at the end of each sync and uses
-that. On the *first* run there is no record, so files present on both sides
-with the same size are genuinely undecidable — they are listed as skipped
-rather than guessed at.
-
-Ticking **Verify** reads each such file back off the device to compare hashes.
-That is correct but slow: roughly 0.2 s per file, so a few minutes for a full
-library. Leave it off if you know which side is authoritative and just want a
-`push`.
+The device exposes a small virtual-filesystem RPC over the Nordic UART
+Service: `vfs_read_dir`, `vfs_open_file`, `vfs_read_file`, `vfs_write_file`,
+`vfs_create_folder`, `vfs_remove`, `vfs_rename`. Files move in 242-byte
+chunks with one command in flight at a time. The full wire format is in
+[PROTOCOL.md](PROTOCOL.md).
 
 ## Tests
 
@@ -274,30 +324,28 @@ library. Leave it off if you know which side is authoritative and just want a
 npm test
 ```
 
-No hardware needed. A static check guards the page modules, which touch
-`document` and so cannot be imported under `node:test`: every function they
-call must be defined or imported. That exists because a refactor deleted a
-render function and left its call site, and nothing caught it until the page
-threw.
+176 tests, no hardware needed:
 
-Protocol tests run against a simulated device covering
-framing, multi-notification reassembly, command serialisation, chunked writes,
-error-status propagation and disconnect handling. Planner tests cover the
-reconciliation rules and the safety properties listed above — that folders are
-never removed as a shortcut for their contents, that deletions require opt-in,
-that equal size is not mistaken for equal content, and that over-long paths are
-blocked rather than attempted.
-
-## How it works
-
-The device exposes a small virtual-filesystem RPC over the Nordic UART Service:
-`vfs_read_dir`, `vfs_open_file`, `vfs_read_file`, `vfs_write_file`,
-`vfs_create_folder`, `vfs_remove`, `vfs_rename`. Files move in 242-byte chunks
-with one command in flight at a time.
-
-The device reports **no modification times**, so change detection uses file size
-plus a content hash recorded in a local sync-state file. See
-[PROTOCOL.md](PROTOCOL.md) for the full wire format.
+- `protocol.test.mjs` — against a simulated device: framing,
+  multi-notification reassembly, command serialisation, chunked writes,
+  error-status propagation, disconnects.
+- `planner.test.mjs` — the reconciliation rules and safety properties:
+  folders are never removed as a shortcut for their contents, deletions
+  require opt-in, equal size is never mistaken for equal content, over-long
+  paths are blocked rather than attempted.
+- `amiibo.test.mjs` — ID parsing and the collection model, including the
+  curated HHD entry, its UID-keyed card manifest, and the hide toggle.
+- `ui-modules.test.mjs` — static checks over the page modules, which touch
+  `document` and cannot be imported under `node:test`: every function called
+  must be defined or imported. Exists because a refactor once deleted a
+  render function and left its call site, and nothing caught it until the
+  page threw.
+- `pages.test.mjs` — the "stupid mistake" guards for a site with no build
+  step: every page carries the full head kit, wiring, and assets it claims.
+- `sprite.test.mjs` — the mascot's pixel maps stay rectangular and its
+  colourways stay sound.
+- `prefs.test.mjs` — preference storage, defaults, and the one-shot legacy
+  migration.
 
 ## Layout
 
@@ -305,13 +353,17 @@ plus a content hash recorded in a local sync-state file. See
 PROTOCOL.md               reverse-engineered wire protocol
 COMMANDS.md               every command in one place
 serve.mjs                 zero-dependency static server (Node built-ins only)
+package.json              scripts only — no dependencies to install
+LICENSE / LICENSE.GPL-2.0 MIT for the source, GPL-2.0 for the generated DB
 
 web/index.html            8-bit title screen (home)
-web/collection.html       collection UI
+web/collection.html       the app: collection + everyday sync
 web/amiibo.html           per-amiibo detail page
-web/sync.html             sync UI
-web/probe.html            read-only probe UI (Advanced)
-web/write-test.html       write-test UI (Advanced)
+web/sync.html             Advanced sync (every operation and option)
+web/help.html             HOW TO page: every feature explained in-app
+web/debug.html            device internals: probe + write test on one page
+web/probe.html            redirect stub -> debug.html (old links keep working)
+web/write-test.html       redirect stub -> debug.html
 web/design-lab.html       the design moodboard the NES skin was picked from —
                           kept in the repo for fun, never deployed
 web/css/app.css           shared styles: three NES themes, pixel components
@@ -321,7 +373,9 @@ web/icons/                PNG icons + OG share image, all rendered from the masc
 web/manifest.webmanifest  pinned-to-home-screen metadata (Android/iOS)
 
 web/data/amiibo-db.js     946 amiibo IDs -> name/series/type/date (generated)
-web/data/images/          artwork tiers, all gitignored, fetched + deployed
+web/data/hhd-cards.js     index of the fan-made HHD card pack (91 UIDs, no tag data)
+web/data/images/          artwork tiers + vehicle renders, all gitignored,
+                          fetched + deployed
 
 web/js/amiibo.js          amiibo ID parsing, series/type/faces, collection model
 web/js/bytes.js           little-endian codecs, string and metadata TLV
@@ -329,11 +383,17 @@ web/js/ble.js             Web Bluetooth transport (Nordic UART Service)
 web/js/protocol.js        framing, reassembly, command queue, VFS commands
 web/js/planner.js         reconciliation logic — pure, no I/O
 web/js/localfs.js         local folder access, hashing, sync state
+web/js/syncflow.js        the sync engine both surfaces share (scan/plan/apply)
+web/js/devicepicker.js    folder browser for the device side
 web/js/sync.js            device walk and plan executor
-web/js/syncui.js          sync page logic
+web/js/syncui.js          Advanced sync page logic
 web/js/collectionui.js    collection page logic
 web/js/amiibodetail.js    detail page logic
-web/js/header.js          shared header: nav, Advanced toggle, Settings
+web/js/header.js          shared header: nav, Settings (theme/mascot/advanced)
+web/js/prefs.js           every stored preference behind one tiny surface
+web/js/ui.js              shared UI kit: toasts, status, progress, dialogs,
+                          debounce, counters, formatters
+web/js/dialog.js          themed confirm on native <dialog>
 web/js/footer.js          shared footer
 web/js/icons.js           8-bit UI icons (Pixelarticons, inlined)
 web/js/sprite.js          the pirate mascot as pixel-map -> SVG
@@ -344,30 +404,27 @@ tools/build-amiibo-db.mjs regenerate the database from source files
 tools/update-db.mjs        fetch upstream sources + regenerate + report the diff
 tools/fetch-amiibo-images.mjs  download artwork, build the three tiers
 
-test/protocol.test.mjs    protocol tests against a simulated device
-test/planner.test.mjs     reconciliation and safety tests
-test/amiibo.test.mjs      amiibo ID parsing and collection tests
-test/ui-modules.test.mjs  static checks over the browser-only modules
-test/sprite.test.mjs      mascot pixel-map and colourway tests
-test/pages.test.mjs       head-kit, OG and asset integrity checks per page
+test/                     seven files — see Tests above
 ```
+
+## Hosting
+
+The site is static files — the bundled Node server exists only to give Web
+Bluetooth the secure context it requires during local development. To host it
+elsewhere, serve the contents of `web/` from any HTTPS server; HTTPS is what
+Web Bluetooth requires. A deployment is a plain mirror of `web/` — the
+artwork tiers are gitignored but do get deployed, and `design-lab.html` stays
+home.
 
 ## Keep dumps and keys out of git
 
 If you sync into a folder inside a clone of this repo, note that a device also
 holds `key_retail.bin` (the amiibo signing keys) alongside your dumps. The
 included `.gitignore` excludes `*.bin` and common sync-target folder names for
-that reason — check `git status` before committing if you change it. All amiibo
-artwork is gitignored too — it is Nintendo's and is never committed.
-
-## Compatibility
-
-Protocol verified identical across the Allmiibo and PIXL web clients. Verified
-on hardware: **Pixl.js 2.11.2 and 2.16.0** (nRF52832, external flash) — the
-protocol is unchanged across those releases.
-
-Firmware **2.16.0** (January 2026) added v3 amiibo emulation, so Kirby Air
-Riders dumps work on-device from that version onward.
+that reason — check `git status` before committing if you change it. It also
+excludes the per-folder sync state (`.allmiibo-sync.json`), the debug page's
+report exports, and all amiibo artwork — it is Nintendo's and is never
+committed.
 
 ## Legal and licensing
 
@@ -392,10 +449,14 @@ determined from the device firmware, which is published as open source by its
 authors, and from the vendors' own publicly served web clients, for the sole
 purpose of interoperating with a compatible device over Bluetooth.
 
-**Nintendo artwork.** amiibo images shown by the collection view are © Nintendo.
-They are fetched at the user's request for personal, local use and are **not**
-redistributed by this repository — the entire `web/data/images/` tree is
-gitignored, at every resolution.
+**Nintendo artwork.** amiibo images shown by the collection view, and the
+Air Riders vehicle renders on detail pages, are © Nintendo. They are fetched
+at the user's request for personal, local use and are **not** redistributed
+by this repository — the entire `web/data/images/` tree is gitignored, at
+every resolution.
+
+**The pirate mascot and logo** are original pixel art made for this project —
+they depict no Nintendo character or mark.
 
 ### Third-party data and code
 
@@ -405,7 +466,8 @@ gitignored, at every resolution.
 | [solosky/pixl.js](https://github.com/solosky/pixl.js) | wire protocol reference; amiibo name table | GPL-2.0 |
 | [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P) (vendored in `web/fonts/`) | pixel display font | SIL OFL 1.1 |
 | [Pixelarticons](https://pixelarticons.com) by Gerrit Halfmann (inlined in `web/js/icons.js`) | 8-bit UI icons | MIT |
-| amiibo artwork (fetched locally, never committed) | collection images | © Nintendo |
+| amiibo artwork + vehicle renders (fetched locally, never committed) | collection and detail images | © Nintendo |
+| fan-made HHD card pack (community, authors unknown) | factual index only — card number, NFC UID, item count, teaser (`web/data/hhd-cards.js`); no tag data | facts, compiled for this project |
 
 ### Licences in this repository
 
@@ -418,11 +480,3 @@ gitignored, at every resolution.
 
 Attribution to every source is retained in the generator, the generated file's
 header, and the site footer.
-
-The pirate mascot and logo are original pixel art made for this project — they
-depict no Nintendo character or mark. If you are curious how they were chosen,
-[`web/design-lab.html`](web/design-lab.html) is the actual moodboard used to
-pick the theme, the font pairing, and the pirate (from a line-up that at
-various points included a snail, a viking that was supposed to be a pirate,
-and a rice farmer that was also supposed to be a pirate). It ships in
-the repo, works offline, and is best enjoyed by clicking every pirate.

@@ -10,7 +10,8 @@
 //   allmiibo:pirate '0'..'11'                -> which FINISHES entry to draw
 
 import { icon } from './icons.js';
-import { FINISHES, DEFAULT_FINISH, pirateMark } from './sprite.js';
+import { FINISHES, DEFAULT_FINISH, pirateMark, pirateFrames } from './sprite.js';
+import * as prefs from './prefs.js';
 
 export const MODE_KEY = 'allmiibo:mode';
 export const THEME_KEY = 'allmiibo:theme';
@@ -43,6 +44,13 @@ export function applyMode(mode) {
   document.documentElement.dataset.mode = mode;
   store(MODE_KEY, mode);
 }
+export function currentShowHhd() { return prefs.get(prefs.KEYS.showHhd, true) !== false; }
+export function applyShowHhd(on) {
+  // Reflected on <html> so open pages can react live (the collection
+  // re-renders via a MutationObserver, same channel as data-mode).
+  document.documentElement.dataset.showFanmade = on ? '1' : '';
+  prefs.set(prefs.KEYS.showHhd, !!on);
+}
 export function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   store(THEME_KEY, theme);
@@ -54,12 +62,12 @@ export function applyPirate(i) {
   }
 }
 
-// No HOME entry — the brand mark on the left already links home.
+// No HOME entry — the brand mark on the left already links home. The nav is
+// permanently two items; dev tools live behind Settings → DEBUG.
 const PAGES = [
   { href: 'collection.html', label: 'COLLECTION', ico: 'grid' },
-  { href: 'sync.html', label: 'SYNC', ico: 'sync' },
-  { href: 'probe.html', label: 'PROBE', ico: 'activity', advanced: true },
-  { href: 'write-test.html', label: 'WRITE TEST', ico: 'flask', advanced: true },
+  { href: 'sync.html', label: 'ADVANCED SYNC', ico: 'sync', advanced: true },
+  { href: 'help.html', label: 'HOW TO', ico: 'info' },
 ];
 
 function activePage() {
@@ -101,19 +109,30 @@ header.innerHTML = `
     <nav class="appNav">${navLinks()}</nav>
     <div class="settingsWrap">
       <button type="button" class="advToggle" id="settingsBtn" aria-haspopup="true" aria-expanded="false">
-        ${icon('settings')} SETTINGS
+        ${icon('cog')} SETTINGS
       </button>
       <div class="settingsPanel" id="settingsPanel" hidden>
-        <h3>MODE</h3>
-        <div class="swRow">
-          <button type="button" class="advToggle" id="advToggle" aria-pressed="${currentMode() === 'advanced'}">
-            ADVANCED <span class="sw"><span class="knob"></span></span>
-          </button>
-        </div>
         <h3>THEME</h3>
         <div class="swRow" id="themeRow">${themeSwatches()}</div>
         <h3>PIRATE</h3>
         <div class="swRow" id="pirateRow">${pirateSwatches()}</div>
+        <hr class="sDiv">
+        <h3>ADVANCED</h3>
+        <div class="swRow advRow">
+          <button type="button" class="advToggle" id="advToggle" aria-pressed="${currentMode() === 'advanced'}">
+            ${icon('zap')}<span class="sw"><span class="knob"></span></span>
+          </button>
+          <span class="advHint">Extra options for collection and sync.</span>
+        </div>
+        <h3>COLLECTION</h3>
+        <div class="swRow advRow">
+          <button type="button" class="advToggle hideToggle" id="showHhdToggle" aria-pressed="${currentShowHhd()}">
+            ${icon('copy')}<span class="sw"><span class="knob"></span></span>
+          </button>
+          <span class="advHint">Show the fan-made HHD card set. Off = official amiibo only.</span>
+        </div>
+        <h3>DEBUG</h3>
+        <a class="dbgLink" href="./debug.html">${icon('bug')}DEBUG TOOLS</a>
       </div>
     </div>
   </div>`;
@@ -121,10 +140,48 @@ header.innerHTML = `
 document.body.prepend(header);
 applyPirate(currentPirate()); // draw every [data-pirate-mark] with the stored colourway
 
-document.getElementById('advToggle').addEventListener('click', () => {
+// Idle flourish: the header pirate blinks every few seconds. Two cached
+// frames, one innerHTML swap, paused when the tab is hidden or motion is off.
+(function idleBlink() {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const mark = header.querySelector('[data-pirate-mark]');
+  if (!mark) return;
+  let frames = null;
+  let finishOfFrames = -1;
+  const blink = () => {
+    if (document.hidden) return schedule();
+    const finish = currentPirate();
+    if (finish !== finishOfFrames) {
+      frames = pirateFrames(Number(mark.dataset.pirateMark), finish);
+      finishOfFrames = finish;
+    }
+    mark.innerHTML = frames[1];
+    setTimeout(() => { mark.innerHTML = frames[0]; }, 140);
+    schedule();
+  };
+  const schedule = () => setTimeout(blink, 4000 + Math.random() * 2500);
+  schedule();
+})();
+
+// First paint of the attribute: a page opened with the set switched off
+// renders without it.
+document.documentElement.dataset.showFanmade = currentShowHhd() ? '1' : '';
+
+document.getElementById('showHhdToggle').addEventListener('click', () => {
+  const next = !currentShowHhd();
+  applyShowHhd(next);
+  document.getElementById('showHhdToggle').setAttribute('aria-pressed', String(next));
+});
+
+document.getElementById('advToggle').addEventListener('click', async () => {
   const next = currentMode() === 'advanced' ? 'default' : 'advanced';
   applyMode(next);
   document.getElementById('advToggle').setAttribute('aria-pressed', String(next === 'advanced'));
+  if (next === 'advanced' && !stored('allmiibo:advToast', null)) {
+    store('allmiibo:advToast', '1');
+    const { toast } = await import('./ui.js');
+    toast('Advanced on — extra options are now visible.', { iconName: 'sparkles' });
+  }
 });
 
 const settingsBtn = document.getElementById('settingsBtn');

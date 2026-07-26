@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 const WEB = fileURLToPath(new URL('../web/', import.meta.url));
 const read = (f) => readFile(new URL(f, `file://${WEB}`), 'utf8');
 
-const PAGES = ['index.html', 'collection.html', 'sync.html', 'probe.html', 'write-test.html', 'amiibo.html'];
+const PAGES = ['index.html', 'collection.html', 'sync.html', 'debug.html', 'help.html', 'amiibo.html'];
 
 const HEAD_KIT = [
   'name="viewport"',
@@ -63,9 +63,14 @@ test('no page regrows a hand-written nav (amiibo keeps its back-link)', async ()
 });
 
 test('sync page keeps its expert controls behind advanced mode', async () => {
+  // The op cards render from JS now; the page itself gates the device-root
+  // input, the raw plan and the log, and the JS marks the expert ops.
   const src = await read('sync.html');
-  assert.ok((src.match(/advanced-only/g) ?? []).length >= 4,
-    'replace/identity ops, options grid and audit should be advanced-only');
+  assert.ok((src.match(/advanced-only/g) ?? []).length >= 2,
+    'raw plan and log should be advanced-only');
+  const js = await readFile(new URL('../web/js/syncflow.js', import.meta.url), 'utf8');
+  assert.ok((js.match(/advanced: true/g) ?? []).length >= 3,
+    'match/replace/check ops should be advanced');
 });
 
 function pngSize(buf) {
@@ -84,4 +89,30 @@ test('manifest and icon assets exist with the right shapes', async () => {
   const fav = await readFile(new URL('./icons/favicon-32.png', `file://${WEB}`));
   assert.equal(pngSize(fav).width, 32);
   assert.ok((await read('favicon.svg')).includes('<svg'), 'favicon.svg must be an SVG');
+});
+
+
+test('the old probe/write-test URLs redirect to the debug page', async () => {
+  for (const stub of ['probe.html', 'write-test.html']) {
+    const src = await read(stub);
+    assert.match(src, /http-equiv="refresh"[^>]*debug\.html/, `${stub} must redirect`);
+    assert.ok(src.includes('href="./debug.html'), `${stub} needs a fallback link`);
+  }
+});
+
+test('the header nav offers exactly collection and sync', async () => {
+  const js = await readFile(new URL('../web/js/header.js', import.meta.url), 'utf8');
+  const pagesBlock = js.match(/const PAGES = \[([\s\S]*?)\];/)[1];
+  assert.ok(pagesBlock.includes('collection.html') && pagesBlock.includes('sync.html'));
+  assert.ok(!pagesBlock.includes('probe') && !pagesBlock.includes('write-test'),
+    'dev tools must not be in the nav');
+});
+
+test('every page has a distinct tab title', async () => {
+  const titles = [];
+  for (const page of PAGES) {
+    const m = (await read(page)).match(/<title>([^<]*)<\/title>/);
+    titles.push(m?.[1] ?? '');
+  }
+  assert.equal(new Set(titles).size, titles.length, `titles collide: ${titles.join(' | ')}`);
 });

@@ -1,50 +1,99 @@
 // Collection view: every amiibo in the vendored database, grouped by series,
-// marked with whether you hold a dump of it locally and (optionally) whether
-// it is on the device.
+// marked with whether you hold a dump of it and whether it is on the device.
+//
+// Rendering contract: the DOM is built ONCE per data change (buildDom), and
+// search/filter only toggle [hidden] on prebuilt cells (applyFilter). Sorting
+// reorders the 31 group nodes. Nothing rebuilds per keystroke.
 
 import { BleTransport } from './ble.js';
 import { AllmiiboClient } from './protocol.js';
 import { walkDevice, hashDeviceIndex } from './sync.js';
 import { buildCollection, describeAmiibo, DUMP_SIZES, KNOWN_VEHICLES, hasVehicles, seriesRepresentative } from './amiibo.js';
-import { AMIIBO_RELEASE } from '../data/amiibo-db.js';
+import { AMIIBO_NAMES, AMIIBO_RELEASE } from '../data/amiibo-db.js';
 import { isExcluded } from './planner.js';
 import * as localfs from './localfs.js';
+import * as prefs from './prefs.js';
+import { debounce, motionOK, toast, statusCtl, progressCtl, burst, segCtl, fmtBytes, fmtDuration } from './ui.js';
+import { icon, ICONS } from './icons.js';
+import { confirmDialog } from './dialog.js';
+import { scanAndPlan, applyThePlan, planSelection, hasWork } from './syncflow.js';
+import { hhdMark } from './sprite.js';
+import { HHD_CARDS } from '../data/hhd-cards.js';
+import { pickDeviceFolder } from './devicepicker.js';
+
+prefs.migrate();
 
 const els = {};
 for (const id of [
-  'pickFolder', 'scan', 'connect', 'scanDevice', 'stop', 'folderName',
-  'status', 'progress', 'stats', 'series', 'skipped', 'search', 'copyMissing',
-  'mOwned', 'mMissing', 'mDevice', 'mExtra', 'mTotal', 'viewToggle', 'sortMode',
-  'forget',
+  'srcStrip',
+  'pageMeta', 'folderChip', 'deviceChip', 'stop', 'hero', 'status', 'pbar',
+  'search', 'searchClear', 'searchIco', 'filters', 'sortMode', 'segView',
+  'moreMenu', 'moreIco', 'copyMissing', 'showReport', 'expandAll', 'collapseAll',
+  'skipped', 'series', 'emptyState',
+  'syncBtn', 'syncPanel', 'spReview', 'spWarn', 'spCards', 'spCap', 'spCapName',
+  'spCapText', 'spApply', 'spCancel', 'spRun', 'spPbar', 'spErrs', 'spStop',
+  'selectBtn', 'selBar', 'selN', 'selSend', 'selDown', 'selCancel',
 ]) els[id] = document.getElementById(id);
 
+const status = statusCtl(els.status);
+const pbar = progressCtl(els.pbar);
+
 let rootHandle = null;
+let lapsedFolderName = null; // remembered folder whose permission expired
 let transport = null;
 let client = null;
 let localIds = new Set();
-let filesById = new Map(); // how many dumps you hold per amiibo
-// v3 amiibo carry a vehicle that is not part of the amiibo ID, so one ID can
-// stand for several distinct products. Tracked separately per side.
-let vehiclesById = new Map(); // id -> Map<vehicle, {local:bool, device:bool}>
+let filesById = new Map();
+let vehiclesById = new Map(); // id -> Map<vehicle, {local, device}>
 let namesById = new Map();    // id -> filenames you gave its dumps
 let deviceIds = null;
+let deviceName = null;
+let deviceIndex = null; // full hashed device index — selection ops need it
+let hhdLocalUids = new Set();  // fan-made HHD pack cards, identified by UID
+let hhdDeviceUids = new Set();
+let devRoot = prefs.get(prefs.KEYS.deviceRoot, 'E:/amiibo');
 let collection = null;
 let stopRequested = false;
+let skippedReport = { ignored: [], unrecognised: [] };
 
-// Coming back from a detail page re-runs this module, and rescanning ~1000
-// files takes seconds. The scan results are cached per tab and restored
-// instantly; the Scan button remains the way to refresh after folder changes.
+// Built by buildDom, consumed by applyFilter.
+let rowIndex = [];   // { el, groupEl, item, text }
+let groupEls = new Map(); // series -> { el, countEl }
+
 const CACHE_KEY = 'collectionScan';
+const Q_KEY = 'allmiibo:s:q';
+const SCROLL_KEY = 'allmiibo:s:scroll';
+const ORDER_KEY = 'allmiibo:s:order';
+
+// ---- status helper: the chip only exists while it has something to say ----
+function say(text, kind = '') {
+  els.status.hidden = !text;
+  if (text) status.set(text, kind);
+}
+
+// ---- scan cache -----------------------------------------------------------
 
 function saveScanCache() {
   try {
     sessionStorage.setItem(CACHE_KEY, JSON.stringify({
-      folderName: els.folderName.textContent,
+      folderName: rootHandle?.name ?? lapsedFolderName ?? '',
       localIds: [...localIds],
       filesById: [...filesById],
       namesById: [...namesById],
       vehiclesById: [...vehiclesById].map(([id, m]) => [id, [...m]]),
       deviceIds: deviceIds ? [...deviceIds] : null,
+      deviceName,
+      devRoot,
+      hhdLocalUids: [...hhdLocalUids],
+      hhdDeviceUids: [...hhdDeviceUids],
+      deviceIndex: deviceIndex
+        ? [...deviceIndex].map(([k, e]) => [k, {
+            size: e.size, isDir: e.isDir, hash: e.hash ?? null,
+            amiiboId: e.amiiboId ?? null, vehicle: e.vehicle ?? null,
+            uid: e.uid ?? null,
+          }])
+        : null,
+      skipped: skippedReport,
     }));
   } catch {}
 }
@@ -59,71 +108,146 @@ function restoreScanCache() {
     namesById = new Map(c.namesById);
     vehiclesById = new Map(c.vehiclesById.map(([id, m]) => [id, new Map(m)]));
     deviceIds = c.deviceIds ? new Set(c.deviceIds) : null;
-    if (c.folderName) els.folderName.textContent = c.folderName;
-    return localIds.size > 0;
+    deviceName = c.deviceName ?? null;
+    devRoot = c.devRoot ?? devRoot;
+    hhdLocalUids = new Set(c.hhdLocalUids ?? []);
+    hhdDeviceUids = new Set(c.hhdDeviceUids ?? []);
+    deviceIndex = c.deviceIndex ? new Map(c.deviceIndex) : null;
+    skippedReport = c.skipped ?? { ignored: [], unrecognised: [] };
+    return localIds.size > 0 || !!deviceIds;
   } catch {
     return false;
   }
 }
-// Which artwork tier the lists use. The repo ships 96px thumbs; a deployed or
-// image-fetched copy also has the 256px med tier, which is what Retina wants.
-// Probed once at boot instead of letting ~950 img tags each 404 and fall back.
+
+// ---- artwork tier ----------------------------------------------------------
+
 let artDir = './data/images/thumb';
 
-function setStatus(text, kind = '') {
-  els.status.textContent = text;
-  els.status.className = `status ${kind}`;
+// ---- source chips: folder + device state machines ---------------------------
+
+function chipHtml({ label, sub, icons, primary, warnState, asButton, title }) {
+  const cls = `srcChip${primary ? ' primary' : ''}${warnState ? ' warnState' : ''}`;
+  const inner = `${icons ?? ''}<span>${label}</span>${sub ? `<span class="sub">${sub}</span>` : ''}`;
+  return asButton
+    ? `<button class="${cls}" ${title ? `title="${title}"` : ''}>${inner}</button>`
+    : `<span class="${cls}">${inner}</span>`;
 }
 
-function refresh() {
-  els.scan.disabled = !rootHandle;
-  els.scanDevice.disabled = !(transport?.connected && rootHandle);
-  // Something to forget = a remembered folder or a cached scan.
-  els.forget.disabled = !rootHandle && localIds.size === 0 && !deviceIds;
+function renderFolderChip(state = {}) {
+  const c = els.folderChip;
+  if (!localfs.available()) { c.innerHTML = ''; return; }
+
+  if (state.scanning) {
+    c.innerHTML = chipHtml({ icons: icon('folder'), label: rootHandle?.name ?? 'FOLDER', sub: state.scanning });
+    return;
+  }
+  if (rootHandle) {
+    c.innerHTML = `<span class="srcChip">${icon('folder')}<span>${rootHandle.name}</span>` +
+      `<span class="sub">${[...localIds].length ? `${countDumps()} dumps` : ''}</span>` +
+      `<button data-act="rescan" title="Rescan folder">${icon('sync')}</button>` +
+      `<button data-act="forget" title="Forget folder">${icon('close')}</button></span>`;
+  } else if (lapsedFolderName) {
+    c.innerHTML = chipHtml({
+      icons: icon('folder'), label: lapsedFolderName, sub: 'tap to reconnect',
+      warnState: true, asButton: true,
+    });
+    c.querySelector('button').addEventListener('click', reconnectFolder);
+    return;
+  } else {
+    c.innerHTML = chipHtml({ icons: icon('folder'), label: 'CHOOSE FOLDER', primary: !localIds.size, asButton: true });
+    c.querySelector('button').addEventListener('click', pickFolder);
+    return;
+  }
+  c.querySelector('[data-act="rescan"]')?.addEventListener('click', scanFolder);
+  c.querySelector('[data-act="forget"]')?.addEventListener('click', forgetFolder);
 }
 
-// ---- sources ------------------------------------------------------------
+function renderDeviceChip(state = {}) {
+  const c = els.deviceChip;
+  if (!BleTransport.available) { c.innerHTML = ''; return; }
 
-els.pickFolder.addEventListener('click', async () => {
+  if (state.scanning) {
+    c.innerHTML = `<span class="srcChip scanning"><span class="chipSpin">${icon('loader')}</span>` +
+      `<span>${deviceName ?? 'DEVICE'}</span><span class="sub">${state.scanning}</span></span>`;
+    return;
+  }
+  if (deviceIds) {
+    c.innerHTML = `<span class="srcChip">${icon('bluetooth')}<span>${deviceName ?? 'DEVICE'}</span>` +
+      `<span class="sub">${devRoot} · ${deviceIds.size} amiibo</span>` +
+      `<button data-act="dir" title="Choose device folder">${icon('folder')}</button>` +
+      `<button data-act="rescan" title="Rescan device">${icon('sync')}</button>` +
+      `<button data-act="clear" title="Clear device data">${icon('close')}</button></span>`;
+    c.querySelector('[data-act="dir"]').addEventListener('click', addDevice);
+    c.querySelector('[data-act="rescan"]').addEventListener('click', () => scanDevice());
+    c.querySelector('[data-act="clear"]').addEventListener('click', clearDevice);
+    return;
+  }
+  c.innerHTML = chipHtml({ icons: icon('bluetooth'), label: 'ADD DEVICE', asButton: true, title: 'Reads every file over Bluetooth — takes a few minutes' });
+  c.querySelector('button').addEventListener('click', addDevice);
+}
+
+function countDumps() {
+  let n = 0;
+  for (const v of filesById.values()) n += v;
+  return n;
+}
+
+// ---- folder actions ---------------------------------------------------------
+
+async function pickFolder() {
   try {
     rootHandle = await localfs.pickDirectory();
-    els.folderName.textContent = rootHandle.name;
-    refresh();
-    els.scan.click();
+    lapsedFolderName = null;
+    renderFolderChip();
+    await scanFolder();
   } catch (err) {
-    if (err.name !== 'AbortError') setStatus(err.message, 'err');
+    if (err.name === 'AbortError') say('No folder chosen yet.');
+    else say(err.message, 'err');
   }
-});
+}
 
-els.scan.addEventListener('click', async () => {
-  els.scan.disabled = true;
+async function reconnectFolder() {
+  const restored = await localfs.restoreDirectory({ prompt: true });
+  if (restored) {
+    rootHandle = restored;
+    lapsedFolderName = null;
+    renderFolderChip();
+    await scanFolder();
+  } else {
+    say('Permission declined — choose the folder again.', 'warn');
+    lapsedFolderName = null;
+    renderFolderChip();
+  }
+}
+
+async function scanFolder() {
+  if (!rootHandle) return;
+  const before = new Set(localIds);
   try {
-    setStatus('Reading dumps…');
+    renderFolderChip({ scanning: 'reading…' });
     const index = await localfs.walkLocal(rootHandle, {
-      onProgress: (n) => { if (n % 100 === 0) setStatus(`Reading dumps… ${n}`); },
+      hash: false,
+      onProgress: (n) => { if (n % 100 === 0) renderFolderChip({ scanning: `reading… ${n}` }); },
     });
 
     localIds = new Set();
     filesById = new Map();
     namesById = new Map();
+    hhdLocalUids = new Set();
     for (const v of vehiclesById.values()) for (const e of v.values()) e.local = false;
-    let files = 0;
-    let folders = 0;
     let dumps = 0;
     const ignored = [];
     const unrecognised = [];
 
     for (const [relPath, e] of index) {
-      if (e.isDir) {
-        folders++;
-        continue;
-      }
-      files++;
+      if (e.isDir) continue;
       if (e.amiiboId) {
         dumps++;
         localIds.add(e.amiiboId);
         filesById.set(e.amiiboId, (filesById.get(e.amiiboId) ?? 0) + 1);
         if (e.vehicle) markVehicle(e.amiiboId, e.vehicle, 'local');
+        if (e.uid) hhdLocalUids.add(e.uid);
         if (!namesById.has(e.amiiboId)) namesById.set(e.amiiboId, []);
         namesById.get(e.amiiboId).push(relPath.slice(relPath.lastIndexOf('/') + 1));
       } else if (isExcluded(relPath)) {
@@ -132,86 +256,153 @@ els.scan.addEventListener('click', async () => {
         unrecognised.push({ relPath, size: e.size });
       }
     }
+    skippedReport = { ignored, unrecognised };
 
     render();
     saveScanCache();
-    renderSkipped(ignored, unrecognised);
-    setStatus(
-      `${dumps} dumps in ${folders} folders — ${localIds.size} distinct amiibos` +
-        (unrecognised.length ? `, ${unrecognised.length} file(s) not recognised` : '') +
-        (ignored.length ? `, ${ignored.length} system file(s) ignored` : ''),
-      'ok'
-    );
-  } catch (err) {
-    setStatus(err.message, 'err');
-  }
-  refresh();
-});
 
-els.connect.addEventListener('click', async () => {
+    const fresh = [...localIds].filter((id) => !before.has(id));
+    if (dumps === 0) {
+      say(`No dumps found in "${rootHandle.name}" — pick the folder that holds your .bin files.`, 'warn');
+    } else if (unrecognised.length) {
+      say(`${unrecognised.length} files skipped — see Scan report`, 'warn');
+    } else {
+      say('');
+    }
+    if (fresh.length && motionOK()) {
+      celebrate(fresh);
+      if (before.size) toast(`${fresh.length} new!`, { iconName: 'party' });
+    }
+    maybeCelebrateAllSynced();
+  } catch (err) {
+    say(err.message, 'err');
+  }
+  renderFolderChip();
+}
+
+async function forgetFolder() {
+  const ok = await confirmDialog({
+    title: 'FORGET THIS FOLDER?',
+    body: 'Your files are untouched. The device scan is kept.',
+    confirmLabel: 'FORGET',
+    cancelLabel: 'KEEP',
+    icon: 'folder',
+  });
+  if (!ok) return;
+  await localfs.forgetDirectory();
+  // Folder-side state only — the device is its own source and survives.
+  rootHandle = null;
+  lapsedFolderName = null;
+  localIds = new Set();
+  filesById = new Map();
+  namesById = new Map();
+  hhdLocalUids = new Set();
+  for (const v of vehiclesById.values()) for (const e of v.values()) e.local = false;
+  skippedReport = { ignored: [], unrecognised: [] };
+  els.skipped.hidden = true;
+  saveScanCache();
+  render();
+  renderFolderChip();
+  renderDeviceChip();
+  say(deviceIds ? 'Folder forgotten — device data kept.' : 'Folder forgotten — browsing the full database.');
+}
+
+// ---- device actions ----------------------------------------------------------
+
+async function connect() {
+  if (transport?.connected) return true;
+  say('Choose your device in the Bluetooth popup…');
+  transport = new BleTransport();
+  client = new AllmiiboClient(transport, { log: () => {} });
+  transport.addEventListener('disconnected', () => say('Device disconnected.', 'warn'));
+  deviceName = await transport.connect();
+  say('');
+  return true;
+}
+
+// The DEVICE source flow: connect, pick the folder on the device, scan it.
+async function addDevice() {
   try {
-    setStatus('Requesting device…');
-    transport = new BleTransport();
-    client = new AllmiiboClient(transport, { log: () => {} });
-    transport.addEventListener('disconnected', () => { setStatus('Device disconnected', 'warn'); refresh(); });
-    const name = await transport.connect();
-    setStatus(`Connected: ${name}`, 'ok');
+    await connect();
   } catch (err) {
-    setStatus(err.message, 'err');
+    if (err.name === 'NotFoundError') say('No device selected.');
+    else say(err.message, 'err');
+    renderDeviceChip();
+    return;
   }
-  refresh();
-});
+  const picked = await pickDeviceFolder({ client, startPath: devRoot });
+  if (!picked) { renderDeviceChip(); return; }
+  devRoot = picked;
+  prefs.set(prefs.KEYS.deviceRoot, picked);
+  await scanDevice();
+}
 
-els.scanDevice.addEventListener('click', async () => {
-  els.scanDevice.disabled = true;
-  els.stop.disabled = false;
+async function scanDevice() {
   stopRequested = false;
-
   try {
-    setStatus('Listing device…');
-    let index = await walkDevice(client, 'E:/', {
-      onProgress: (n) => { if (n % 50 === 0) setStatus(`Listing device… ${n} files`); },
-    });
-
-    const total = [...index.values()].filter((e) => !e.isDir).length;
-    setStatus(`Reading ${total} device files — this takes a few minutes`);
-
-    const t0 = Date.now();
-    index = await hashDeviceIndex(client, 'E:/', index, {
+    await connect();
+    els.stop.hidden = false;
+    renderDeviceChip({ scanning: 'listing…' });
+    pbar.busy(`Listing ${devRoot}…`);
+    let index = await walkDevice(client, devRoot, {
       shouldStop: () => stopRequested,
-      onProgress: (done, n) => {
-        els.progress.value = (done / n) * 100;
-        if (done % 10 === 0 || done === n) {
-          const rate = done / Math.max(1, (Date.now() - t0) / 1000);
-          const left = Math.round((n - done) / Math.max(rate, 0.01));
-          setStatus(`Reading device ${done}/${n} — about ${left > 90 ? `${Math.round(left / 60)} min` : `${left}s`} left`);
+      onProgress: (n) => {
+        if (n % 50 === 0) {
+          renderDeviceChip({ scanning: `listing ${n}` });
+          pbar.busy(`Listing ${devRoot}…`, `${n} files`);
         }
       },
     });
-    els.progress.value = 0;
 
+    const total = [...index.values()].filter((e) => !e.isDir).length;
+    const t0 = Date.now();
+    index = await hashDeviceIndex(client, devRoot, index, {
+      shouldStop: () => stopRequested,
+      onProgress: (done, n) => {
+        const rate = done / Math.max(1, (Date.now() - t0) / 1000);
+        const left = Math.round((n - done) / Math.max(rate, 0.01));
+        pbar.set(done, n, `Reading ${deviceName ?? 'device'}`, `${done}/${n} · ${fmtDuration(left)} left`);
+        if (done % 10 === 0 || done === n) renderDeviceChip({ scanning: `${done}/${n} · ${Math.round((done / n) * 100)}%` });
+      },
+    });
+    pbar.done();
+
+    deviceIndex = index;
     deviceIds = new Set();
+    hhdDeviceUids = new Set();
     for (const v of vehiclesById.values()) for (const e of v.values()) e.device = false;
     for (const e of index.values()) {
       if (e.isDir || !e.amiiboId) continue;
       deviceIds.add(e.amiiboId);
       if (e.vehicle) markVehicle(e.amiiboId, e.vehicle, 'device');
+      if (e.uid) hhdDeviceUids.add(e.uid);
     }
 
     render();
     saveScanCache();
-    setStatus(
-      stopRequested
-        ? `Stopped early — ${deviceIds.size} amiibos identified on the device so far`
-        : `Device holds ${deviceIds.size} distinct amiibos`,
-      stopRequested ? 'warn' : 'ok'
-    );
+    say(stopRequested
+      ? `Stopped — ${deviceIds.size} read so far. Results partial.`
+      : `Device holds ${deviceIds.size} amiibo.`, stopRequested ? 'warn' : 'ok');
+    if (!stopRequested) maybeCelebrateAllSynced();
   } catch (err) {
-    setStatus(err.message, 'err');
+    pbar.hide();
+    if (err.name === 'NotFoundError') say('No device selected.');
+    else say(err.message, 'err');
   }
-  els.stop.disabled = true;
-  refresh();
-});
+  els.stop.hidden = true;
+  renderDeviceChip();
+}
+
+function clearDevice() {
+  deviceIds = null;
+  deviceName = null;
+  deviceIndex = null;
+  hhdDeviceUids = new Set();
+  for (const v of vehiclesById.values()) for (const e of v.values()) e.device = false;
+  render();
+  saveScanCache();
+  renderDeviceChip();
+}
 
 els.stop.addEventListener('click', () => { stopRequested = true; });
 
@@ -222,18 +413,14 @@ function markVehicle(id, vehicle, side) {
   forId.get(vehicle)[side] = true;
 }
 
-// ---- rendering ----------------------------------------------------------
+// ---- naming -------------------------------------------------------------------
 
-// Turn the filenames you gave a group of dumps into one label. With several
-// dumps under one ID their shared prefix is the useful part: 91 files called
-// "hhd items 01.bin" … "hhd items 91.bin" yield "hhd items".
 function labelFromFilenames(names) {
   const clean = names
     .map((n) => n.replace(/\.bin$/i, '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\d+\s*-\s*/, '').trim())
     .filter(Boolean);
   if (!clean.length) return null;
   if (clean.length === 1) return clean[0];
-
   let prefix = clean[0];
   for (const n of clean.slice(1)) {
     let i = 0;
@@ -245,63 +432,257 @@ function labelFromFilenames(names) {
   return prefix.length >= 3 ? prefix : clean[0];
 }
 
-function render() {
-  const nameHints = new Map();
-  for (const [id, names] of namesById) {
-    const label = labelFromFilenames(names);
-    if (label) nameHints.set(id, label);
+// ---- stats band ------------------------------------------------------------------
+
+// The fan-made-cards toggle in Settings flips data-show-fanmade on <html>;
+// re-render so totals, filters and sync numbers follow without a reload.
+new MutationObserver(() => {
+  if (collection) render();
+}).observe(document.documentElement, { attributes: true, attributeFilter: ['data-show-fanmade'] });
+
+function syncDeltas() {
+  let up = 0;
+  let down = 0;
+  let matched = 0;
+  if (deviceIds && collection) {
+    for (const g of collection.series) {
+      for (const i of g.items) {
+        if (i.hasLocal && i.hasDevice === false) up++;
+        if (i.hasDevice && !i.hasLocal) down++;
+        if (i.hasLocal && i.hasDevice) matched++;
+      }
+    }
   }
-  collection = buildCollection(localIds, deviceIds, { nameHints, dumpCounts: filesById });
-  const s = collection.stats;
-
-  els.stats.hidden = false;
-  els.mOwned.textContent = `${s.ownedKnown} / ${s.knownTotal}`;
-  els.mMissing.textContent = s.missingLocal;
-  els.mDevice.textContent = s.ownedDevice ?? '–';
-  els.mExtra.textContent = s.notInDatabase;
-  els.mTotal.textContent = s.ownedLocal;
-
-  paint();
+  return { up, down, matched };
 }
 
-// Files that are not amiibo dumps, split into harmless system clutter and
-// anything genuinely unexpected — the latter is worth seeing.
-function renderSkipped(ignored, unrecognised) {
-  els.skipped.textContent = '';
-  if (!ignored.length && !unrecognised.length) {
-    els.skipped.hidden = true;
+function renderStats() {
+  renderHero();
+}
+
+// The old-game moment: shown once per state when the folder and the device
+// hold exactly the same amiibo. Dismissed by any key or click.
+function maybeCelebrateAllSynced() {
+  if (!deviceIds || !localIds.size || !collection) return;
+  let up = 0;
+  let down = 0;
+  for (const g of collection.series) {
+    for (const i of g.items) {
+      if (i.hasLocal && i.hasDevice === false) up++;
+      if (i.hasDevice && !i.hasLocal) down++;
+    }
+  }
+  if (up || down) return;
+  const s = collection.stats;
+  const fingerprint = `${localIds.size}:${deviceIds.size}:${s.ownedKnown}`;
+  try {
+    if (sessionStorage.getItem('allmiibo:winShown') === fingerprint) return;
+    sessionStorage.setItem('allmiibo:winShown', fingerprint);
+  } catch {}
+
+  const complete = s.ownedKnown === s.knownTotal;
+  const overlay = document.createElement('div');
+  overlay.className = 'winOverlay';
+  overlay.innerHTML = `<div class="winPanel"><div class="scanfx"></div>
+    <span data-win-pirate></span>
+    <div class="stars">★ ★ ★</div>
+    <div class="big">ALL SYNCED!</div>
+    <div class="sub">${complete ? 'COLLECTION COMPLETE · ' : ''}DEVICE MATCHES FOLDER</div>
+    <div class="nums">${s.ownedKnown} / ${s.knownTotal} OWNED · ${deviceIds.size} ON DEVICE</div>
+    <div class="press">▸ PRESS ANY KEY</div></div>`;
+  document.body.append(overlay);
+  import('./sprite.js').then(({ pirateMark, FINISHES, DEFAULT_FINISH }) => {
+    let finish = DEFAULT_FINISH;
+    try {
+      const i = Number(localStorage.getItem('allmiibo:pirate'));
+      if (Number.isInteger(i) && i >= 0 && i < FINISHES.length) finish = i;
+    } catch {}
+    const slot = overlay.querySelector('[data-win-pirate]');
+    if (slot) slot.innerHTML = pirateMark(88, finish);
+  });
+  if (motionOK()) burst(overlay.querySelector('.winPanel'));
+  const dismiss = () => {
+    overlay.remove();
+    removeEventListener('keydown', dismiss, true);
+  };
+  overlay.addEventListener('click', dismiss);
+  addEventListener('keydown', dismiss, true);
+}
+
+function celebrate(freshIds) {
+  const freshSet = new Set(freshIds.slice(0, 24));
+  let shown = 0;
+  for (const r of rowIndex) {
+    if (shown >= 24) break;
+    if (freshSet.has(r.item.id) && !r.el.hidden) {
+      r.el.classList.add('pop');
+      r.el.addEventListener('animationend', () => r.el.classList.remove('pop'), { once: true });
+      shown++;
+    }
+  }
+  const track = els.hero.querySelector('.hBar');
+  if (track) burst(track);
+}
+
+// ---- hero (cold / browse-only) ------------------------------------------------
+
+function renderHero() {
+  const step1Done = !!rootHandle || !!lapsedFolderName || localIds.size > 0;
+  const step2Done = !!deviceIds;
+  const ble = BleTransport.available;
+  const cold = !step1Done && !step2Done;
+
+  // The source panel is permanent: it always shows the per-source state and
+  // hosts the actions (SYNC, STOP, more options). Only the stats below swap
+  // to the ALL SYNCED banner.
+  els.hero.hidden = false;
+
+  if (!localfs.available()) {
+    els.hero.innerHTML = `<div class="hero">${icon('ship')}<div class="hBody">
+      <div class="hTitle">BROWSE-ONLY MODE</div>
+      <p>This browser can't read folders. Chrome or Edge unlocks tracking and sync.</p>
+    </div></div>`;
     return;
   }
-  els.skipped.hidden = false;
 
-  const block = (title, items, note) => {
-    if (!items.length) return;
-    const d = document.createElement('details');
-    const sm = document.createElement('summary');
-    sm.textContent = `${title} (${items.length})`;
-    d.append(sm);
-    const pre = document.createElement('pre');
-    pre.textContent =
-      (note ? `${note}\n\n` : '') +
-      items.map((i) => `${String(i.size).padStart(8)} B  ${i.relPath}`).join('\n');
-    d.append(pre);
-    els.skipped.append(d);
-  };
+  // Each source carries its own numbers, right under its chip; one shared
+  // line at the bottom says how far apart the two sides are.
+  const stats = collection?.stats;
+  const scannedFolder = localIds.size > 0;
 
-  block(
-    'Not recognised as amiibo dumps',
-    unrecognised,
-    `Recognised dump sizes: ${Object.entries(DUMP_SIZES).map(([n, l]) => `${n} (${l})`).join(', ')}.`
-  );
-  block('System files, ignored by sync too', ignored);
+  let folderDetail = '';
+  if (stats && scannedFolder) {
+    const pct = stats.knownTotal ? Math.round((stats.ownedKnown / stats.knownTotal) * 100) : 0;
+    folderDetail = `<div class="hDetail">
+      <button class="hStat ok" data-filter="owned">${icon('checkboxOn')}<b>${stats.ownedKnown}</b>/${stats.knownTotal} OWNED</button>
+      <span class="hBar"><span class="fill" style="width:${pct}%"></span></span>
+      <b class="hPct">${pct}%</b>
+      <span class="hStat">${icon('copy')}<b>${countDumps()}</b> DUMP FILES</span>
+      ${stats.notInDatabase > 0 ? `<span class="hStat warn">${icon('sparkles')}<b>${stats.notInDatabase}</b> NOT IN DB</span>` : ''}
+    </div>`;
+  }
+
+  const { up, down, matched } = syncDeltas();
+  const syncDenom = matched + up + down;
+  const syncPct = syncDenom ? Math.round((matched / syncDenom) * 100) : 0;
+
+  let deviceDetail = '';
+  if (stats && step2Done) {
+    deviceDetail = `<div class="hDetail">
+      <button class="hStat ok" data-filter="notondevice">${icon('bluetooth')}<b>${stats.ownedDevice ?? deviceIds.size}</b> ON DEVICE</button>
+      ${scannedFolder ? `<span class="hBar"><span class="fill" style="width:${syncPct}%"></span></span>
+      <b class="hPct">${syncPct}%</b> <span class="hStat">SYNCED</span>` : ''}
+    </div>`;
+  }
+
+  let syncLine = '';
+  if (scannedFolder && step2Done) {
+    if (up === 0 && down === 0) {
+      const complete = stats.ownedKnown === stats.knownTotal;
+      syncLine = `<div class="syncLine ok">${icon('check')}
+        <span class="slTitle">ALL SYNCED</span>
+        <span class="slSub">${complete ? 'collection complete — ' : ''}folder and device are identical</span></div>`;
+    } else {
+      const parts = [up ? `${up} to send` : '', down ? `${down} to fetch` : ''].filter(Boolean).join(' · ');
+      syncLine = `<div class="syncLine">${icon('sync')}
+        <span class="slTitle">${syncPct}% SYNCED</span>
+        <span class="slSub">${parts}</span></div>`;
+    }
+  }
+
+  els.hero.innerHTML = `<div class="hero"><span data-pirate-mark="72"></span><div class="hBody">
+    <div class="hTitle">${cold ? 'ADD A SOURCE' : 'SOURCES'}</div>
+    ${cold ? '<p class="hNote">One is enough to browse — add both to sync them.</p>' : ''}
+    <div class="hStep${step1Done ? ' done' : ''}">
+      <span class="hStepN">${step1Done ? icon('check') : icon('folder')}</span>
+      <span class="hStepLbl">YOUR FOLDER</span>
+      <span class="hSlot" id="heroSlot1"></span>
+    </div>
+    ${folderDetail}
+    ${ble ? `<div class="hStep${step2Done ? ' done' : ''}">
+      <span class="hStepN">${step2Done ? icon('check') : icon('bluetooth')}</span>
+      <span class="hStepLbl">YOUR DEVICE</span>
+      <span class="hSlot" id="heroSlot2"></span>
+    </div>` : ''}
+    ${deviceDetail}
+    ${syncLine}
+    <span class="hActions" id="heroActions"></span>
+    ${cold ? '<p class="hNote">Stays on this computer. Nothing uploads.</p>' : ''}
+  </div></div>`;
+
+  els.hero.querySelector('#heroSlot1').append(els.folderChip);
+  if (ble) els.hero.querySelector('#heroSlot2').append(els.deviceChip);
+  // the action strip (SYNC / STOP / more options) lives in the panel footer
+  els.srcStrip.hidden = false;
+  els.hero.querySelector('#heroActions').append(els.srcStrip);
+
+  for (const b of els.hero.querySelectorAll('button[data-filter]')) {
+    b.addEventListener('click', () => setFilter(b.dataset.filter === currentFilter() ? 'all' : b.dataset.filter));
+  }
+
+  import('./sprite.js').then(({ pirateMark, FINISHES, DEFAULT_FINISH }) => {
+    let finish = DEFAULT_FINISH;
+    try {
+      const i = Number(localStorage.getItem('allmiibo:pirate'));
+      if (Number.isInteger(i) && i >= 0 && i < FINISHES.length) finish = i;
+    } catch {}
+    const slot = els.hero.querySelector('[data-pirate-mark]');
+    if (slot) slot.innerHTML = pirateMark(72, finish);
+  });
 }
+
+// ---- filters / sort / view -------------------------------------------------------
+
+const FILTERS = [
+  { value: 'all', label: 'ALL' },
+  { value: 'owned', label: 'OWNED' },
+  { value: 'missing', label: 'MISSING' },
+  { value: 'notondevice', label: 'NOT ON DEVICE', needsDevice: true },
+];
 
 function currentFilter() {
-  return document.querySelector('input[name=filter]:checked').value;
+  const stored = prefs.get(prefs.KEYS.filter, 'all');
+  if (stored === 'notondevice' && !deviceIds) return 'all';
+  return FILTERS.some((f) => f.value === stored) ? stored : 'all';
 }
 
-// A series' place in time is its first release. Series whose amiibos are all
-// newer than the date table sort last rather than being guessed at.
+function setFilter(value) {
+  prefs.set(prefs.KEYS.filter, value);
+  renderFilters();
+  applyFilter();
+}
+
+function filterCounts() {
+  const counts = { all: 0, owned: 0, missing: 0, notondevice: 0 };
+  if (!collection) return counts;
+  for (const g of collection.series) {
+    for (const i of g.items) {
+      counts.all++;
+      if (i.hasLocal) counts.owned++;
+      else counts.missing++;
+      if (i.hasDevice === false) counts.notondevice++;
+    }
+  }
+  return counts;
+}
+
+function renderFilters() {
+  const active = currentFilter();
+  const counts = filterCounts();
+  els.filters.innerHTML = FILTERS
+    .filter((f) => !f.needsDevice || deviceIds)
+    .map((f) =>
+      `<label class="pill${counts[f.value] === 0 && f.value !== 'all' ? ' zero' : ''}">` +
+      `<input type="radio" name="filter" value="${f.value}" ${f.value === active ? 'checked' : ''}>` +
+      `<span class="lbl">${f.label}</span><span class="n">${counts[f.value]}</span></label>`
+    ).join('');
+  for (const input of els.filters.querySelectorAll('input')) {
+    input.addEventListener('change', () => setFilter(input.value));
+  }
+}
+
+// ---- series ordering ---------------------------------------------------------------
+
 function seriesDate(group) {
   if (group._date === undefined) {
     const dates = group.items.map((i) => AMIIBO_RELEASE[i.id]).filter(Boolean).sort();
@@ -310,10 +691,19 @@ function seriesDate(group) {
   return group._date;
 }
 
+function completionRatio(group) {
+  const known = group.items.filter((i) => i.inDatabase || i.special).length;
+  if (!known) return -1;
+  return group.items.filter((i) => i.hasLocal && (i.inDatabase || i.special)).length / known;
+}
+
 function sortedSeries() {
   const groups = [...collection.series];
-  if (els.sortMode.value === 'name') {
+  const mode = els.sortMode.value;
+  if (mode === 'name') {
     groups.sort((a, b) => a.seriesName.localeCompare(b.seriesName));
+  } else if (mode === 'completion') {
+    groups.sort((a, b) => completionRatio(b) - completionRatio(a) || a.seriesName.localeCompare(b.seriesName));
   } else {
     groups.sort((a, b) => {
       const da = seriesDate(a), db = seriesDate(b);
@@ -325,40 +715,50 @@ function sortedSeries() {
   return groups;
 }
 
-function paint() {
-  if (!collection) return;
-  const filter = currentFilter();
-  const q = els.search.value.trim().toLowerCase();
+// ---- DOM build (once per data change) ------------------------------------------------
 
-  const keep = (item) => {
-    if (filter === 'owned' && !item.hasLocal) return false;
-    if (filter === 'missing' && item.hasLocal) return false;
-    if (filter === 'notondevice' && (item.hasDevice !== false)) return false;
-    if (q && !item.name.toLowerCase().includes(q) && !item.id.includes(q)) return false;
-    return true;
-  };
+function render() {
+  refreshSyncButton?.();
+  const nameHints = new Map();
+  for (const [id, names] of namesById) {
+    const label = labelFromFilenames(names);
+    if (label) nameHints.set(id, label);
+  }
+  collection = buildCollection(localIds, deviceIds, {
+    nameHints,
+    dumpCounts: filesById,
+    hideHhd: prefs.get(prefs.KEYS.showHhd, true) === false,
+  });
+  els.pageMeta.textContent = `${collection.stats.knownTotal} AMIIBO`;
+  renderStats();
+  renderFilters();
+  buildDom();
+  applyFilter();
+}
 
-  els.series.textContent = '';
-  let shown = 0;
+function buildDom() {
+  rowIndex = [];
+  groupEls = new Map();
+  // Collapsed by default; openSeries remembers the ones the user opened.
+  const opened = new Set(prefs.get(prefs.KEYS.openSeries, []));
+  const frag = document.createDocumentFragment();
 
   for (const group of sortedSeries()) {
-    const items = group.items.filter(keep);
-    if (!items.length) continue;
-    shown += items.length;
-
     const details = document.createElement('details');
-    details.open = filter !== 'all' || !!q;
+    details.className = 'series';
+    details.dataset.series = String(group.series);
+    details.open = opened.has(group.series);
+    details.addEventListener('toggle', onGroupToggle);
 
     const summary = document.createElement('summary');
-
     const head = document.createElement('span');
     head.className = 'seriesHead';
     const headArt = document.createElement('img');
     headArt.className = 'seriesArt';
     headArt.loading = 'lazy';
     headArt.alt = '';
-    headArt.src = `${artDir}/${seriesRepresentative(group.series) ?? (items.find((i) => i.hasLocal) ?? items[0]).id}.png`;
-    headArt.addEventListener('error', () => headArt.remove());
+    headArt.width = 28; headArt.height = 28;
+    headArt.src = `${artDir}/${seriesRepresentative(group.series) ?? (group.items.find((i) => i.hasLocal) ?? group.items[0]).id}.png`;
     const label = document.createElement('span');
     label.textContent = group.seriesName;
     head.append(headArt, label);
@@ -369,265 +769,642 @@ function paint() {
       y.textContent = year;
       head.append(y);
     }
-    // Completion is measured against the database, so unlisted extras do not
-    // make a series read as more than complete.
-    const known = group.items.filter((i) => i.inDatabase).length;
-    const owned = group.items.filter((i) => i.hasLocal && i.inDatabase).length;
-    const extra = group.items.filter((i) => !i.inDatabase && i.hasLocal).length;
 
-    const count = document.createElement('span');
-    count.className = `count${known && owned === known ? ' done' : known ? ' part' : ''}`;
-    count.textContent = known ? `${owned} / ${known}` : `${group.ownedLocal}`;
-    if (extra) count.textContent += `  +${extra}`;
-    count.title = [
-      known ? `${owned} of ${known} in the database` : 'none of these are in the database',
-      extra ? `${extra} held but unlisted` : null,
-      group.ownedDevice === null ? null : `${group.ownedDevice} on the device`,
-    ].filter(Boolean).join(' · ');
-
-    if (group.ownedDevice !== null) {
-      const dev = document.createElement('span');
-      dev.className = 'count dev';
-      dev.textContent = `${group.ownedDevice} on device`;
-      summary.append(head, dev, count);
-    } else {
-      summary.append(head, count);
-    }
+    const grow = document.createElement('span');
+    grow.className = 'grow';
+    const chev = document.createElement('span');
+    chev.className = 'chev';
+    chev.innerHTML = ICONS.chevronRight;
+    summary.append(head, grow, makeSeriesPill(group), chev);
     details.append(summary);
 
     const box = document.createElement('div');
     box.className = 'items';
-    for (const item of items) {
-      // A v3 amiibo is a character plus a vehicle, and only the character is
-      // in the amiibo ID. You own each pairing separately, so list them
-      // separately — while completion against the database stays per
-      // character, which is all the database records.
-      box.append(makeRow(item, item.name, item.hasLocal, item.hasDevice));
+
+    // A giant mixed series (Animal Crossing) gets type sub-headers so the
+    // card flood is skimmable.
+    const types = [...new Set(group.items.map((i) => i.typeName))];
+    const useSubheads = group.items.length > 100 && types.length > 1;
+
+    let currentType = null;
+    const itemsSorted = useSubheads
+      ? [...group.items].sort((a, b) => a.typeName.localeCompare(b.typeName) || a.name.localeCompare(b.name))
+      : group.items;
+
+    for (const item of itemsSorted) {
+      if (useSubheads && item.typeName !== currentType) {
+        currentType = item.typeName;
+        const n = itemsSorted.filter((i) => i.typeName === currentType).length;
+        const sh = document.createElement('div');
+        sh.className = 'subHead';
+        sh.textContent = `${currentType.toUpperCase()}S · ${n}`;
+        box.append(sh);
+      }
+      const el = makeCell(item);
+      box.append(el);
+      rowIndex.push({
+        el,
+        groupEl: details,
+        item,
+        text: `${item.name} ${group.seriesName} ${item.id}`.toLowerCase(),
+      });
     }
     details.append(box);
-    els.series.append(details);
+    groupEls.set(group.series, { el: details });
+    frag.append(details);
   }
 
-  if (!shown) {
-    const p = document.createElement('p');
-    p.className = 'sub';
-    p.textContent = 'Nothing matches that filter.';
-    els.series.append(p);
-  }
+  els.series.textContent = '';
+  els.series.append(frag);
+}
 
-  function makeRow(item, label, hasLocal, hasDevice) {
-    // Each amiibo opens its detail page; owned/device state travels in the
-    // URL so the page stays stateless.
-    const row = document.createElement('a');
-    const q = new URLSearchParams({ id: item.id });
-    if (hasLocal) q.set('owned', '1');
-    if (hasDevice) q.set('device', '1');
-    const heldVehicles = vehiclesById.get(item.id);
-    if (heldVehicles?.size) {
-      q.set('vehicles', [...heldVehicles.keys()].filter((v) => heldVehicles.get(v).local).join(','));
-    }
-    row.href = `./amiibo.html?${q}`;
-    row.className = `item${hasLocal ? '' : ' missing'}`;
-    row.title = `${item.id}  ${item.typeName}`;
+// One capture-phase image-error delegate for all ~950 imgs.
+els.series.addEventListener('error', (e) => {
+  if (e.target.tagName === 'IMG') e.target.remove();
+}, true);
 
-    const dot = document.createElement('span');
-    dot.className = 'dot';
+function makeCell(item) {
+  const hasLocal = item.hasLocal;
+  const hasDevice = item.hasDevice;
 
-    // Artwork from the local cache (npm run fetch-images). Newer amiibos have
-    // no upstream art yet; the letter placeholder keeps alignment honest.
-    const art = document.createElement('span');
-    art.className = 'art';
-    art.dataset.initial = (label[0] ?? '?').toUpperCase();
+  const row = document.createElement('a');
+  const q = new URLSearchParams({ id: item.id });
+  row.href = `./amiibo.html?${q}`;
+  row.className = `item${hasLocal ? '' : ' missing'}`;
+
+  const art = document.createElement('span');
+  art.className = 'art';
+  art.dataset.initial = (item.name[0] ?? '?').toUpperCase();
+  if (item.special === 'hhd-items') {
+    // our own pixel mark — the fan-made set has no official artwork
+    art.innerHTML = hhdMark(30);
+    art.dataset.initial = '';
+  } else {
     const img = document.createElement('img');
     img.loading = 'lazy';
+    img.decoding = 'async';
     img.alt = '';
     img.src = `${artDir}/${item.id}.png`;
-    img.addEventListener('error', () => img.remove());
     art.append(img);
+  }
 
-    const nm = document.createElement('span');
-    nm.className = 'nm';
-    nm.textContent = label;
+  const tick = document.createElement('span');
+  tick.className = 'selTick';
+  row.append(tick);
 
-    row.append(dot, art, nm);
+  const nmWrap = document.createElement('span');
+  nmWrap.className = 'nmWrap';
+  const nm = document.createElement('span');
+  nm.className = `nm${item.nameSource === 'filename' || item.nameSource === 'inferred' ? ' guessName' : ''}`;
+  nm.textContent = item.name;
+  nmWrap.append(nm);
 
-    if (hasDevice) {
-      const t = document.createElement('span');
-      t.className = 'tag dev';
-      t.textContent = 'device';
-      row.append(t);
-    }
-    if (!item.inDatabase) {
-      const t = document.createElement('span');
-      t.className = 'tag new';
-      t.textContent = 'unlisted';
-      t.title = 'Not in the amiibo database — newer than it, most likely';
-      row.append(t);
-    }
-    // Where the name came from. Anything but the database is a guess and says
-    // so: filenames can have been written by anyone, and the character-head
-    // heuristic misreads the Animal Crossing item cards as Stinky.
-    if (item.nameSource === 'filename' || item.nameSource === 'inferred') {
-      const t = document.createElement('span');
-      t.className = 'tag guess';
-      t.textContent = item.nameSource === 'filename' ? 'from filename' : 'guessed';
-      t.title =
-        item.nameSource === 'filename'
-          ? `Taken from your filenames, not the database — ${item.id}`
-          : `Guessed from the character in the ID, which can be wrong — ${item.id}`;
-      row.append(t);
-    }
-    // Several dumps can share one amiibo ID even without vehicles — the 91
-    // Animal Crossing item cards do. Show the count so the totals add up.
-    // Vehicle rows are one dump each, so it is only useful on a plain row.
-    const held = filesById.get(item.id) ?? 0;
-    if (held > 1 && label === item.name) {
-      const t = document.createElement('span');
-      t.className = 'tag';
-      t.textContent = `×${held} dumps`;
-      row.append(t);
-    }
+  // List view: the filename is the "where is my dump" answer.
+  const files = namesById.get(item.id);
+  if (files?.length) {
+    const f = document.createElement('span');
+    f.className = 'fname';
+    f.textContent = files.length === 1 ? files[0] : `${files.length} files`;
+    nmWrap.append(f);
+  }
 
-    const ty = document.createElement('span');
-    ty.className = 'tag';
-    ty.textContent = item.typeName;
-    row.append(ty);
+  row.append(art, nmWrap);
 
-    if (!hasVehicles(item.id)) return row;
+  if (hasDevice) {
+    const d = document.createElement('span');
+    d.className = 'devIco';
+    d.title = 'On the device';
+    d.innerHTML = ICONS.bluetooth;
+    row.append(d);
+  }
+  if (!item.inDatabase && !item.special) {
+    const t = document.createElement('span');
+    t.className = 'tag new';
+    t.textContent = 'NEW';
+    t.title = 'Not in the database yet';
+    row.append(t);
+  }
+  if (item.special === 'hhd-items') {
+    const have = hhdLocalUids.size;
+    const pill = document.createElement('span');
+    pill.className = `vPill${have ? ' some' : ''}`;
+    pill.innerHTML = `<span class="ico">${ICONS.copy}</span>${have}/${HHD_CARDS.length}`;
+    pill.title = `${have} of ${HHD_CARDS.length} cards — see the detail page`;
+    row.append(pill);
+  }
+  const held = filesById.get(item.id) ?? 0;
+  if (held > 1 && !hasVehicles(item.id) && !item.special) {
+    const t = document.createElement('span');
+    t.className = 'tag';
+    t.textContent = `×${held}`;
+    t.title = `${held} dump files`;
+    row.append(t);
+  }
 
-    // An Air Riders amiibo is a character plus a vehicle, and only the
-    // character is in the amiibo ID. Keep one row per character — that is what
-    // completion is measured against — and show the whole vehicle line-up
-    // beneath it, since every character takes every vehicle.
+  if (hasVehicles(item.id)) {
+    // Just the tally here — the vehicle line-up (with images) lives on the
+    // detail page.
     const owned = vehiclesById.get(item.id) ?? new Map();
     const all = [...new Set([...KNOWN_VEHICLES, ...owned.keys()])].sort();
+    const have = [...owned.values()].filter((w) => w.local).length;
+    const pill = document.createElement('span');
+    pill.className = `vPill${have ? ' some' : ''}`;
+    pill.innerHTML = `<span class="ico">${ICONS.star}</span>${have}/${all.length}`;
+    pill.title = `${have} of ${all.length} vehicles — see the detail page`;
+    row.append(pill);
+  }
 
-    const wrap = document.createElement('div');
-    wrap.className = 'withVehicles';
+  return row;
+}
 
-    const tally = document.createElement('span');
-    tally.className = 'tag';
-    tally.textContent = `${[...owned.values()].filter((w) => w.local).length} / ${all.length} vehicles`;
-    row.append(tally);
-    wrap.append(row);
+// One pill per series: owned/known coloured by completion, a bluetooth glyph
+// when device data exists, ▲n to send, ▼n to download, ✨+n unlisted extras.
+function makeSeriesPill(group) {
+  const known = group.items.filter((i) => i.inDatabase || i.special).length;
+  const owned = group.items.filter((i) => i.hasLocal && (i.inDatabase || i.special)).length;
+  const extra = group.items.filter((i) => !i.inDatabase && !i.special && i.hasLocal).length;
+  const hasDev = deviceIds !== null;
+  const up = hasDev ? group.items.filter((i) => i.hasLocal && i.hasDevice === false).length : 0;
+  const down = hasDev ? group.items.filter((i) => i.hasDevice && !i.hasLocal).length : 0;
+  const complete = known > 0 && owned === known;
+  const synced = hasDev && up === 0 && down === 0;
 
-    const chips = document.createElement('div');
-    chips.className = 'vehicles';
-    for (const vehicle of all) {
-      const where = owned.get(vehicle);
-      const chip = document.createElement('span');
-      chip.className = `chip${where?.local ? ' have' : ''}${where?.device ? ' dev' : ''}`;
-      chip.textContent = vehicle;
-      chip.title = where?.device
-        ? `${vehicle} — held, and on the device`
-        : where?.local
-          ? `${vehicle} — held`
-          : `${vehicle} — not in your dumps`;
-      chips.append(chip);
+  const pill = document.createElement('span');
+  pill.className = `sPill${complete && (!hasDev || synced) ? ' done'
+    : complete ? ' full' : owned > 0 ? ' part' : ''}`;
+  const bits = [];
+  if (complete && (!hasDev || synced)) bits.push(`<span class="ico">${ICONS.check}</span>`);
+  bits.push(`<b>${known ? `${owned}/${known}` : group.ownedLocal}</b>`);
+  if (hasDev) bits.push(`<span class="ico">${ICONS.bluetooth}</span>`);
+  if (up) bits.push(`<span class="delta">▲${up}</span>`);
+  if (down) bits.push(`<span class="delta">▼${down}</span>`);
+  if (extra) bits.push(`<span class="extra"><span class="ico">${ICONS.sparkles}</span>+${extra}</span>`);
+  pill.innerHTML = bits.join('');
+  pill.title = [
+    known ? `${owned} of ${known} owned` : `${group.ownedLocal} owned, none in the database`,
+    hasDev ? (synced ? 'device matches your folder' : null) : 'device not scanned',
+    up ? `${up} only in your folder — send with SELECT` : null,
+    down ? `${down} only on the device — download with SELECT` : null,
+    extra ? `${extra} not in the database` : null,
+  ].filter(Boolean).join(' · ');
+  return pill;
+}
+
+function onGroupToggle(e) {
+  const opened = new Set(prefs.get(prefs.KEYS.openSeries, []));
+  const series = Number(e.target.dataset.series);
+  if (e.target.open) opened.add(series);
+  else opened.delete(series);
+  prefs.set(prefs.KEYS.openSeries, [...opened]);
+}
+
+// ---- filtering (cheap, no rebuild) -----------------------------------------------
+
+function applyFilter() {
+  if (!collection) return;
+  const filter = currentFilter();
+  const q = els.search.value.trim().toLowerCase();
+  els.searchClear.hidden = !q;
+  try { sessionStorage.setItem(Q_KEY, q); } catch {}
+
+  const keep = (item, text) => {
+    if (filter === 'owned' && !item.hasLocal) return false;
+    if (filter === 'missing' && item.hasLocal) return false;
+    if (filter === 'notondevice' && item.hasDevice !== false) return false;
+    if (q && !text.includes(q)) return false;
+    return true;
+  };
+
+  const visibleByGroup = new Map();
+  const order = [];
+  for (const r of rowIndex) {
+    const show = keep(r.item, r.text);
+    r.el.hidden = !show;
+    if (show) {
+      order.push(r.item.id);
+      visibleByGroup.set(r.groupEl, (visibleByGroup.get(r.groupEl) ?? 0) + 1);
     }
-    wrap.append(chips);
-    return wrap;
+  }
+
+  let shown = 0;
+  const filtering = filter !== 'all' || !!q;
+  for (const { el } of groupEls.values()) {
+    const n = visibleByGroup.get(el) ?? 0;
+    el.hidden = n === 0;
+    shown += n;
+    if (filtering && n > 0) el.open = true;
+  }
+
+  // Sub-headers make no sense over a filtered subset.
+  for (const sh of els.series.querySelectorAll('.subHead')) sh.hidden = filtering;
+
+  try { sessionStorage.setItem(ORDER_KEY, JSON.stringify(order)); } catch {}
+
+  els.emptyState.hidden = shown > 0;
+  if (!shown) {
+    els.emptyState.innerHTML = `<div class="empty">${icon('trex')}
+      <div class="eTitle">NO AMIIBO MATCH</div>
+      <button id="clearFilters">CLEAR FILTERS</button></div>`;
+    els.emptyState.querySelector('#clearFilters').addEventListener('click', () => {
+      els.search.value = '';
+      setFilter('all');
+    });
   }
 }
 
-// Compact rows or image-forward cards; a pure CSS switch, remembered.
-function applyView(mode) {
-  els.series.classList.toggle('cards', mode === 'cards');
-  els.viewToggle.textContent = mode === 'cards' ? 'Compact view' : 'Card view';
-  try { localStorage.setItem('collectionView', mode); } catch {}
-}
+const applyFilterDebounced = debounce(applyFilter, 150);
 
-els.viewToggle.addEventListener('click', () => {
-  applyView(els.series.classList.contains('cards') ? 'compact' : 'cards');
-});
-
-try { applyView(localStorage.getItem('collectionView') === 'cards' ? 'cards' : 'compact'); } catch {}
-
-els.forget.addEventListener('click', async () => {
-  try { sessionStorage.removeItem(CACHE_KEY); } catch {}
-  await localfs.forgetDirectory();
-  rootHandle = null;
-  deviceIds = null;
-  localIds = new Set();
-  filesById = new Map();
-  namesById = new Map();
-  vehiclesById = new Map();
-  els.folderName.textContent = '';
-  els.skipped.hidden = true;
-  render();
-  setStatus('Folder forgotten — showing the full amiibo database. Choose a local folder to mark what you own.');
-  refresh();
-});
+// ---- sort / view / search wiring ---------------------------------------------------
 
 els.sortMode.addEventListener('change', () => {
-  try { localStorage.setItem('collectionSort', els.sortMode.value); } catch {}
-  paint();
+  prefs.set(prefs.KEYS.sort, els.sortMode.value);
+  // Re-append existing group nodes in the new order — 31 moves, no rebuilds.
+  for (const group of sortedSeries()) {
+    const g = groupEls.get(group.series);
+    if (g) els.series.append(g.el);
+  }
+  applyFilter();
 });
-try {
-  const saved = localStorage.getItem('collectionSort');
-  if (saved === 'name' || saved === 'release') els.sortMode.value = saved;
-} catch {}
 
-for (const radio of document.querySelectorAll('input[name=filter]')) {
-  radio.addEventListener('change', paint);
+const viewCtl = segCtl(els.segView, {
+  onChange: (mode) => {
+    els.series.classList.toggle('cards', mode === 'cards');
+    prefs.set(prefs.KEYS.view, mode);
+  },
+});
+
+els.search.addEventListener('input', applyFilterDebounced);
+els.search.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { els.search.value = ''; applyFilterDebounced.flush(); }
+});
+els.searchClear.addEventListener('click', () => {
+  els.search.value = '';
+  applyFilterDebounced.flush();
+  els.search.focus();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === '/' && !e.target.closest('input, textarea, select')) {
+    e.preventDefault();
+    els.search.focus();
+  }
+});
+
+
+// ---- everyday sync (panel on the source strip) -----------------------------
+
+const spPbar = progressCtl(els.spPbar);
+let spPlan = null;
+let spState = null;
+let spStop = false;
+
+function refreshSyncButton() {
+  const ready = !!rootHandle && !!transport?.connected && !!deviceIds;
+  els.syncBtn.hidden = !ready;
 }
-els.search.addEventListener('input', paint);
+
+function closeSyncPanel() {
+  els.syncPanel.hidden = true;
+  spPlan = null;
+}
+
+els.spCancel.addEventListener('click', closeSyncPanel);
+els.spStop.addEventListener('click', () => { spStop = true; });
+
+function renderPanelReview(p) {
+  els.syncPanel.hidden = false;
+  els.spReview.hidden = false;
+  els.spRun.hidden = true;
+
+  els.spWarn.textContent = '';
+  for (const text of p.warnings ?? []) {
+    const w = document.createElement('div');
+    w.className = 'warnCard';
+    w.textContent = text;
+    els.spWarn.append(w);
+  }
+  if (p.capacity && !p.capacity.fits) {
+    const w = document.createElement('div');
+    w.className = 'warnCard err';
+    w.textContent = `Won't fit — needs ${fmtBytes(p.capacity.uploadBytes)}. Free space on the device first.`;
+    els.spWarn.append(w);
+  }
+
+  const st = p.stats;
+  const tiles = [
+    p.download.length ? { ico: 'download', n: p.download.length, cap: 'DOWNLOAD', sub: fmtBytes(st.downloadBytes) } : null,
+    p.upload.length ? { ico: 'upload', n: p.upload.length, cap: 'UPLOAD', sub: fmtBytes(st.uploadBytes) } : null,
+    p.conflicts.length ? { ico: 'warning', n: p.conflicts.length, cap: 'CONFLICTS', cls: 'warn' } : null,
+    p.ambiguous.length ? { ico: 'eyeOff', n: p.ambiguous.length, cap: 'UNVERIFIED', cls: 'warn' } : null,
+    { ico: 'clock', n: fmtDuration(st.estimatedSeconds), cap: 'ESTIMATED', cls: 'muted' },
+  ].filter(Boolean);
+
+  els.spCards.innerHTML = hasWork(p)
+    ? tiles.map((t) => `<div class="planCard ${t.cls ?? ''}"><b>${icon(t.ico)}${t.n}</b>` +
+        `<span class="cap">${t.cap}</span>${t.sub ? `<span class="sub">${t.sub}</span>` : ''}</div>`).join('')
+    : `<div class="empty" style="grid-column:1/-1">${icon('checkDouble')}
+       <div class="eTitle">ALREADY IN SYNC</div><p>Both sides match. Nothing to write.</p></div>`;
+
+  if (p.capacity) {
+    const c = p.capacity;
+    els.spCap.hidden = false;
+    const usedPct = Math.round((c.usedSize / c.totalSize) * 100);
+    els.spCap.querySelector('.fill').style.width = `${usedPct}%`;
+    els.spCap.classList.toggle('warn', usedPct > 75 && usedPct <= 90);
+    els.spCap.classList.toggle('err', usedPct > 90 || !c.fits);
+    els.spCapName.textContent = `DEVICE ${p.deviceRoot.slice(0, 2)}`;
+    els.spCapText.textContent = `${fmtBytes(c.usedSize)} / ${fmtBytes(c.totalSize)}` +
+      (c.uploadBytes ? ` · +${fmtBytes(c.uploadBytes)} planned` : '');
+  } else {
+    els.spCap.hidden = true;
+  }
+
+  els.spApply.disabled = !hasWork(p) || (p.capacity && !p.capacity.fits);
+  els.syncPanel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+els.syncBtn.addEventListener('click', async () => {
+  spStop = false;
+  els.syncBtn.disabled = true;
+  try {
+    const res = await scanAndPlan({
+      client, rootHandle, deviceRoot: devRoot, op: 'smart', opts: {},
+      shouldStop: () => spStop,
+      on: { status: (t) => say(t), log: () => {} },
+    });
+    spPlan = res.plan;
+    spState = res.state;
+    say('');
+    renderPanelReview(spPlan);
+  } catch (err) {
+    say(err.stopped ? 'Stopped.' : err.message, err.stopped ? 'warn' : 'err');
+  }
+  els.syncBtn.disabled = false;
+});
+
+async function runPanelApply() {
+  if (!spPlan) return;
+  els.spReview.hidden = true;
+  els.spRun.hidden = false;
+  els.spErrs.hidden = true;
+  let errCount = 0;
+  spStop = false;
+
+  const uploadedIds = new Set(spPlan.upload.map((u) => u.amiiboId).filter(Boolean));
+  const result = await applyThePlan({
+    client, rootHandle, deviceRoot: spPlan.deviceRoot, state: spState, plan: spPlan,
+    shouldStop: () => spStop,
+    on: {
+      op: (label, i, total, t0) => {
+        const rate = (i + 1) / Math.max(1, (Date.now() - t0) / 1000);
+        const left = Math.round((total - i - 1) / Math.max(rate, 0.01));
+        spPbar.set(i + 1, total, label, `${i + 1}/${total} · ${fmtDuration(left)} left`);
+      },
+      bytes: (written, total) => spPbar.setFile(written, total),
+      error: () => {
+        errCount++;
+        els.spErrs.hidden = false;
+        els.spErrs.textContent = `${errCount} ERROR${errCount === 1 ? '' : 'S'}`;
+      },
+    },
+  });
+  spPbar.done();
+
+  const summary = `${result.completed} done${result.failed ? `, ${result.failed} failed` : ''} · ${fmtDuration(result.seconds)}`;
+  if (result.stopped) say(`Stopped — ${summary}.`, 'warn');
+  else if (result.failed > 0) say(`Finished with errors — ${summary}.`, 'err');
+  else {
+    say(`Sync complete — ${summary}.`, 'ok');
+    toast(`Sync complete — ${summary}`, { iconName: 'party' });
+  }
+
+  closeSyncPanel();
+  // Refresh both sides' truth: rescan the folder, merge the uploads into the
+  // device sets (a full device rescan would cost minutes for nothing).
+  for (const id of uploadedIds) deviceIds?.add(id);
+  spPlan = null;
+  if (rootHandle) await scanFolder();
+  else { render(); saveScanCache(); }
+  maybeCelebrateAllSynced();
+}
+
+els.spApply.addEventListener('click', runPanelApply);
+
+// ---- selection mode ---------------------------------------------------------
+
+let selecting = false;
+const selected = new Set();
+
+function setSelecting(on) {
+  selecting = on;
+  selected.clear();
+  els.series.classList.toggle('selecting', on);
+  els.selBar.hidden = !on;
+  els.selectBtn.classList.toggle('primary', on);
+  for (const r of rowIndex) r.el.classList.remove('selected');
+  updateSelBar();
+}
+
+function updateSelBar() {
+  els.selN.textContent = `${selected.size} SELECTED`;
+  const canSend = transport?.connected && deviceIndex &&
+    [...selected].some((id) => localIds.has(id) && !deviceIds?.has(id));
+  const canDown = rootHandle && deviceIndex && transport?.connected &&
+    [...selected].some((id) => deviceIds?.has(id) && !localIds.has(id));
+  els.selSend.disabled = !canSend;
+  els.selDown.disabled = !canDown;
+}
+
+els.selectBtn.addEventListener('click', () => setSelecting(!selecting));
+els.selCancel.addEventListener('click', () => setSelecting(false));
+
+// In selection mode, cells toggle instead of navigating.
+els.series.addEventListener('click', (e) => {
+  if (!selecting) return;
+  const cell = e.target.closest('a.item');
+  if (!cell) return;
+  e.preventDefault();
+  const idx = rowIndex.find((r) => r.el === cell);
+  if (!idx) return;
+  const id = idx.item.id;
+  if (selected.has(id)) { selected.delete(id); cell.classList.remove('selected'); }
+  else { selected.add(id); cell.classList.add('selected'); }
+  updateSelBar();
+});
+
+async function runSelection(direction) {
+  const eligible = [...selected].filter((id) => direction === 'push'
+    ? localIds.has(id) && !deviceIds?.has(id)
+    : deviceIds?.has(id) && !localIds.has(id));
+  if (!eligible.length) return;
+  try {
+    await connect();
+  } catch (err) {
+    say(err.message, 'err');
+    return;
+  }
+  try {
+    const { plan: selPlan, state: selState } = await planSelection({
+      client, rootHandle, deviceRoot: devRoot, direction, ids: eligible,
+      deviceIndex,
+      on: { status: (t) => say(t), log: () => {} },
+    });
+    say('');
+    if (!hasWork(selPlan)) {
+      toast('Nothing to transfer — already on both sides.', { kind: 'warn' });
+      return;
+    }
+    spPlan = selPlan;
+    spState = selState;
+    setSelecting(false);
+    renderPanelReview(selPlan);
+  } catch (err) {
+    say(err.message, 'err');
+  }
+}
+
+els.selSend.addEventListener('click', () => runSelection('push'));
+els.selDown.addEventListener('click', () => runSelection('pull'));
+
+// ---- more menu ----------------------------------------------------------------------
+
+document.addEventListener('click', (e) => {
+  if (els.moreMenu.open && !e.target.closest('#moreMenu')) els.moreMenu.open = false;
+});
 
 els.copyMissing.addEventListener('click', async () => {
-  if (!collection) return;
+  els.moreMenu.open = false;
+  if (!collection || !localIds.size) {
+    toast('Scan a folder first.', { kind: 'warn' });
+    return;
+  }
   const lines = [];
+  let n = 0;
   for (const group of collection.series) {
     const missing = group.items.filter((i) => !i.hasLocal && i.inDatabase);
     if (!missing.length) continue;
+    n += missing.length;
     lines.push(`${group.seriesName} (${missing.length})`);
     for (const m of missing) lines.push(`  ${m.name}  [${m.id}]`);
     lines.push('');
   }
-  const text = lines.join('\n') || 'Nothing missing.';
-  await navigator.clipboard.writeText(text);
-  els.copyMissing.textContent = 'Copied';
-  setTimeout(() => (els.copyMissing.textContent = 'Copy missing list'), 1500);
+  try {
+    await navigator.clipboard.writeText(lines.join('\n') || 'Nothing missing.');
+    toast(`Missing list copied — ${n} amiibo`);
+  } catch {
+    toast("Couldn't copy — clipboard is blocked here.", { kind: 'err' });
+  }
 });
 
-// ---- boot ---------------------------------------------------------------
+els.showReport.addEventListener('click', () => {
+  els.moreMenu.open = false;
+  renderSkipped();
+  els.skipped.hidden = !els.skipped.hidden;
+  if (!els.skipped.hidden) els.skipped.scrollIntoView({ block: 'nearest' });
+});
+
+els.expandAll.addEventListener('click', () => {
+  els.moreMenu.open = false;
+  const opened = [];
+  for (const { el } of groupEls.values()) { el.open = true; opened.push(Number(el.dataset.series)); }
+  prefs.set(prefs.KEYS.openSeries, opened);
+});
+els.collapseAll.addEventListener('click', () => {
+  els.moreMenu.open = false;
+  for (const { el } of groupEls.values()) el.open = false;
+  prefs.set(prefs.KEYS.openSeries, []);
+});
+
+function renderSkipped() {
+  const { ignored, unrecognised } = skippedReport;
+  els.skipped.textContent = '';
+  if (!ignored.length && !unrecognised.length) {
+    const p = document.createElement('p');
+    p.className = 'sub';
+    p.textContent = localIds.size ? 'Every file was recognised.' : 'Nothing scanned yet.';
+    els.skipped.append(p);
+    return;
+  }
+  const block = (title, items, note) => {
+    if (!items.length) return;
+    const d = document.createElement('details');
+    d.open = true;
+    const sm = document.createElement('summary');
+    sm.textContent = `${title} (${items.length})`;
+    d.append(sm);
+    const pre = document.createElement('pre');
+    pre.textContent = (note ? `${note}\n\n` : '') +
+      items.map((i) => `${String(i.size).padStart(8)} B  ${i.relPath}`).join('\n');
+    d.append(pre);
+    els.skipped.append(d);
+  };
+  block('Not recognised as amiibo dumps', unrecognised,
+    `Recognised dump sizes: ${Object.entries(DUMP_SIZES).map(([n, l]) => `${n} (${l})`).join(', ')}.`);
+  block('System files (sync skips these too)', ignored);
+}
+
+// ---- scroll persistence ---------------------------------------------------------------
+
+addEventListener('pagehide', () => {
+  try { sessionStorage.setItem(SCROLL_KEY, String(scrollY)); } catch {}
+});
+
+// ---- boot ------------------------------------------------------------------------------
 
 (async function boot() {
-  // One request decides the tier for the whole page.
+  // render() keeps pageMeta in sync with the visible universe
+  els.searchIco.innerHTML = ICONS.search;
+  els.searchClear.innerHTML = ICONS.close;
+  els.moreIco.innerHTML = ICONS.settings;
+  for (const el of document.querySelectorAll('[data-ico]')) el.innerHTML = ICONS[el.dataset.ico] ?? '';
+
+  // restore prefs
+  const savedSort = prefs.get(prefs.KEYS.sort, 'release');
+  if (['release', 'name', 'completion'].includes(savedSort)) els.sortMode.value = savedSort;
+  const view = prefs.get(prefs.KEYS.view, 'cards');
+  viewCtl.set(view);
+  els.series.classList.toggle('cards', view === 'cards');
+  try { els.search.value = sessionStorage.getItem(Q_KEY) ?? ''; } catch {}
+
+  // one request decides the artwork tier for the whole page
   try {
     const probe = await fetch('./data/images/med/0000000000000002.png', { method: 'HEAD' });
     if (probe.ok) artDir = './data/images/med';
   } catch {}
 
-  // The whole database is bundled, so the collection is useful with no folder
-  // at all — show every amiibo, all marked missing, and let a scan fill in
-  // what is owned. Render this first so the page is never blank.
-  render();
+  renderDeviceChip();
 
   if (!localfs.available()) {
-    setStatus(
-      'Showing the full amiibo database. To mark what you own, use Chrome or ' +
-        'Edge over http://localhost or https — this browser cannot read a local folder.',
-      'warn'
-    );
-    els.pickFolder.disabled = true;
+    render();
+    renderFolderChip();
     return;
   }
-  if (!BleTransport.available) els.connect.disabled = true;
 
   const restored = await localfs.restoreDirectory();
-  if (restored) {
-    rootHandle = restored;
-    els.folderName.textContent = restored.name;
-  }
-  refresh();
+  if (restored) rootHandle = restored;
 
-  if (restoreScanCache()) {
-    render();
-    setStatus(`${localIds.size} amiibos (cached) — press Scan collection to refresh`, 'ok');
+  const hadCache = restoreScanCache();
+  if (!restored && hadCache) {
+    // handle still in IndexedDB but permission lapsed — offer one-tap re-grant
+    try {
+      const cached = JSON.parse(sessionStorage.getItem(CACHE_KEY));
+      lapsedFolderName = cached?.folderName || null;
+    } catch {}
+  }
+
+  render();
+  renderFolderChip();
+  renderDeviceChip();
+
+  if (hadCache) {
+    say(`${localIds.size} owned (cached) — rescan with ${'↻'} on the folder chip.`, 'ok');
+    els.status.hidden = true; // the chips already say it; stay quiet
+    try {
+      const y = Number(sessionStorage.getItem(SCROLL_KEY));
+      if (y > 0) requestAnimationFrame(() => scrollTo(0, y));
+    } catch {}
+    applyFilter();
   } else if (restored) {
-    els.scan.click();
-  } else {
-    setStatus('Showing the full amiibo database — choose a local folder to mark what you own.');
+    await scanFolder();
   }
 })();
 

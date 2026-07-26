@@ -191,6 +191,23 @@ function buildHeadIndex() {
 }
 
 /** Character behind an ID, even when that exact ID is not in the database. */
+// The 91 Animal Crossing: Happy Home Designer item-unlock cards all share one
+// amiibo ID whose head collides with the villager Stinky. A curated outlier.
+export const HHD_HEAD = '026a0001';
+// The ID every card in the fan-made pack actually carries (head + zero tail).
+export const HHD_ID = '026a000100000502';
+export function isHhdItemCards(id) {
+  return id.slice(0, 8) === HHD_HEAD && !AMIIBO_NAMES[id];
+}
+
+// The 7-byte NTAG UID (serial bytes 0-2 and 4-7). The HHD pack's cards all
+// share one fabricated amiibo ID, so the UID is what tells them apart.
+export function parseUid(bytes) {
+  if (!bytes || bytes.length < 8) return null;
+  const b = [bytes[0], bytes[1], bytes[2], bytes[4], bytes[5], bytes[6], bytes[7]];
+  return b.map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+
 export function characterName(id) {
   if (!id || id.length !== 16) return null;
   headIndex ??= buildHeadIndex();
@@ -255,7 +272,7 @@ const MANY_DUMPS = 8;
 export function buildCollection(
   ownedLocal,
   ownedDevice = null,
-  { nameHints = null, dumpCounts = null } = {}
+  { nameHints = null, dumpCounts = null, hideHhd = false } = {}
 ) {
   const localSet = ownedLocal instanceof Map ? new Set(ownedLocal.keys()) : new Set(ownedLocal);
   const deviceSet = ownedDevice
@@ -268,6 +285,9 @@ export function buildCollection(
   const add = (id, name, known) => {
     const d = decodeAmiiboId(id);
     if (!d) return;
+    // Hiding the fan-made set is display-only: the entry (and its counts)
+    // disappear, but sync still treats the files like any others.
+    if (hideHhd && isHhdItemCards(id)) return;
     if (!seriesMap.has(d.series)) {
       seriesMap.set(d.series, { series: d.series, seriesName: d.seriesName, items: [] });
     }
@@ -286,15 +306,20 @@ export function buildCollection(
     // the villager Stinky and are emphatically not Stinky, so past a handful
     // of dumps the filename is the better guess.
     const dumps = dumpCounts?.get(id) ?? 0;
-    const inferred = name || dumps > MANY_DUMPS ? null : characterName(id);
-    const hint = name || inferred ? null : nameHints?.get(id);
-    const source = name ? 'database' : inferred ? 'inferred' : hint ? 'filename' : 'unknown';
+    // The Happy Home Designer item cards are a known outlier, not an unknown:
+    // 91 cards, one shared ID. Give them their curated identity instead of
+    // treating them as "new".
+    const special = !known && isHhdItemCards(id) ? 'hhd-items' : null;
+    const inferred = name || special || dumps > MANY_DUMPS ? null : characterName(id);
+    const hint = name || special || inferred ? null : nameHints?.get(id);
+    const source = name ? 'database' : special ? 'curated' : inferred ? 'inferred' : hint ? 'filename' : 'unknown';
     seriesMap.get(d.series).items.push({
       id,
-      name: name ?? inferred ?? hint ?? `Unknown (${id})`,
+      name: special ? 'Happy Home Designer cards' : name ?? inferred ?? hint ?? `Unknown (${id})`,
       nameSource: source,
+      special,
       inDatabase: known,
-      typeName: d.typeName,
+      typeName: special ? 'Card' : d.typeName,
       hasLocal: localSet.has(id),
       hasDevice: deviceSet ? deviceSet.has(id) : null,
     });
@@ -304,6 +329,10 @@ export function buildCollection(
   // Anything owned but absent from the table — typically newer releases.
   for (const id of localSet) if (!AMIIBO_NAMES[id]) add(id, null, false);
   if (deviceSet) for (const id of deviceSet) if (!AMIIBO_NAMES[id] && !localSet.has(id)) add(id, null, false);
+  // The curated HHD card set is part of the known universe even before any
+  // card is owned — it lists (and counts) like a database entry.
+  const hasHhd = [...localSet].some(isHhdItemCards) || (deviceSet && [...deviceSet].some(isHhdItemCards));
+  if (!hasHhd && !hideHhd) add(HHD_ID, null, false);
 
   const series = [...seriesMap.values()].sort((a, b) => a.series - b.series);
   for (const s of series) {
@@ -317,14 +346,17 @@ export function buildCollection(
   return {
     series,
     stats: {
-      knownTotal: Object.keys(AMIIBO_NAMES).length,
+      // database entries plus the curated HHD set — everything with a name
+      knownTotal: all.filter((i) => i.inDatabase || i.special).length,
       listed: all.length,
       ownedLocal: all.filter((i) => i.hasLocal).length,
-      // Owned *and* in the database, so it reads sensibly against knownTotal.
-      ownedKnown: all.filter((i) => i.hasLocal && i.inDatabase).length,
+      // Owned *and* recognised (database or curated), so it reads sensibly
+      // against knownTotal.
+      ownedKnown: all.filter((i) => i.hasLocal && (i.inDatabase || i.special)).length,
       ownedDevice: deviceSet ? all.filter((i) => i.hasDevice).length : null,
-      missingLocal: all.filter((i) => !i.hasLocal && i.inDatabase).length,
-      notInDatabase: all.filter((i) => !i.inDatabase).length,
+      missingLocal: all.filter((i) => !i.hasLocal && (i.inDatabase || i.special)).length,
+      // curated outliers (the HHD card set) are recognised, not "not in db"
+      notInDatabase: all.filter((i) => !i.inDatabase && !i.special).length,
     },
   };
 }

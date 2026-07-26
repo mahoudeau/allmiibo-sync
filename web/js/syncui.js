@@ -1,30 +1,46 @@
-// Sync page: scan both sides, show a plan, then apply it on confirmation.
-// Nothing is written until the plan has been reviewed and "Apply" is pressed.
+// Advanced sync page: a thin controller over the shared engine in
+// syncflow.js. Every operation and option lives here; the everyday sync is a
+// panel on the Collection page.
 
 import { BleTransport } from './ble.js';
 import { AllmiiboClient } from './protocol.js';
-import { planSync, planDump, planReplace, planIdentitySync, flattenPlan, compareByContent } from './planner.js';
-import { walkDevice, verifyDeviceHashes, hashDeviceIndex, applyPlan, ambiguousPaths } from './sync.js';
+import { compareByContent } from './planner.js';
+import { walkDevice, hashDeviceIndex } from './sync.js';
 import * as localfs from './localfs.js';
+import * as prefs from './prefs.js';
+import { OPS, hasWork, scanAndPlan, applyThePlan } from './syncflow.js';
+import { pickDeviceFolder } from './devicepicker.js';
+import { toast, statusCtl, progressCtl, busy, idle, fmtBytes, fmtDuration } from './ui.js';
+import { icon, ICONS } from './icons.js';
+import { confirmDialog } from './dialog.js';
+
+prefs.migrate();
 
 const els = {};
 for (const id of [
-  'connect', 'disconnect', 'pickFolder', 'scan', 'apply', 'audit', 'stop',
-  'deviceRoot', 'allowDelete', 'verify', 'includeDeviceFiles', 'force',
-  'wrapDelete', 'wrapVerify', 'wrapDeviceFiles', 'wrapForce',
-  'status', 'folderName', 'planBox', 'log', 'progress', 'saveLog', 'copyLog',
+  'unsupported', 'step1', 'step2', 'step3', 'folderChip', 'deviceChip',
+  'ops', 'scan', 'stop', 'review', 'warnBox', 'planCards',
+  'capBar', 'capName', 'capText', 'drawers', 'rawPlanDrawer', 'planBox',
+  'apply', 'back2', 'runPanel', 'runTitle', 'pbar', 'runErrs', 'stopRun',
+  'errDrawer', 'errN', 'errList', 'status', 'logDrawer', 'log', 'saveLog', 'copyLog',
 ]) els[id] = document.getElementById(id);
+
+const status = statusCtl(els.status);
+const pbar = progressCtl(els.pbar);
 
 let transport = null;
 let client = null;
 let rootHandle = null;
+let lapsedFolderName = null;
+let deviceName = null;
 let plan = null;
 let state = null;
 let stopRequested = false;
-let lastRun = null; // full record of the most recent scan and apply
+let lastRun = null;
 let firmwareVersion = null;
 
 const started = Date.now();
+const deviceRoot = () => prefs.get(prefs.KEYS.deviceRoot, 'E:/amiibo');
 
 function log(level, ...parts) {
   const line = document.createElement('div');
@@ -35,359 +51,422 @@ function log(level, ...parts) {
   els.log.scrollTop = els.log.scrollHeight;
 }
 
-function setStatus(text, kind = '') {
-  els.status.textContent = text;
-  els.status.className = `status ${kind}`;
+function say(text, kind = '') {
+  els.status.hidden = !text;
+  if (text) status.set(text, kind);
 }
 
-function refreshButtons() {
-  const connected = !!transport?.connected;
-  els.connect.disabled = connected;
-  els.disconnect.disabled = !connected;
-  els.scan.disabled = !(connected && rootHandle);
-  els.audit.disabled = !(connected && rootHandle);
-  els.apply.disabled = !(plan && hasWork(plan));
+// ---- operations UI ------------------------------------------------------------
+
+function allOpts() { return prefs.get(prefs.KEYS.syncOpts, {}); }
+function optsFor(op) { return allOpts()[op] ?? {}; }
+function setOpt(op, key, value) {
+  const all = allOpts();
+  all[op] = { ...(all[op] ?? {}), [key]: value };
+  prefs.set(prefs.KEYS.syncOpts, all);
 }
 
 function currentOp() {
-  return document.querySelector('input[name=op]:checked').value;
+  return document.querySelector('input[name=op]:checked')?.value ?? 'dump';
 }
 
-// Only show the options that mean something for the chosen operation.
-function refreshOptions() {
-  const op = currentOp();
-  els.wrapDelete.style.display = op === 'smart' ? '' : 'none';
-  els.wrapVerify.style.display = op === 'smart' || op === 'replace' ? '' : 'none';
-  els.wrapDeviceFiles.style.display = op === 'dump' ? '' : 'none';
-  els.wrapForce.style.display = op === 'dump' ? '' : 'none';
-  // "Replace" always deletes; that is what makes it a replacement.
-  if (op === 'replace') els.allowDelete.checked = true;
+function renderOps() {
+  const saved = prefs.get(prefs.KEYS.syncOp, 'dump');
+  const active = OPS.some((o) => o.value === saved) ? saved : 'dump';
+  els.ops.innerHTML = OPS.map((o) => {
+    const opts = optsFor(o.value);
+    return `<label class="op${o.advanced ? ' advanced-only' : ''}">
+      <input type="radio" name="op" value="${o.value}" ${o.value === active ? 'checked' : ''}>
+      <span class="oIco">${icon(o.ico)}</span>
+      <span class="opName${o.danger ? ' danger' : ''}">${o.name}</span>
+      <span class="opDesc">${o.desc}</span>
+      <span class="opOpts">${o.opts.map((opt) =>
+        `<label><input type="checkbox" data-opt="${opt.key}" ${opts[opt.key] ? 'checked' : ''}> ${opt.label}</label>`
+      ).join('')}</span>
+    </label>`;
+  }).join('');
+
+  for (const radio of els.ops.querySelectorAll('input[name=op]')) {
+    radio.addEventListener('change', () => {
+      prefs.set(prefs.KEYS.syncOp, radio.value);
+      resetPlan();
+      refresh();
+    });
+  }
+  for (const box of els.ops.querySelectorAll('input[data-opt]')) {
+    box.addEventListener('change', () => {
+      const op = box.closest('.op').querySelector('input[name=op]').value;
+      setOpt(op, box.dataset.opt, box.checked);
+      resetPlan();
+    });
+  }
 }
 
-for (const radio of document.querySelectorAll('input[name=op]')) {
-  radio.addEventListener('change', () => {
-    plan = null;
-    els.planBox.textContent = '';
-    refreshOptions();
-    refreshButtons();
-  });
+// If advanced mode turns off while an advanced op is selected, fall back to a
+// visible one rather than leaving an invisible radio in charge.
+new MutationObserver(() => {
+  const op = OPS.find((o) => o.value === currentOp());
+  const advancedOn = document.documentElement.dataset.mode === 'advanced';
+  if (op?.advanced && !advancedOn) {
+    prefs.set(prefs.KEYS.syncOp, 'dump');
+    renderOps();
+    resetPlan();
+    refresh();
+  }
+}).observe(document.documentElement, { attributes: true, attributeFilter: ['data-mode'] });
+
+// ---- gating --------------------------------------------------------------------
+
+function refresh() {
+  const ready = !!rootHandle && !!transport?.connected;
+  els.step2.classList.toggle('locked', !ready);
+  els.scan.disabled = !ready;
 }
 
-function hasWork(p) {
-  return flattenPlan(p).length > 0;
+function resetPlan() {
+  plan = null;
+  els.step3.hidden = true;
+  els.review.hidden = false;
+  els.runPanel.hidden = true;
 }
 
-function fmtDuration(seconds) {
-  if (seconds < 90) return `${seconds}s`;
-  return `${Math.round(seconds / 60)} min`;
+// ---- source chips -----------------------------------------------------------------
+
+function chipButton(html, onClick) {
+  const b = document.createElement('button');
+  b.className = 'srcChip';
+  b.innerHTML = html;
+  if (onClick) b.addEventListener('click', onClick);
+  return b;
 }
 
-// ---- connection ---------------------------------------------------------
+function renderFolderChip() {
+  const c = els.folderChip;
+  c.textContent = '';
+  if (rootHandle) {
+    const span = document.createElement('span');
+    span.className = 'srcChip';
+    span.innerHTML = `${icon('folder')}<span>${rootHandle.name}</span>` +
+      `<button data-act="swap" title="Choose another folder">${icon('sync')}</button>`;
+    span.querySelector('[data-act="swap"]').addEventListener('click', pickFolder);
+    c.append(span);
+  } else if (lapsedFolderName) {
+    const b = chipButton(`${icon('folder')}<span>${lapsedFolderName}</span><span class="sub">tap to reconnect</span>`, reconnectFolder);
+    b.classList.add('warnState');
+    c.append(b);
+  } else {
+    const b = chipButton(`${icon('folder')}<span>CHOOSE FOLDER</span>`, pickFolder);
+    b.classList.add('primary');
+    c.append(b);
+  }
+}
 
-els.connect.addEventListener('click', async () => {
+function renderDeviceChip() {
+  const c = els.deviceChip;
+  c.textContent = '';
+  if (transport?.connected) {
+    const span = document.createElement('span');
+    span.className = 'srcChip';
+    span.innerHTML = `${icon('bluetooth')}<span>${deviceName}</span>` +
+      `<span class="sub">${deviceRoot()}</span>` +
+      `<button data-act="dir" title="Choose device folder">${icon('folder')}</button>` +
+      `<button data-act="dc" title="Disconnect">${icon('close')}</button>`;
+    span.querySelector('[data-act="dir"]').addEventListener('click', async () => {
+      const picked = await pickDeviceFolder({
+        client, startPath: deviceRoot(),
+        hint: 'The device folder to sync with — usually E:/amiibo.',
+      });
+      if (picked) {
+        prefs.set(prefs.KEYS.deviceRoot, picked);
+        renderDeviceChip();
+        resetPlan();
+      }
+    });
+    span.querySelector('[data-act="dc"]').addEventListener('click', () => transport?.disconnect());
+    c.append(span);
+  } else {
+    c.append(chipButton(`${icon('bluetooth')}<span>CONNECT DEVICE</span>`, connectDevice));
+  }
+}
+
+async function pickFolder() {
   try {
-    setStatus('Requesting device…');
+    rootHandle = await localfs.pickDirectory();
+    lapsedFolderName = null;
+    log('ok', `local folder: ${rootHandle.name}`);
+    resetPlan();
+  } catch (err) {
+    if (err.name === 'AbortError') say('No folder chosen yet.');
+    else say(err.message, 'err');
+  }
+  renderFolderChip();
+  refresh();
+}
+
+async function reconnectFolder() {
+  const restored = await localfs.restoreDirectory({ prompt: true });
+  if (restored) {
+    rootHandle = restored;
+    lapsedFolderName = null;
+  } else {
+    say('Permission declined — choose the folder again.', 'warn');
+    lapsedFolderName = null;
+  }
+  renderFolderChip();
+  refresh();
+}
+
+async function connectDevice() {
+  try {
+    say('Choose your device in the Bluetooth popup…');
     transport = new BleTransport();
     client = new AllmiiboClient(transport, { log });
     transport.addEventListener('disconnected', () => {
-      setStatus('Disconnected', 'warn');
+      say('Device disconnected — reconnect to continue.', 'warn');
       log('warn', 'device disconnected');
-      refreshButtons();
+      renderDeviceChip();
+      refresh();
     });
-    const name = await transport.connect();
+    deviceName = await transport.connect();
     const v = await client.getVersion();
     firmwareVersion = v.version;
-    log('ok', `connected to "${name}" (firmware ${v.version})`);
-    setStatus(`Connected: ${name} — firmware ${v.version}`, 'ok');
+    log('ok', `connected to "${deviceName}" (firmware ${v.version})`);
+    say('');
   } catch (err) {
-    setStatus(err.message, 'err');
-    log('err', err.message);
+    if (err.name === 'NotFoundError') say('No device selected.');
+    else say(err.message, 'err');
   }
-  refreshButtons();
-});
+  renderDeviceChip();
+  refresh();
+}
 
-els.disconnect.addEventListener('click', () => transport?.disconnect());
-
-// ---- local folder -------------------------------------------------------
-
-els.pickFolder.addEventListener('click', async () => {
-  try {
-    rootHandle = await localfs.pickDirectory();
-    els.folderName.textContent = rootHandle.name;
-    log('ok', `local folder: ${rootHandle.name}`);
-  } catch (err) {
-    if (err.name !== 'AbortError') log('err', err.message);
-  }
-  refreshButtons();
-});
-
-// ---- scan and plan ------------------------------------------------------
+// ---- scan & plan ---------------------------------------------------------------------
 
 els.scan.addEventListener('click', async () => {
-  els.scan.disabled = true;
-  els.stop.disabled = false;
+  const op = currentOp();
+  if (op === 'check') return runAudit();
+
+  busy(els.scan, 'SCANNING');
+  els.stop.hidden = false;
   stopRequested = false;
-  plan = null;
-  els.planBox.textContent = '';
+  resetPlan();
 
   try {
-    const deviceRoot = els.deviceRoot.value.trim() || 'E:/amiibo';
-    const op = currentOp();
-
-    setStatus('Reading local folder…');
-    state = await localfs.loadState(rootHandle);
-    const local = await localfs.walkLocal(rootHandle, {
-      onProgress: (n) => { if (n % 100 === 0) setStatus(`Reading local folder… ${n} files`); },
-    });
-    log('ok', `local: ${count(local)} files, ${countDirs(local)} folders`);
-
-    // Capacity comes from the drive list, so the plan can tell whether the
-    // uploads fit alongside what is already there.
-    const drives = await client.getDriveList();
-    const drive = drives.drives.find((d) => `${d.label}:/` === (deviceRoot.match(/^[IE]:\//)?.[0] ?? 'E:/'))
-      ?? drives.drives[0] ?? null;
-    if (drive) {
-      log('info', `drive ${drive.label}:/ — ${drive.usedSize} of ${drive.totalSize} bytes used`);
-    }
-
-    setStatus('Reading device…');
-    let device = await walkDevice(client, deviceRoot, {
-      onProgress: (n) => { if (n % 50 === 0) setStatus(`Reading device… ${n} files`); },
-    });
-    log('ok', `device: ${count(device)} files, ${countDirs(device)} folders under ${deviceRoot}`);
-
-    plan = buildPlan({ op, local, device, state, deviceRoot, drive });
-
-    // Identity sync compares amiibo IDs, which are inside the files, so the
-    // device side has to be read in full first.
-    if (op === 'identity') {
-      const toRead = [...device.values()].filter((e) => !e.isDir).length;
-      log('info', `identifying ${toRead} device files — about ${fmtDuration(Math.round(toRead * 0.22))}`);
-      const t0 = Date.now();
-      const identified = await hashDeviceIndex(client, deviceRoot, device, {
-        shouldStop: () => stopRequested,
-        onProgress: (done, n) => {
-          els.progress.value = (done / n) * 100;
-          if (done % 10 === 0 || done === n) {
-            const rate = done / Math.max(1, (Date.now() - t0) / 1000);
-            setStatus(`Identifying ${done}/${n} — about ${fmtDuration(Math.round((n - done) / Math.max(rate, 0.01)))} left`);
-          }
-        },
-      });
-      els.progress.value = 0;
-      device = identified;
-      plan = buildPlan({ op, local, device, state, deviceRoot, drive });
-    }
-
-    // Same-size files with no sync record cannot be compared without reading
-    // the device copy. Only do that when asked — it costs ~0.2 s each.
-    if (plan.ambiguous.length > 0 && els.verify.checked) {
-      const paths = ambiguousPaths(plan);
-      log('info', `verifying ${paths.length} files by reading them back…`);
-      const hashes = await verifyDeviceHashes(client, deviceRoot, paths, {
-        onProgress: (done, total) => setStatus(`Verifying ${done}/${total}…`),
-      });
-      for (const [p, h] of hashes) {
-        const existing = device.get(p);
-        if (existing) device.set(p, { ...existing, hash: h });
-      }
-      plan = buildPlan({ op, local, device, state, deviceRoot, drive });
-    }
-
-    lastRun = {
-      generatedAt: new Date().toISOString(),
-      operation: op,
-      deviceRoot,
-      firmware: firmwareVersion,
-      drive,
-      localFiles: count(local),
-      localFolders: countDirs(local),
-      deviceFiles: count(device),
-      deviceFolders: countDirs(device),
-      plan: {
-        stats: plan.stats,
-        capacity: plan.capacity ?? null,
-        deleteFirst: !!plan.deleteFirst,
-        warnings: plan.warnings ?? [],
-        blocked: plan.blocked,
-        conflicts: plan.conflicts,
-        ambiguous: plan.ambiguous,
-        renamedLocally: plan.renamedLocally ?? [],
+    const res = await scanAndPlan({
+      client, rootHandle, deviceRoot: deviceRoot(), op, opts: optsFor(op),
+      firmwareVersion,
+      shouldStop: () => stopRequested,
+      on: {
+        status: (t) => say(t),
+        progress: (done, total, label, detail) => pbar.set(done, total, label, detail),
+        log,
       },
-      apply: null,
-    };
+    });
+    pbar.done();
+    plan = res.plan;
+    state = res.state;
+    lastRun = res.lastRun;
     els.saveLog.disabled = false;
-
-    renderPlan(plan);
-    setStatus(hasWork(plan) ? 'Plan ready — review, then Apply' : 'Nothing to do', hasWork(plan) ? '' : 'ok');
+    renderReview(plan, op);
+    say('');
   } catch (err) {
-    setStatus(`Scan failed: ${err.message}`, 'err');
-    log('err', err.message);
+    pbar.hide();
+    say(err.stopped ? 'Scan stopped.' : `Scan failed: ${err.message}`, err.stopped ? 'warn' : 'err');
+    if (!err.stopped) log('err', err.message);
   }
-  els.stop.disabled = true;
-  refreshButtons();
+  els.stop.hidden = true;
+  idle(els.scan);
+  refresh();
 });
 
-function buildPlan({ op, local, device, state, deviceRoot, drive }) {
-  switch (op) {
-    case 'dump':
-      return planDump({
-        device,
-        local,
-        state,
-        deviceRoot,
-        options: {
-          includeDeviceFiles: els.includeDeviceFiles.checked,
-          force: els.force.checked,
-        },
-      });
-    case 'replace':
-      // A replacement clears the root and writes everything back. Skipping
-      // files believed correct would make this a mirror, and that belief
-      // cannot be checked without reading the device.
-      return planReplace({ local, device, deviceRoot, options: { drive } });
-    case 'smart':
-      return planSync({
-        local, device, state, deviceRoot,
-        options: { mode: 'two-way', delete: els.allowDelete.checked, drive },
-      });
-    case 'identity':
-      return planIdentitySync({ local, device, deviceRoot, options: { direction: 'both' } });
-    default:
-      throw new Error(`unknown operation: ${op}`);
+// ---- review rendering -------------------------------------------------------------------
+
+const SECTIONS = [
+  { key: 'download', label: 'DOWNLOAD', ico: 'download', fmt: (d) => [d.relPath, fmtBytes(d.size)] },
+  { key: 'upload', label: 'UPLOAD', ico: 'upload', fmt: (u) => [u.relPath, fmtBytes(u.size)] },
+  { key: 'moveDevice', label: 'RENAME ON DEVICE', ico: 'move', fmt: (m) => [`${m.from} → ${m.to}`, ''] },
+  { key: 'mkdirDevice', label: 'NEW DEVICE FOLDERS', ico: 'folderPlus', fmt: (m) => [m.relPath, ''] },
+  { key: 'mkdirLocal', label: 'NEW LOCAL FOLDERS', ico: 'folderPlus', fmt: (m) => [m.relPath, ''] },
+  { key: 'deleteDevice', label: 'DELETE ON DEVICE', ico: 'trash', tone: 'err', fmt: (d) => [d.relPath, ''] },
+  { key: 'deleteLocal', label: 'DELETE LOCALLY', ico: 'trash', tone: 'err', fmt: (d) => [d.relPath, ''] },
+  { key: 'rmdirDevice', label: 'REMOVE DEVICE FOLDERS', ico: 'trash', tone: 'err', fmt: (d) => [d.relPath, ''] },
+  { key: 'wouldDelete', label: 'KEPT — DELETIONS ARE OFF', ico: 'eye', fmt: (d) => [d.relPath, d.side] },
+  { key: 'conflicts', label: 'CONFLICT — LEFT ALONE', ico: 'warning', tone: 'warn', fmt: (c) => [c.relPath, ''] },
+  { key: 'blocked', label: 'BLOCKED — WON\u2019T FIT', ico: 'cancel', tone: 'err', fmt: (b) => [b.relPath, ''] },
+  { key: 'ambiguous', label: 'SKIPPED — UNVERIFIED', ico: 'eyeOff', tone: 'warn', fmt: (a) => [a.relPath, ''] },
+  { key: 'renamedLocally', label: 'RENAMED FOR YOUR DISK', ico: 'move', fmt: (r) => [`${r.from} → ${r.to}`, ''] },
+];
+
+function renderReview(p, op) {
+  els.step3.hidden = false;
+  els.review.hidden = false;
+  els.runPanel.hidden = true;
+
+  els.warnBox.textContent = '';
+  if (op === 'replace') {
+    const w = document.createElement('div');
+    w.className = 'warnCard err';
+    w.textContent = `Replace wipes everything under ${p.deviceRoot} first — ${p.deleteDevice.length + p.rmdirDevice.length} deletions, then ${p.upload.length} uploads.`;
+    els.warnBox.append(w);
   }
-}
+  for (const text of p.warnings ?? []) {
+    const w = document.createElement('div');
+    w.className = 'warnCard';
+    w.textContent = text;
+    els.warnBox.append(w);
+  }
+  if (p.capacity && !p.capacity.fits) {
+    const w = document.createElement('div');
+    w.className = 'warnCard err';
+    w.textContent = `Won't fit — needs ${fmtBytes(p.capacity.uploadBytes)}, only ${fmtBytes(p.capacity.freeAfterDeletes ?? p.capacity.freeNow)} possible. Free space on the device first.`;
+    els.warnBox.append(w);
+  }
 
-function count(index) {
-  let n = 0;
-  for (const e of index.values()) if (!e.isDir) n++;
-  return n;
-}
-function countDirs(index) {
-  let n = 0;
-  for (const e of index.values()) if (e.isDir) n++;
-  return n;
-}
+  const s = p.stats;
+  const dl = p.download.length, ul = p.upload.length;
+  const del = p.deleteDevice.length + p.deleteLocal.length + p.rmdirDevice.length;
+  const tiles = [
+    dl ? { ico: 'download', n: dl, cap: 'DOWNLOAD', sub: fmtBytes(s.downloadBytes) } : null,
+    ul ? { ico: 'upload', n: ul, cap: 'UPLOAD', sub: fmtBytes(s.uploadBytes) } : null,
+    p.moveDevice.length ? { ico: 'move', n: p.moveDevice.length, cap: 'RENAME', cls: 'muted' } : null,
+    del ? { ico: 'trash', n: del, cap: 'DELETE', cls: 'err' } : null,
+    p.conflicts.length ? { ico: 'warning', n: p.conflicts.length, cap: 'CONFLICTS', cls: 'warn' } : null,
+    p.blocked.length ? { ico: 'cancel', n: p.blocked.length, cap: 'BLOCKED', cls: 'err' } : null,
+    p.ambiguous.length ? { ico: 'eyeOff', n: p.ambiguous.length, cap: 'UNVERIFIED', cls: 'warn' } : null,
+    { ico: 'clock', n: fmtDuration(s.estimatedSeconds), cap: 'ESTIMATED', cls: 'muted' },
+    s.unchanged ? { ico: 'checkDouble', n: s.unchanged, cap: 'UNCHANGED', cls: 'muted' } : null,
+  ].filter(Boolean);
 
-function renderPlan(p) {
-  const lines = [];
-  const section = (title, items, fmt) => {
-    if (!items.length) return;
-    lines.push(`${title} (${items.length})`);
-    for (const item of items.slice(0, 200)) lines.push(`   ${fmt(item)}`);
-    if (items.length > 200) lines.push(`   … and ${items.length - 200} more`);
-    lines.push('');
-  };
+  els.planCards.innerHTML = hasWork(p)
+    ? tiles.map((t) => `<div class="planCard ${t.cls ?? ''}"><b>${icon(t.ico)}${t.n}</b>` +
+        `<span class="cap">${t.cap}</span>${t.sub ? `<span class="sub">${t.sub}</span>` : ''}</div>`).join('')
+    : `<div class="empty" style="grid-column:1/-1">${icon('checkDouble')}
+       <div class="eTitle">ALREADY IN SYNC</div><p>Both sides match. Nothing to write.</p></div>`;
 
-  const opLabel = {
-    dump: 'Download everything (device → local)',
-    replace: 'Replace device with local',
-    smart: 'Smart sync',
-    identity: 'Sync by amiibo',
-  }[currentOp()] ?? p.mode;
-  lines.push(`${opLabel}   device root: ${p.deviceRoot}`);
   if (p.capacity) {
     const c = p.capacity;
-    lines.push(
-      `device: ${c.usedSize} of ${c.totalSize} bytes used, ${c.freeNow} free` +
-        (c.freeingBytes ? ` (+${c.freeingBytes} reclaimed by deletions)` : '') +
-        (c.uploadBytes ? ` · uploading ${c.uploadBytes}` : '')
-    );
-    if (p.deleteFirst) lines.push('order: DELETE FIRST, then upload — the uploads do not fit otherwise');
+    els.capBar.hidden = false;
+    const usedPct = Math.round((c.usedSize / c.totalSize) * 100);
+    els.capBar.querySelector('.fill').style.width = `${usedPct}%`;
+    els.capBar.classList.toggle('warn', usedPct > 75 && usedPct <= 90);
+    els.capBar.classList.toggle('err', usedPct > 90 || !c.fits);
+    els.capBar.classList.toggle('overflow', !c.fits);
+    els.capName.textContent = `DEVICE ${p.deviceRoot.slice(0, 2)}`;
+    els.capText.textContent =
+      `${fmtBytes(c.usedSize)} / ${fmtBytes(c.totalSize)}` +
+      (c.uploadBytes ? ` · +${fmtBytes(c.uploadBytes)} planned` : '') +
+      (c.freeingBytes ? ` · −${fmtBytes(c.freeingBytes)} freed` : '');
+  } else {
+    els.capBar.hidden = true;
   }
-  lines.push(`estimated time: ${fmtDuration(p.stats.estimatedSeconds)} at the measured ~2 KB/s`);
-  lines.push('');
 
-  for (const w of p.warnings) {
-    lines.push(`WARNING  ${w}`);
-    lines.push('');
+  els.drawers.textContent = '';
+  for (const sec of SECTIONS) {
+    const items = p[sec.key] ?? [];
+    if (!items.length) continue;
+    const d = document.createElement('details');
+    d.className = 'drawer';
+    if (sec.tone === 'err' && sec.key.startsWith('delete')) d.open = true;
+    d.innerHTML = `<summary><span class="chev">${ICONS.chevronRight}</span>` +
+      `<span style="${sec.tone ? `color:var(--${sec.tone})` : ''}">${icon(sec.ico)}</span>` +
+      `${sec.label}<span class="n">${items.length}</span></summary><div class="body"></div>`;
+    const fill = () => {
+      const body = d.querySelector('.body');
+      if (body.childElementCount) return;
+      const ul = document.createElement('ul');
+      ul.className = 'fileList';
+      for (const item of items.slice(0, 200)) {
+        const [path, sz] = sec.fmt(item);
+        const li = document.createElement('li');
+        li.innerHTML = `<span class="p"></span><span class="sz"></span>`;
+        li.querySelector('.p').textContent = path;
+        li.querySelector('.sz').textContent = sz;
+        ul.append(li);
+      }
+      if (items.length > 200) {
+        const li = document.createElement('li');
+        li.textContent = `… and ${items.length - 200} more — full list in the run log`;
+        ul.append(li);
+      }
+      body.append(ul);
+    };
+    d.addEventListener('toggle', () => { if (d.open) fill(); });
+    if (d.open) fill();
+    els.drawers.append(d);
   }
 
-  section('CREATE FOLDER on device', p.mkdirDevice, (m) => m.relPath);
-  section('CREATE FOLDER locally', p.mkdirLocal, (m) => m.relPath);
-  section('MOVE on device (rename, no re-upload)', p.moveDevice, (m) => `${m.from}  →  ${m.to}`);
-  section('UPLOAD to device', p.upload, (u) => `${u.relPath}  (${u.size} B)`);
-  section('DOWNLOAD to local', p.download, (d) =>
-    d.localPath && d.localPath !== d.relPath
-      ? `${d.relPath}  (${d.size} B)  ->  saved as ${d.localPath}`
-      : `${d.relPath}  (${d.size} B)`
-  );
-  section(
-    'RENAMED locally — the device allows names your filesystem does not',
-    p.renamedLocally ?? [],
-    (r) => `${r.from}  ->  ${r.to}`
-  );
-  section('DELETE on device', p.deleteDevice, (d) => d.relPath);
-  section('DELETE locally', p.deleteLocal, (d) => d.relPath);
-  section('REMOVE FOLDER on device', p.rmdirDevice, (d) => d.relPath);
-  section(
-    `NOT DELETED — enable "Propagate deletions" to remove these`,
-    p.wouldDelete,
-    (d) => `${d.relPath}  (on ${d.side})`
-  );
-  section('CONFLICT — nothing will be changed', p.conflicts, (c) => `${c.relPath}  — ${c.reason}`);
-  section('BLOCKED — will not fit on the device', p.blocked, (b) => `${b.relPath}  — ${b.reason}`);
-  section('SKIPPED — cannot tell without verifying', p.ambiguous, (a) => `${a.relPath}  — ${a.reason}`);
+  els.rawPlanDrawer.hidden = false;
+  els.planBox.textContent = JSON.stringify({
+    stats: s, capacity: p.capacity ?? null, deleteFirst: !!p.deleteFirst, warnings: p.warnings,
+  }, null, 2);
 
-  lines.push(`unchanged: ${p.stats.unchanged}`);
-  if (!hasWork(p)) lines.push('\nNothing to do.');
-
-  els.planBox.textContent = lines.join('\n');
+  els.apply.disabled = !hasWork(p) || (p.capacity && !p.capacity.fits);
+  els.apply.classList.toggle('danger', del > 0);
+  els.step3.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
-// ---- apply --------------------------------------------------------------
+els.back2.addEventListener('click', () => { resetPlan(); });
+
+// ---- apply --------------------------------------------------------------------------------
 
 els.apply.addEventListener('click', async () => {
   if (!plan) return;
+  const op = currentOp();
 
-  const destructive = plan.deleteDevice.length + plan.deleteLocal.length + plan.rmdirDevice.length;
-  if (destructive > 0) {
-    const detail = [
-      `${plan.deleteDevice.length} file(s) deleted on the device`,
-      `${plan.deleteLocal.length} file(s) deleted locally`,
-      `${plan.rmdirDevice.length} folder(s) removed on the device`,
-    ].join('\n');
-    const heading =
-      currentOp() === 'replace'
-        ? 'Replace the device with your local folder.\n\nThis permanently deletes:'
-        : 'This will permanently delete:';
-    if (!confirm(`${heading}\n\n${detail}\n\nThis cannot be undone. Continue?`)) {
-      log('warn', 'apply cancelled');
-      return;
-    }
+  const del = plan.deleteDevice.length + plan.deleteLocal.length + plan.rmdirDevice.length;
+  if (del > 0) {
+    const ok = await confirmDialog({
+      title: op === 'replace' ? 'WIPE DEVICE?' : `DELETE ${del} FILE${del === 1 ? '' : 'S'}?`,
+      body: op === 'replace'
+        ? `${plan.deleteDevice.length} files erased, then ${plan.upload.length} written · ${fmtDuration(plan.stats.estimatedSeconds)}.`
+        : 'This can\u2019t be undone.',
+      detail: [
+        plan.deleteDevice.length ? `${plan.deleteDevice.length} on the device` : null,
+        plan.deleteLocal.length ? `${plan.deleteLocal.length} in your folder` : null,
+        plan.rmdirDevice.length ? `${plan.rmdirDevice.length} device folders` : null,
+      ].filter(Boolean),
+      confirmLabel: op === 'replace' ? 'WIPE & WRITE' : 'DELETE',
+      danger: true,
+    });
+    if (!ok) { log('warn', 'apply cancelled'); return; }
   }
 
-  const ops = flattenPlan(plan);
   stopRequested = false;
-  els.apply.disabled = true;
-  els.scan.disabled = true;
-  els.stop.disabled = false;
+  els.review.hidden = true;
+  els.runPanel.hidden = false;
+  els.runTitle.textContent = op === 'dump' ? 'BACKING UP' : op === 'replace' ? 'REPLACING' : 'SYNCING';
+  els.errDrawer.hidden = true;
+  els.errList.textContent = '';
+  els.runErrs.hidden = true;
+  let errCount = 0;
 
-  log('info', `applying ${ops.length} operations…`);
-  const t0 = Date.now();
-
-  const result = await applyPlan({
-    client,
-    rootHandle,
-    deviceRoot: plan.deviceRoot,
-    state,
-    ops,
-    callbacks: {
-      onOp: (op, i, total) => {
-        const label = op.op === 'moveDevice' ? `${op.from} → ${op.to}` : op.relPath;
-        setStatus(`${i + 1}/${total}  ${op.op}  ${label}`);
-        els.progress.value = ((i + 1) / total) * 100;
+  const result = await applyThePlan({
+    client, rootHandle, deviceRoot: plan.deviceRoot, state, plan,
+    shouldStop: () => stopRequested,
+    on: {
+      op: (label, i, total, t0) => {
+        const rate = (i + 1) / Math.max(1, (Date.now() - t0) / 1000);
+        const left = Math.round((total - i - 1) / Math.max(rate, 0.01));
+        pbar.set(i + 1, total, label, `${i + 1}/${total} · ${fmtDuration(left)} left`);
       },
-      onError: (message) => log('err', message),
-      shouldStop: () => stopRequested,
+      bytes: (written, total) => pbar.setFile(written, total),
+      error: (message) => {
+        errCount++;
+        log('err', message);
+        els.runErrs.hidden = false;
+        els.runErrs.textContent = `${errCount} ERROR${errCount === 1 ? '' : 'S'}`;
+        els.errDrawer.hidden = false;
+        els.errN.textContent = String(errCount);
+        const li = document.createElement('li');
+        li.textContent = message;
+        els.errList.append(li);
+      },
     },
   });
 
-  const secs = Math.round((Date.now() - t0) / 1000);
   if (lastRun) {
     lastRun.apply = {
-      startedAt: new Date(t0).toISOString(),
-      seconds: secs,
+      seconds: result.seconds,
       completed: result.completed,
       failed: result.failed,
       stopped: result.stopped,
@@ -396,124 +475,139 @@ els.apply.addEventListener('click', async () => {
     };
     els.saveLog.disabled = false;
   }
-  els.stop.disabled = true;
-  els.progress.value = 0;
+  pbar.done();
+  if (errCount) els.errDrawer.open = true;
 
-  const summary = `${result.completed} done, ${result.failed} failed in ${fmtDuration(secs)}`;
+  const summary = `${result.completed} done${result.failed ? `, ${result.failed} failed` : ''} · ${fmtDuration(result.seconds)}`;
   if (result.stopped) {
-    setStatus(`Stopped — ${summary}`, 'warn');
-    log('warn', `stopped by request — ${summary}. State saved; re-scan to resume.`);
+    els.runTitle.textContent = 'STOPPED';
+    say(`Stopped — ${summary}. Scan again to resume.`, 'warn');
+    log('warn', `stopped by request — ${summary}`);
   } else if (result.failed > 0) {
-    setStatus(`Finished with errors — ${summary}`, 'err');
+    els.runTitle.textContent = 'FINISHED WITH ERRORS';
+    say(`Finished with errors — ${summary}.`, 'err');
     log('err', `finished with errors — ${summary}`);
   } else {
-    setStatus(`Sync complete — ${summary}`, 'ok');
+    els.runTitle.textContent = 'DONE';
+    say(`Sync complete — ${summary}.`, 'ok');
     log('ok', `sync complete — ${summary}`);
+    toast(`Sync complete — ${summary}`, { iconName: 'party' });
   }
-
+  els.stopRun.textContent = 'SCAN AGAIN';
+  els.stopRun.onclick = () => {
+    els.stopRun.textContent = 'STOP';
+    els.stopRun.onclick = null;
+    resetPlan();
+    els.scan.click();
+  };
   plan = null;
-  els.planBox.textContent += '\n\n(applied — re-scan to see the current state)';
-  refreshButtons();
+  refresh();
 });
 
-// ---- content comparison (read-only) -------------------------------------
+els.stopRun.addEventListener('click', () => {
+  stopRequested = true;
+  log('warn', 'stopping after the current operation…');
+});
 
-els.audit.addEventListener('click', async () => {
-  els.audit.disabled = true;
-  els.scan.disabled = true;
-  els.stop.disabled = false;
+// ---- CHECK (compare by content, read-only) --------------------------------------------------
+
+async function runAudit() {
+  busy(els.scan, 'CHECKING');
+  els.stop.hidden = false;
   stopRequested = false;
-  plan = null;
-  els.planBox.textContent = '';
+  resetPlan();
 
   try {
-    const deviceRoot = els.deviceRoot.value.trim() || 'E:/amiibo';
-
-    setStatus('Reading local folder…');
+    say('Reading your folder…');
     const local = await localfs.walkLocal(rootHandle, {
-      onProgress: (n) => { if (n % 100 === 0) setStatus(`Reading local folder… ${n} files`); },
+      onProgress: (n) => { if (n % 100 === 0) say(`Reading your folder… ${n}`); },
     });
-
-    setStatus('Listing device…');
-    let device = await walkDevice(client, deviceRoot, {
-      onProgress: (n) => { if (n % 50 === 0) setStatus(`Listing device… ${n} files`); },
+    say('Listing the device…');
+    let device = await walkDevice(client, deviceRoot(), {
+      shouldStop: () => stopRequested,
+      onProgress: (n) => { if (n % 50 === 0) say(`Listing the device… ${n}`); },
     });
-
     const toHash = [...device.values()].filter((e) => !e.isDir).length;
-    log('info', `hashing ${toHash} device files — roughly ${fmtDuration(Math.round(toHash * 0.22))}`);
-
+    log('info', `reading ${toHash} device files — roughly ${fmtDuration(Math.round(toHash * 0.22))}`);
     const t0 = Date.now();
-    device = await hashDeviceIndex(client, deviceRoot, device, {
+    device = await hashDeviceIndex(client, deviceRoot(), device, {
       shouldStop: () => stopRequested,
       onProgress: (done, total) => {
-        els.progress.value = (done / total) * 100;
-        if (done % 10 === 0 || done === total) {
-          const rate = done / Math.max(1, (Date.now() - t0) / 1000);
-          const left = Math.round((total - done) / Math.max(rate, 0.01));
-          setStatus(`Hashing ${done}/${total} — about ${fmtDuration(left)} left`);
-        }
+        const rate = done / Math.max(1, (Date.now() - t0) / 1000);
+        pbar.set(done, total, 'Reading device files', `${done}/${total} · ${fmtDuration(Math.round((total - done) / Math.max(rate, 0.01)))} left`);
       },
     });
-    els.progress.value = 0;
+    pbar.done();
 
     const report = compareByContent({ local, device });
     renderAudit(report, stopRequested);
-    setStatus(
-      stopRequested ? 'Comparison stopped early — results are partial' : 'Comparison complete',
-      stopRequested ? 'warn' : 'ok'
-    );
+    say(stopRequested ? 'Check stopped early — results are partial.' : 'Check complete.', stopRequested ? 'warn' : 'ok');
   } catch (err) {
-    setStatus(`Comparison failed: ${err.message}`, 'err');
+    pbar.hide();
+    say(`Check failed: ${err.message}`, 'err');
     log('err', err.message);
   }
-
-  els.stop.disabled = true;
-  refreshButtons();
-});
-
-function renderAudit(r, partial) {
-  const lines = [];
-  if (partial) lines.push('PARTIAL — stopped before every file was read.\n');
-
-  lines.push(`device: ${r.stats.deviceFiles} files, ${r.stats.deviceUnique} distinct by content`);
-  lines.push(`local:  ${r.stats.localFiles} files, ${r.stats.localUnique} distinct by content`);
-  lines.push('');
-  lines.push('Matched by content, so name and folder do not matter.');
-  lines.push('');
-
-  const section = (title, items, fmt) => {
-    if (!items.length) return;
-    lines.push(`${title} (${items.length})`);
-    for (const item of items.slice(0, 300)) lines.push(`   ${fmt(item)}`);
-    if (items.length > 300) lines.push(`   … and ${items.length - 300} more`);
-    lines.push('');
-  };
-
-  section('ON DEVICE, NOT IN YOUR LOCAL FOLDER', r.missingLocally, (m) => `${m.relPath}  (${m.size} B)`);
-  section('LOCAL ONLY, NOT ON THE DEVICE', r.missingOnDevice, (m) => `${m.relPath}  (${m.size} B)`);
-  section('SAME AMIIBO, A DUMP THE DEVICE HAS AND YOU DO NOT', r.variants, (m) =>
-    `${m.id}\n        device: ${m.device.join(', ')}\n        local:  ${m.local.join(', ')}`
-  );
-  section('SAME CONTENT, DIFFERENT LOCATION', r.relocated, (m) =>
-    `device: ${m.device.join(', ')}\n        local:  ${m.local.join(', ')}`
-  );
-  section('DUPLICATED ON DEVICE', r.duplicateOnDevice, (d) => d.paths.join('  =  '));
-  section('DUPLICATED LOCALLY', r.duplicateLocally, (d) => d.paths.join('  =  '));
-
-  if (!r.missingLocally.length && !r.missingOnDevice.length) {
-    lines.push('Every dump on the device has a byte-identical copy locally, and vice versa.');
-  }
-
-  lines.push('');
-  lines.push('Note: two dumps of the same character still differ if their UID or save');
-  lines.push('data differs, so this finds byte-identical copies — not "do I have this');
-  lines.push('character somewhere".');
-
-  els.planBox.textContent = lines.join('\n');
+  els.stop.hidden = true;
+  idle(els.scan);
+  refresh();
 }
 
-// A full run record: the plan, the capacity figures, and every operation with
-// its timing and outcome.
+function renderAudit(r, partial) {
+  els.step3.hidden = false;
+  els.review.hidden = false;
+  els.runPanel.hidden = true;
+  els.warnBox.textContent = '';
+  els.capBar.hidden = true;
+  els.apply.disabled = true;
+  els.rawPlanDrawer.hidden = true;
+
+  if (partial) {
+    const w = document.createElement('div');
+    w.className = 'warnCard';
+    w.textContent = 'Stopped early — this comparison is partial.';
+    els.warnBox.append(w);
+  }
+
+  const clean = !r.missingLocally.length && !r.missingOnDevice.length;
+  els.planCards.innerHTML = clean
+    ? `<div class="empty" style="grid-column:1/-1">${icon('checkDouble')}
+       <div class="eTitle">EVERYTHING MATCHES</div><p>Every dump exists on both sides, byte for byte.</p></div>`
+    : [
+        r.missingLocally.length ? `<div class="planCard warn"><b>${icon('download')}${r.missingLocally.length}</b><span class="cap">ONLY ON DEVICE</span></div>` : '',
+        r.missingOnDevice.length ? `<div class="planCard warn"><b>${icon('upload')}${r.missingOnDevice.length}</b><span class="cap">ONLY IN FOLDER</span></div>` : '',
+        r.variants.length ? `<div class="planCard muted"><b>${icon('sparkles')}${r.variants.length}</b><span class="cap">OTHER VARIANTS</span></div>` : '',
+        r.relocated.length ? `<div class="planCard muted"><b>${icon('move')}${r.relocated.length}</b><span class="cap">MOVED</span></div>` : '',
+      ].join('');
+
+  els.drawers.textContent = '';
+  const listDrawer = (label, ico, items, fmt) => {
+    if (!items.length) return;
+    const d = document.createElement('details');
+    d.className = 'drawer';
+    d.innerHTML = `<summary><span class="chev">${ICONS.chevronRight}</span>${icon(ico)}${label}<span class="n">${items.length}</span></summary><div class="body"><ul class="fileList"></ul></div>`;
+    const ul = d.querySelector('ul');
+    for (const item of items.slice(0, 300)) {
+      const li = document.createElement('li');
+      li.textContent = fmt(item);
+      ul.append(li);
+    }
+    if (items.length > 300) {
+      const li = document.createElement('li');
+      li.textContent = `… and ${items.length - 300} more`;
+      ul.append(li);
+    }
+    els.drawers.append(d);
+  };
+  listDrawer('ONLY ON DEVICE', 'download', r.missingLocally, (m) => `${m.relPath} · ${fmtBytes(m.size)}`);
+  listDrawer('ONLY IN FOLDER', 'upload', r.missingOnDevice, (m) => `${m.relPath} · ${fmtBytes(m.size)}`);
+  listDrawer('OTHER VARIANTS', 'sparkles', r.variants, (m) => `${m.id} — device: ${m.device.join(', ')} / local: ${m.local.join(', ')}`);
+  listDrawer('MOVED', 'move', r.relocated, (m) => `device: ${m.device.join(', ')} / local: ${m.local.join(', ')}`);
+  listDrawer('DUPLICATED ON DEVICE', 'copy', r.duplicateOnDevice, (d) => d.paths.join('  =  '));
+  listDrawer('DUPLICATED LOCALLY', 'copy', r.duplicateLocally, (d) => d.paths.join('  =  '));
+}
+
+// ---- run log ---------------------------------------------------------------------------------
+
 function runReport() {
   return JSON.stringify(lastRun ?? { error: 'nothing has been scanned yet' }, null, 2);
 }
@@ -528,42 +622,55 @@ els.saveLog.addEventListener('click', () => {
 });
 
 els.copyLog.addEventListener('click', async () => {
-  await navigator.clipboard.writeText(runReport());
-  els.copyLog.textContent = 'Copied';
-  setTimeout(() => (els.copyLog.textContent = 'Copy log'), 1500);
+  if (!lastRun) { toast('Nothing scanned yet.', { kind: 'warn' }); return; }
+  try {
+    await navigator.clipboard.writeText(runReport());
+    toast('Run log copied');
+  } catch {
+    toast("Couldn't copy — clipboard is blocked here.", { kind: 'err' });
+  }
 });
 
 els.stop.addEventListener('click', () => {
   stopRequested = true;
-  log('warn', 'stopping after the current operation…');
+  log('warn', 'stopping…');
 });
 
-// ---- boot ---------------------------------------------------------------
+// ---- boot -------------------------------------------------------------------------------------
 
 (async function boot() {
-  if (!BleTransport.available) {
-    setStatus('Web Bluetooth unavailable — use Chrome or Edge over http://localhost', 'err');
-    els.connect.disabled = true;
-    return;
-  }
-  if (!localfs.available()) {
-    setStatus('File System Access API unavailable — use Chrome or Edge', 'err');
-    els.pickFolder.disabled = true;
-    return;
-  }
-  if (!window.isSecureContext) {
-    setStatus('Insecure context — open via http://localhost, not file://', 'err');
-    els.connect.disabled = true;
+  for (const s of document.querySelectorAll('[data-ico]')) s.innerHTML = ICONS[s.dataset.ico] ?? '';
+
+  const blocked =
+    !window.isSecureContext ? 'OPEN OVER LOCALHOST OR HTTPS — Bluetooth is blocked on this address.'
+    : !BleTransport.available ? 'SYNC NEEDS CHROME OR EDGE — Web Bluetooth isn\u2019t in this browser.'
+    : !localfs.available() ? 'SYNC NEEDS CHROME OR EDGE — this browser can\u2019t read folders.'
+    : null;
+  if (blocked) {
+    els.step1.hidden = true;
+    els.step2.hidden = true;
+    els.unsupported.hidden = false;
+    els.unsupported.innerHTML = `<div class="empty">${icon('ship')}
+      <div class="eTitle">${blocked.split(' — ')[0]}</div>
+      <p>${blocked.split(' — ')[1]}</p>
+      <button id="goBrowse">BROWSE THE COLLECTION</button></div>`;
+    els.unsupported.querySelector('#goBrowse').addEventListener('click', () => { location.href = './collection.html'; });
     return;
   }
 
-  refreshOptions();
+  renderOps();
+  renderDeviceChip();
+
   const restored = await localfs.restoreDirectory();
   if (restored) {
     rootHandle = restored;
-    els.folderName.textContent = restored.name;
     log('info', `restored local folder: ${restored.name}`);
+  } else {
+    try {
+      const cached = JSON.parse(sessionStorage.getItem('collectionScan'));
+      if (cached?.folderName) lapsedFolderName = cached.folderName;
+    } catch {}
   }
-  setStatus('Ready');
-  refreshButtons();
+  renderFolderChip();
+  refresh();
 })();

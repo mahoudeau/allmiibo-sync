@@ -74,13 +74,22 @@ test('the collection marks owned and missing per series', () => {
 
 test('an owned amiibo absent from the database is still listed', () => {
   // The HHD item-card ID: a real dump that no amiibo database will ever list.
+  // It is a curated outlier — recognised by name and NOT counted as "not in
+  // the database", because 91 well-known cards sharing one ID is not news.
   const c = buildCollection(new Set(['026a000100000502']));
   const all = c.series.flatMap((s) => s.items);
   const extra = all.find((i) => i.id === '026a000100000502');
 
   assert.ok(extra, 'unlisted amiibos must still appear');
   assert.equal(extra.inDatabase, false);
+  assert.equal(extra.special, 'hhd-items');
   assert.equal(extra.hasLocal, true);
+  assert.equal(c.stats.notInDatabase, 0);
+});
+
+test('a genuinely unknown amiibo still counts as not-in-database', () => {
+  // A non-HHD head that the database has never seen.
+  const c = buildCollection(new Set(['0999000109990502']));
   assert.equal(c.stats.notInDatabase, 1);
 });
 
@@ -196,17 +205,19 @@ test('a filename is used when the character is genuinely unknown', () => {
   assert.equal(item.nameSource, 'filename');
 });
 
-test('a head shared by dozens of dumps is a collision, not a character', () => {
+test('the HHD card set gets its curated name, never Stinky, never a guess', () => {
   // 91 Animal Crossing item cards share head 026a0001 with the villager
-  // Stinky. They are not Stinky.
+  // Stinky. They are not Stinky — and they are not a filename guess either:
+  // the set is a known outlier with a curated identity.
   const id = '026a000100000502';
   const c = buildCollection(new Set([id]), null, {
     nameHints: new Map([[id, 'HHD Items']]),
     dumpCounts: new Map([[id, 91]]),
   });
   const item = c.series.flatMap((s) => s.items).find((i) => i.id === id);
-  assert.equal(item.name, 'HHD Items');
-  assert.equal(item.nameSource, 'filename');
+  assert.equal(item.name, 'Happy Home Designer cards');
+  assert.equal(item.nameSource, 'curated');
+  assert.equal(item.typeName, 'Card');
 });
 
 test('a database name is never overridden by a hint', () => {
@@ -252,4 +263,49 @@ test('every series resolves to a representative with a database entry', async ()
     assert.ok(id && AMIIBO_NAMES[id], `series 0x${s.toString(16)} has no representative`);
   }
   assert.equal(AMIIBO_NAMES[seriesRepresentative(0x05)], '[AC] 001 - Isabelle');
+});
+
+test('the HHD card manifest lists 91 cards with unique, well-formed UIDs', async () => {
+  const { HHD_CARDS, HHD_CARDS_BY_UID } = await import('../web/data/hhd-cards.js');
+  assert.equal(HHD_CARDS.length, 91);
+  const uids = new Set();
+  for (const c of HHD_CARDS) {
+    assert.ok(Number.isInteger(c.card) && c.card >= 1 && c.card <= 91, `card ${c.card}`);
+    assert.match(c.uid, /^[0-9a-f]{14}$/, `${c.card}: ${c.uid}`);
+    assert.ok(c.count > 0, `${c.card}: ${c.count} items`);
+    assert.ok(c.teaser.length > 0, `${c.card} has no teaser`);
+    uids.add(c.uid);
+  }
+  assert.equal(uids.size, 91, 'UIDs are the identity — a duplicate would merge two cards');
+  assert.equal(HHD_CARDS_BY_UID.get(HHD_CARDS[0].uid), HHD_CARDS[0]);
+});
+
+test('parseUid skips the BCC byte, matching how NTAG UIDs are actually laid out', async () => {
+  const { parseUid } = await import('../web/js/amiibo.js');
+  const bytes = new Uint8Array(540);
+  bytes.set([0x04, 0x11, 0x22, 0x99, 0x33, 0x44, 0x55, 0x66]); // byte 3 = BCC0, skipped
+  assert.equal(parseUid(bytes), '04112233445566');
+  assert.equal(parseUid(new Uint8Array(2)), null);
+});
+
+test('hideHhd removes the fan-made set from the universe entirely', () => {
+  const id = '026a000100000502';
+  const owned = new Set([id, '0000000000000002']);
+  // Off (default): the set is a known entry — 946 database rows + 1 curated.
+  const shown = buildCollection(owned, null, { dumpCounts: new Map([[id, 91]]) });
+  assert.equal(shown.stats.knownTotal, 947);
+  assert.ok(shown.series.flatMap((s) => s.items).some((i) => i.special === 'hhd-items'));
+  // On: gone from the list and from every count, even though dumps are owned.
+  const hidden = buildCollection(owned, null, { dumpCounts: new Map([[id, 91]]), hideHhd: true });
+  assert.equal(hidden.stats.knownTotal, 946);
+  assert.ok(!hidden.series.flatMap((s) => s.items).some((i) => i.special));
+  assert.equal(hidden.stats.ownedKnown, 1); // just Mario
+  // An official-only collector can reach "complete": missing excludes the set.
+  assert.equal(hidden.stats.missingLocal, 945);
+});
+
+test('hideHhd also suppresses the curated placeholder when nothing is owned', () => {
+  const c = buildCollection(new Set(), null, { hideHhd: true });
+  assert.equal(c.stats.knownTotal, 946);
+  assert.ok(!c.series.flatMap((s) => s.items).some((i) => i.special));
 });

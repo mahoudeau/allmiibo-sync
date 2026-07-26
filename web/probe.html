@@ -2,66 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>allmiibo-sync — device probe</title>
-<meta name="description" content="Read-only device filesystem probe over Web Bluetooth.">
-<meta name="theme-color" content="#2b2b2a">
+<title>Debug · allmiibo-sync</title>
+<meta http-equiv="refresh" content="0; url=./debug.html#probe">
 <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-<link rel="icon" href="./icons/favicon-32.png" sizes="32x32" type="image/png">
-<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
-<link rel="manifest" href="./manifest.webmanifest">
-<meta property="og:type" content="website">
-<meta property="og:site_name" content="allmiibo-sync">
-<meta property="og:title" content="Device probe — allmiibo-sync">
-<meta property="og:description" content="Read-only device filesystem probe over Web Bluetooth.">
-<meta property="og:url" content="https://allmiibo.mathieu.dev/probe.html">
-<meta property="og:image" content="https://allmiibo.mathieu.dev/icons/og.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta name="twitter:card" content="summary_large_image">
-<link rel="stylesheet" href="./css/app.css">
-<script>
-// First paint honours the stored preferences (header.js manages them after).
-try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
-</script>
 </head>
 <body>
-<main>
-  <h1>Device probe</h1>
-  <p class="sub">Read-only. Issues no writes, creates nothing, deletes nothing.</p>
-
-  <div class="note">
-    Requires Chrome or Edge, served over <code>http://localhost</code>.
-    Close any other tab connected to the device first — it accepts one connection at a time.
-  </div>
-
-  <div class="row" style="margin-top:1rem">
-    <button id="connect" class="primary">Connect</button>
-    <button id="disconnect" disabled>Disconnect</button>
-    <button id="probe" disabled>Run probe</button>
-    <label>Max depth <input id="maxDepth" type="number" min="1" max="12" value="4"></label>
-    <label><input id="readSample" type="checkbox" checked> Read one file back</label>
-  </div>
-
-  <div id="status" class="status">Ready</div>
-
-  <section>
-    <h2>Filesystem</h2>
-    <pre id="tree">(not yet probed)</pre>
-  </section>
-
-  <section>
-    <h2>Log</h2>
-    <div id="log" class="logbox"></div>
-  </section>
-
-  <div class="row">
-    <button id="copy" disabled>Copy report</button>
-    <button id="save" disabled>Save report JSON</button>
-  </div>
-</main>
-<script type="module" src="./js/header.js"></script>
-<script type="module" src="./js/probe.js"></script>
-<script type="module" src="./js/footer.js"></script>
+<p>Moved to <a href="./debug.html#probe">the Debug page</a>.</p>
 </body>
 </html>

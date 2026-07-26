@@ -84,3 +84,44 @@ export function finishColors(i = DEFAULT_FINISH) {
 export function pirateMark(px, finish = DEFAULT_FINISH) {
   return grid(PIRATE_BODY + DOCK32, finishColors(finish), px);
 }
+
+// Original mark for the fan-made HHD card set: a stack of three cards with a
+// pixel star. Our art, no Nintendo motif.
+const HHD_STACK = `
+..KKKKKKKKKKK...
+..KWWWWWWWWWK...
+.KKKKKKKKKKKKK..
+.KWWWWWWWWWWWK..
+KKKKKKKKKKKKKKKK
+KWWWWWWWWWWWWWWK
+KWWWWWWWSWWWWWWK
+KWWWWWWSSSWWWWWK
+KWWWWSSSSSSSWWWK
+KWWWWWWSSSWWWWWK
+KWWWWWWWSWWWWWWK
+KWWWWWWWWWWWWWWK
+KWWWKKKKKKKKKWWK
+KWWWWWWWWWWWWWWK
+KWWWWWWWWWWWWWWK
+KKKKKKKKKKKKKKKK`;
+
+export function hhdMark(px) {
+  return grid(HHD_STACK, { K: '#1a1a1a', W: '#e8e4d0', S: '#c9a24a' }, px);
+}
+
+// Two-frame idle: the open eye closes for a blink. Frame maps are cached per
+// (px, finish) by the caller; this only builds the strings.
+export function pirateFrames(px, finish = DEFAULT_FINISH) {
+  const rows = PIRATE_BODY.replace(/^\n+|\n+$/g, '').split('\n').map((r) => r.trim());
+  // the open right eye is the 'k' run inside the skin rows under the hat
+  const blinkRows = rows.map((row, y) =>
+    (y === 11 || y === 12)
+      ? row.replace(/(s|S)k/g, '$1s').replace(/k(?=s|S)/g, 's')
+      : row
+  );
+  const colors = finishColors(finish);
+  return [
+    grid(PIRATE_BODY + DOCK32, colors, px),
+    grid(blinkRows.join('\n') + DOCK32, colors, px),
+  ];
+}

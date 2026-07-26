@@ -18,14 +18,17 @@ const UI_DIR = fileURLToPath(new URL('../web/js/', import.meta.url));
 
 const GLOBALS = new Set([
   'Array', 'Object', 'String', 'Number', 'Boolean', 'Math', 'JSON', 'Date', 'Error',
-  'Map', 'Set', 'Promise', 'Symbol', 'RegExp', 'parseInt', 'parseFloat', 'isNaN',
+  'Map', 'Set', 'WeakMap', 'Promise', 'Symbol', 'RegExp', 'parseInt', 'parseFloat', 'isNaN',
   'BigInt', 'Uint8Array', 'DataView', 'ArrayBuffer', 'TextEncoder', 'TextDecoder',
   'structuredClone', 'queueMicrotask', 'Intl',
   'document', 'window', 'navigator', 'console', 'setTimeout', 'clearTimeout',
   'setInterval', 'clearInterval', 'fetch', 'alert', 'confirm', 'prompt', 'Blob',
   'URL', 'CustomEvent', 'EventTarget', 'FileReader', 'indexedDB', 'crypto',
   'performance', 'requestAnimationFrame', 'AbortController', 'URLSearchParams',
-  'location', 'localStorage', 'history',
+  'location', 'localStorage', 'sessionStorage', 'history', 'matchMedia',
+  'cancelAnimationFrame', 'import', 'addEventListener', 'removeEventListener',
+  'MutationObserver',
+  'scrollTo', 'scrollY',
   // keywords the bare-call regex would otherwise pick up
   'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'function', 'await',
   'super', 'this', 'new', 'else', 'do', 'try', 'finally', 'yield', 'of', 'in',
@@ -196,5 +199,18 @@ test('no UI module calls a function that is not defined anywhere', async () => {
     }
   }
 
+  assert.deepEqual(problems, [], `\n${problems.join('\n')}\n`);
+});
+
+test('every icon() call resolves to a real ICONS key', async () => {
+  const iconsSrc = await readFile(join(UI_DIR, 'icons.js'), 'utf8');
+  const keys = new Set([...iconsSrc.matchAll(/^\s{2}(\w+):'<svg/gm)].map((m) => m[1]));
+  const problems = [];
+  for (const file of files) {
+    const src = await readFile(join(UI_DIR, file), 'utf8');
+    for (const m of src.matchAll(/\bicon\(\s*'(\w+)'/g)) {
+      if (!keys.has(m[1])) problems.push(`${file}: icon('${m[1]}') has no ICONS entry`);
+    }
+  }
   assert.deepEqual(problems, [], `\n${problems.join('\n')}\n`);
 });

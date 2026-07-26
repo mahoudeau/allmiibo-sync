@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to · allmiibo-sync</title>
+<meta name="description" content="Every feature explained: collection tracking, syncing, selections, vehicles and card sets, advanced mode and the debug tools.">
+<meta name="theme-color" content="#2b2b2a">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="icon" href="./icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="manifest" href="./manifest.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="allmiibo-sync">
+<meta property="og:title" content="How to — allmiibo-sync">
+<meta property="og:description" content="Every feature explained: collection tracking, syncing, selections, vehicles and card sets, advanced mode and the debug tools.">
+<meta property="og:url" content="https://allmiibo.mathieu.dev/help.html">
+<meta property="og:image" content="https://allmiibo.mathieu.dev/icons/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="./css/app.css">
+<script>
+// First paint honours the stored preferences (header.js manages them after).
+try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
+</script>
+<style>
+  .helpSec { border:2px solid var(--border); background:var(--panel);
+             box-shadow:4px 4px 0 var(--shadow); padding:1rem 1.2rem; margin-bottom:1.2rem; }
+  .helpSec h2 { display:flex; align-items:center; gap:.55rem; color:var(--fg);
+                font-size:.65rem; margin-bottom:.7rem; }
+  .helpSec h2 .ico { width:1.2rem; height:1.2rem; margin:-.4rem 0; }
+  .helpSec p { margin:.4rem 0; font-size:.92rem; }
+  .helpSec ul { margin:.4rem 0 .4rem 1.2rem; padding:0; font-size:.92rem; }
+  .helpSec li { margin:.35rem 0; }
+  .helpSec b { color:var(--fg); }
+  .kbd { font-family:var(--mono); font-size:.8rem; border:1px solid var(--border);
+         background:var(--bg); padding:.05rem .35rem; }
+  .muted { color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>How to</h1>
+  <p class="sub">Everything the app does, in one place.</p>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="grid"></span>THE COLLECTION</h2>
+    <p>The Collection shows every known amiibo, grouped by series. It works
+       with one source, or two:</p>
+    <ul>
+      <li><b>Your folder.</b> Pick the folder holding your dump files
+          (<span class="kbd">.bin</span>). Owned amiibo light up in colour,
+          missing ones stay grey. Files never leave your computer.</li>
+      <li><b>Your device.</b> Connect over Bluetooth and pick the folder on
+          the device to read. Its contents appear with a
+          <span class="muted">bluetooth badge</span>. Reading takes a few
+          minutes, and you can stop at any time.</li>
+    </ul>
+    <p>Each source is a chip in the panel with its own numbers right below it
+       — owned count, dump files, how much is synced. The counts double as
+       shortcuts: click <b>OWNED</b> or <b>ON DEVICE</b> to filter by them.
+       From the chip you can rescan a source, change its folder, or remove
+       it. Amiibo are recognised by the identity inside each file, so
+       filenames do not matter.</p>
+  </section>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="search"></span>BROWSE, SEARCH, FILTER</h2>
+    <ul>
+      <li><b>Search</b> matches names, series and IDs. Press
+          <span class="kbd">/</span> to jump straight to it.</li>
+      <li><b>Filters</b> show all, owned, missing, or, once a device is
+          scanned, what is not on the device yet. Each pill carries its count.</li>
+      <li><b>Sort</b> series by release date, name, or how complete they are.</li>
+      <li><b>Cards or List.</b> Cards lead with artwork; the list shows your
+          actual filenames.</li>
+      <li>Every series row carries a tally: owned out of total, a check when
+          the series is complete, a bluetooth mark once a device is scanned,
+          <span class="muted">▲</span>/<span class="muted">▼</span> for what
+          still needs to move, and a sparkle for dumps newer than the
+          database. Hover it for the plain-words version.</li>
+      <li>Open series stay open and your scroll position survives. Clicking
+          an amiibo opens its detail page; move through the series with
+          <span class="kbd">←</span> and <span class="kbd">→</span>.</li>
+    </ul>
+  </section>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="sync"></span>SYNCING</h2>
+    <p>With both sources connected, a <b>SYNC</b> button appears. It fills the
+       gaps in both directions: it downloads what only the device has and
+       sends what only your folder has. It <b>deletes nothing</b>, and both
+       sides end up identical. You review a summary of counts, size, time and
+       device space before anything is written. The panel always shows how
+       far apart the two sides are; the first time they match you get a
+       proper old-game victory screen, and the panel keeps a standing
+       <b>ALL SYNCED</b> line after it.</p>
+    <p>To move specific amiibo instead, press <b>SELECT</b>, tap the ones you
+       want, then <b>SEND TO DEVICE</b> or <b>DOWNLOAD</b> from the bar at the
+       bottom. Only amiibo missing on the other side are transferred.</p>
+  </section>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="star"></span>VEHICLES &amp; CARD SETS</h2>
+    <p>Two collections inside the collection get special treatment:</p>
+    <ul>
+      <li><b>Air Riders vehicles.</b> Every Kirby Air Riders character can be
+          paired with four machines, and each pairing is its own dump. The
+          collection shows a small tally on the card; the detail page shows
+          the machines themselves, lit up once you hold that pairing.</li>
+      <li><b>Fan-made cards.</b> The 91 Happy Home Designer item cards are a
+          community-made pack, not official Nintendo cards. They all share one
+          ID, so they appear as a single entry; its detail page lists every
+          card and what it unlocks. The set is shown by default; if you
+          only track official amiibo, switch it off in Settings and your
+          totals ignore it — syncing still copies the files either way.</li>
+    </ul>
+  </section>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="sparkles"></span>ADVANCED MODE</h2>
+    <p>Settings → <b>ADVANCED</b> reveals the expert layer:</p>
+    <ul>
+      <li><b>Advanced sync</b> appears in the navigation, with every operation
+          and option: <b>BACKUP</b> copies the whole device, and can
+          re-download files or include system files. <b>SYNC</b> runs two-way
+          with optional deletions and slow verification. <b>MATCH</b> fills
+          gaps by amiibo and ignores folder layout. <b>REPLACE</b> wipes the
+          device and writes your folder fresh, and asks twice before doing so.
+          <b>CHECK</b> reads everything and reports differences without
+          changing a thing.</li>
+      <li>Extra detail appears here and there: raw plans, run logs, and format
+          trivia on detail pages.</li>
+    </ul>
+  </section>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="bug"></span>DEBUG TOOLS</h2>
+    <p>Settings → <b>DEBUG TOOLS</b> opens the device internals page, written
+       in protocol language. It holds a read-only <b>probe</b> that walks the
+       filesystem, and a <b>write test</b> confined to a scratch folder it
+       cleans up afterwards. Useful when something misbehaves, and safe to
+       ignore otherwise.</p>
+  </section>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="cog"></span>SETTINGS &amp; TIPS</h2>
+    <ul>
+      <li><b>Theme</b> offers three NES palettes, and <b>Pirate</b> twelve
+          coats for the mascot. The <b>COLLECTION</b> toggle shows the
+          fan-made card set — on by default, off for official-only totals. Every choice you
+          make here, and the view, sort and filter settings on the Collection,
+          is saved and persists across refreshes and sessions.</li>
+      <li>Syncing needs <b>Chrome or Edge</b>: Bluetooth and folder access are
+          not available in other browsers yet. Any browser can still browse
+          the database.</li>
+      <li>Nothing is uploaded anywhere and there is no server. Your folder,
+          your device, your browser.</li>
+      <li>The title screen listens for <span class="kbd">Enter</span>, like
+          any good title screen.</li>
+    </ul>
+  </section>
+</main>
+<script type="module" src="./js/header.js"></script>
+<script type="module">
+import { ICONS } from './js/icons.js';
+for (const el of document.querySelectorAll('[data-ico]')) el.innerHTML = ICONS[el.dataset.ico] ?? '';
+</script>
+<script type="module" src="./js/footer.js"></script>
+</body>
+</html>

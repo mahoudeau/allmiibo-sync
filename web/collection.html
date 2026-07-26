@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>allmiibo-sync — collection</title>
+<title>Collection · allmiibo-sync</title>
 <meta name="description" content="Every amiibo in the database, and whether you have it.">
 <meta name="theme-color" content="#2b2b2a">
 <link rel="icon" href="./favicon.svg" type="image/svg+xml">
@@ -25,123 +25,317 @@
 try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
 </script>
 <style>
-  .bar { display:flex; flex-wrap:wrap; gap:1.25rem; padding:.75rem 1rem; border:2px solid var(--border); background:var(--panel); margin-bottom:1rem; }
-  .bar .metric { display:flex; flex-direction:column; }
-  .bar .metric b { font-size:1.25rem; font-variant-numeric:tabular-nums; }
-  .bar .metric span { color:var(--muted); font-size:.8rem; }
-  input[type=search] { font:inherit; padding:.35rem .5rem; border:2px solid var(--border); background:var(--bg); color:var(--fg); min-width:16rem; }
-  details { border:2px solid var(--border); margin-bottom:.5rem; background:var(--panel); }
-  summary { cursor:pointer; padding:.55rem .8rem; font-weight:600; display:flex; justify-content:space-between; gap:.6rem; align-items:center; }
-  summary::-webkit-details-marker { display:none; }
-  summary .count { font-weight:400; color:var(--muted); font-variant-numeric:tabular-nums; }
-  .items { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(24rem,100%),1fr)); gap:.3rem .75rem;
-           padding:.5rem .8rem .8rem; align-items:start; }
-  .withVehicles { grid-column:1 / -1; }
-  .vehicles { display:flex; flex-wrap:wrap; gap:.3rem; padding:0 0 .35rem 1.55rem; }
-  .chip { font-size:.72rem; padding:.1rem .45rem;
-          border:1px dashed var(--border); color:var(--muted); opacity:.6; }
-  .chip.have { border-style:solid; border-color:var(--ok); color:var(--ok); opacity:1; }
-  .chip.dev { border-style:solid; border-color:var(--accent); color:var(--accent); opacity:1; }
-  .item { display:flex; align-items:center; gap:.5rem; padding:.3rem .4rem;
-          font-size:.88rem; border:1px solid transparent; color:inherit; text-decoration:none; }
-  .item:hover { border-color:var(--accent); }
-  .item.missing { opacity:.55; }
-  .item.missing .dot { background:transparent; border:1px solid var(--muted); }
-  .art { width:34px; height:34px; flex:none; display:flex; align-items:center; justify-content:center; background:var(--bg); border:2px solid var(--border);
-         position:relative; overflow:hidden; }
-  .art::before { content:attr(data-initial); color:var(--muted); font-size:.75rem; font-weight:600;
-                 position:absolute; }
-  .art img { position:relative; max-width:100%; max-height:100%; object-fit:contain;
-             background:var(--bg); }
-  .item.missing .art img { filter:grayscale(1); opacity:.5; }
+  .pageHead { display:flex; align-items:baseline; gap:.9rem; flex-wrap:wrap; margin-bottom:1rem; }
+  .pageHead h1 { margin:0; }
+  .pageMeta { font-family:var(--pixel); font-size:.5rem; color:var(--muted); }
+
+  /* Source strip: the two state-machine chips + stop */
+  .srcStrip { display:flex; flex-wrap:wrap; gap:.7rem; align-items:center; margin-bottom:1rem; }
+
+  /* Cold / browse-only hero */
+  .hero { display:flex; gap:1.2rem; align-items:center; flex-wrap:wrap;
+          border:2px solid var(--border); background:var(--panel);
+          box-shadow:4px 4px 0 var(--shadow); padding:1rem 1.2rem; margin-bottom:1.25rem; }
+  .hero .hTitle { font-family:var(--pixel); font-size:.7rem; color:#fff; margin-bottom:.4rem; }
+  .hero p { margin:.2rem 0; color:var(--muted); font-size:.9rem; }
+  .hero .hNote { font-size:.75rem; }
+  .hero .hBody { flex:1; min-width:14rem; }
+  .hero button { margin:0; }
+  .hStep { display:flex; align-items:center; gap:.8rem; margin:.7rem 0; flex-wrap:wrap; }
+  .hStep .hStepN { font-family:var(--pixel); font-size:.6rem; width:1.6rem; height:1.6rem;
+    display:inline-flex; align-items:center; justify-content:center; flex:none;
+    border:2px solid var(--border); color:var(--muted); }
+  .hStep.done .hStepN { border-color:var(--ok); color:var(--ok); }
+  .hStep.done .hStepN .ico { width:1rem; height:1rem; }
+  .hStep .hStepN .ico { width:1rem; height:1rem; }
+  .hStep .hStepLbl { font-family:var(--pixel); font-size:.55rem; color:var(--muted);
+    width:7.5rem; flex:none; }
+  .hStep.done .hStepLbl { color:var(--fg); }
+  .hSlot { display:inline-flex; }
+  .hActions { display:block; margin-top:.4rem; }
+  .hActions .srcStrip { margin-bottom:0; }
+
+  /* Per-source detail lines + shared sync state, inside the sources panel */
+  .hDetail { display:flex; align-items:center; gap:.9rem; flex-wrap:wrap;
+             margin:.1rem 0 .65rem 2.4rem; }
+  .hDetail .hStat { display:inline-flex; align-items:center; gap:.35rem;
+    font-family:var(--pixel); font-size:.5rem; color:var(--muted);
+    background:none; border:none; box-shadow:none; padding:0; min-height:0; }
+  .hDetail button.hStat { cursor:pointer; }
+  .hDetail button.hStat:hover { color:var(--fg); }
+  .hDetail .hStat .ico, .hDetail .hStat svg { width:.85rem; height:.85rem; }
+  .hDetail .hStat b { font-weight:400; color:var(--fg); margin-right:.1rem; }
+  .hDetail .hStat.ok b { color:var(--ok); }
+  .hDetail .hStat.dev b { color:var(--accent2); }
+  .hDetail .hStat.warn b { color:var(--warn); }
+  .hBar { flex:1 1 5rem; max-width:12rem; height:12px; border:2px solid var(--border);
+          background:var(--bg); position:relative; overflow:hidden; }
+  .hBar .fill { position:absolute; inset:0 auto 0 0; background:var(--ok);
+                transition:width .3s steps(6,end); }
+  .hBar::after { content:''; position:absolute; inset:0;
+    background:repeating-linear-gradient(90deg, transparent 0 calc(10% - 2px), var(--bg) calc(10% - 2px) 10%); }
+  .hPct { font-family:var(--pixel); font-size:.5rem; color:var(--fg); font-weight:400; }
+  .syncLine { display:flex; align-items:center; gap:.7rem; flex-wrap:wrap;
+              border-top:2px solid var(--border); margin-top:.9rem; padding-top:.9rem; }
+  .syncLine > .ico { width:1.2rem; height:1.2rem; color:var(--muted); flex:none; }
+  .syncLine.ok > .ico { color:var(--ok); }
+  .syncLine .slTitle { font-family:var(--pixel); font-size:.6rem; color:var(--fg);
+                       transform:translateY(2px); }
+  .syncLine.ok .slTitle { color:var(--ok); }
+  .syncLine .slSub { color:var(--muted); font-size:.85rem; }
+
+  /* Toolbar */
+  .toolbar { display:flex; flex-wrap:wrap; gap:.6rem .7rem; align-items:center; margin-bottom:1rem;
+             --ctl-h: 2.4rem; }
+  /* One height for every control in the row. */
+  .toolbar .searchBox, .toolbar select, .toolbar .segCtl, .toolbar .pill,
+  .toolbar button, .toolbar .moreMenu > summary { height:var(--ctl-h); box-sizing:border-box; }
+  .toolbar .searchBox input { padding:0 .1rem; }
+  .toolbar .pill { display:inline-flex; align-items:center; }
+  .toolbar .segCtl label { padding:0 .8rem; display:inline-flex; align-items:center; }
+  .toolbar .moreMenu > summary { display:inline-flex; align-items:center; }
+  .toolbar select { font:inherit; padding:0 .5rem; border:2px solid var(--border);
+                    background:var(--bg); color:var(--fg); }
+  .moreMenu { position:relative; margin-left:auto; }
+  .moreMenu > summary { list-style:none; cursor:pointer; border:2px solid var(--border);
+    background:var(--panel2); box-shadow:2px 2px 0 var(--shadow); padding:.4rem .55rem;
+    display:inline-flex; color:var(--fg); }
+  .moreMenu > summary::-webkit-details-marker { display:none; }
+  .moreMenu > summary:hover { border-color:var(--accent); }
+  .moreMenu .menu { position:absolute; right:0; top:calc(100% + .5rem); z-index:10;
+    display:grid; min-width:13rem; border:2px solid var(--border); background:var(--panel);
+    box-shadow:4px 4px 0 var(--shadow); }
+  .moreMenu .menu button { justify-content:flex-start; border:none; box-shadow:none;
+    background:none; min-height:0; padding:.6rem .8rem; font-size:.5rem; }
+  .moreMenu .menu button:hover:not(:disabled) { background:var(--panel2); border:none; }
+  .moreMenu .menu button:active { transform:none; }
+
+  /* Series groups */
+  details.series { border:2px solid var(--border); margin-bottom:.5rem; background:var(--panel);
+    content-visibility:auto; contain-intrinsic-size:auto 340px; }
+  details.series > summary { cursor:pointer; padding:.55rem .8rem; font-weight:600;
+    display:flex; gap:.6rem; align-items:center; list-style:none; }
+  details.series > summary::-webkit-details-marker { display:none; }
   .seriesHead { display:flex; align-items:center; gap:.6rem; min-width:0; }
   .seriesArt { width:28px; height:28px; object-fit:contain; flex:none; }
   .seriesHead .year { color:var(--muted); font-weight:400; font-size:.78rem; }
-  select { font:inherit; padding:.35rem .5rem; border:2px solid var(--border); background:var(--bg); color:var(--fg); }
+  /* One pill tells the whole series story: owned/known coloured by
+     completion, a bluetooth glyph when device data exists, and deltas —
+     ▲ to send, ▼ to download. Solid green = complete AND fully synced. */
+  .sPill { display:inline-flex; align-items:center; gap:.4rem; flex:none;
+    font-variant-numeric:tabular-nums; font-size:.82rem; font-weight:400;
+    padding:.15rem .5rem; border:2px solid var(--border); color:var(--muted); }
+  .sPill .ico { width:.95rem; height:.95rem; }
+  .sPill.full { border-color:var(--ok); color:var(--ok); }
+  .sPill.done { background:var(--ok); border-color:var(--ok); color:#10160e; }
+  .sPill.part { border-color:var(--warn); color:var(--warn); }
+  .sPill .delta { font-size:.72rem; color:var(--warn); display:inline-flex; gap:.1rem; }
+  .sPill.done .delta, .sPill.done .extra { color:inherit; }
+  .sPill .extra { font-size:.72rem; color:var(--warn); display:inline-flex;
+    align-items:center; gap:.15rem; }
+  summary .grow { margin-left:auto; }
+  summary .chev { display:inline-flex; color:var(--muted); flex:none; }
+  details[open] > summary .chev { transform:rotate(90deg); }
 
-  /* Card view: the artwork is the point; text supports it. */
+  .items { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(24rem,100%),1fr));
+           gap:.3rem .75rem; padding:.5rem .8rem .8rem; align-items:start;
+           contain:layout paint; }
+  .subHead { grid-column:1 / -1; font-family:var(--pixel); font-size:.5rem;
+             color:var(--muted); padding:.5rem 0 .15rem; }
+
+  /* Item cell — list */
+  .item { display:flex; align-items:center; gap:.5rem; padding:.3rem .4rem;
+          font-size:.88rem; border:2px solid transparent; color:inherit; text-decoration:none; }
+  .item:hover { border-color:var(--accent); }
+  .item.missing { opacity:.6; }
+  .item .fname { font:11px/1.2 var(--mono); color:var(--muted); display:block;
+                 overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item .nmWrap { flex:1; min-width:0; }
+  .item .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; }
+  .item .nm.guessName { font-style:italic; }
+  .art { width:34px; height:34px; flex:none; display:flex; align-items:center; justify-content:center;
+         background:var(--bg); border:2px solid var(--border); position:relative; overflow:hidden; }
+  .art::before { content:attr(data-initial); color:var(--muted); font-size:.75rem;
+                 font-weight:600; position:absolute; }
+  .art img { position:relative; max-width:100%; max-height:100%; object-fit:contain; background:var(--bg); }
+  .art svg { width:100%; height:100%; image-rendering:pixelated; }
+  .item.missing .art img { filter:grayscale(1); opacity:.5; }
+  .devIco { color:var(--accent2); flex:none; display:inline-flex; }
+  .devIco .ico { width:.95rem; height:.95rem; }
+  .tag { font-size:.7rem; padding:.05rem .3rem; border:1px solid var(--border); color:var(--muted); flex:none; }
+  .tag.new { border-color:var(--warn); color:var(--warn); }
+  .vPill { font-size:.68rem; padding:.05rem .35rem; border:1px solid var(--border);
+           color:var(--muted); flex:none; font-variant-numeric:tabular-nums; }
+  .vPill.some { border-color:var(--ok); color:var(--ok); }
+  .vPill { display:inline-flex; align-items:center; gap:.25rem; }
+  .vPill .ico { width:.8rem; height:.8rem; }
+
+
+  /* Item cell — cards */
   .cards .items { grid-template-columns:repeat(auto-fill,minmax(8.5rem,1fr)); gap:.6rem; }
   .cards .item { flex-direction:column; text-align:center; gap:.35rem; padding:.7rem .4rem .55rem;
-                 border-color:var(--border); background:var(--bg); }
+                 border-color:var(--border); background:var(--bg); position:relative; }
   .cards .item .art { width:88px; height:88px; }
   .cards .item .art::before { font-size:1.4rem; }
+  .cards .item .nmWrap { flex:none; width:100%; }
   .cards .item .nm { white-space:normal; font-size:.8rem; line-height:1.25; }
-  .cards .item .dot { position:absolute; margin:.15rem; align-self:flex-start; }
-  .cards .item { position:relative; }
-  .cards .item .tag { font-size:.62rem; }
-  .cards .withVehicles { grid-column:1 / -1; }
-  .cards .vehicles { justify-content:center; padding-left:0; }
-  .dot { width:.6rem; height:.6rem; background:var(--ok); flex:none; }
-  .item .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tag { font-size:.7rem; padding:.05rem .3rem; border:2px solid var(--border); color:var(--muted); }
-  .tag.dev { border-color:var(--accent); color:var(--accent); }
-  .tag.new { border-color:var(--warn); color:var(--warn); }
-  .tag.guess { border-style:dashed; font-style:italic; }
-  progress { width:100%; height:.5rem; margin-bottom:1rem; }
-  summary .count { padding:.1rem .5rem; border:1px solid transparent; }
-  summary .count.done { border-color:var(--ok); color:var(--ok); }
-  summary .count.part { border-color:var(--warn); color:var(--warn); }
-  summary .count.dev { border-color:var(--accent); color:var(--accent); margin-left:auto; }
+  .cards .item .fname { display:none; }
+  .cards .item .devIco { position:absolute; top:.35rem; right:.35rem; }
+  .cards .item .tag, .cards .item .vPill { font-size:.62rem; }
+  /* Victory overlay — shown once when folder and device fully match */
+  .winOverlay { position:fixed; inset:0; z-index:60; display:grid; place-items:center;
+    background:rgb(0 0 0 / .75); cursor:pointer; }
+  .winPanel { position:relative; overflow:hidden; border:2px solid var(--border);
+    background:var(--bg); box-shadow:6px 6px 0 var(--shadow);
+    padding:2.5rem 2.5rem 2rem; text-align:center; max-width:min(28rem,92vw); }
+  .winPanel .scanfx { position:absolute; inset:0; pointer-events:none; opacity:.25;
+    background:repeating-linear-gradient(to bottom,#0000 0 2px,#0006 2px 4px); }
+  .winPanel .stars { font-family:var(--pixel); font-size:.8rem; color:var(--warn);
+    letter-spacing:.4em; margin:.9rem 0 .5rem; }
+  .winPanel .big { font-family:var(--pixel); font-size:1.05rem; color:#fff;
+    margin-bottom:.5rem; text-shadow:3px 3px 0 var(--shadow); }
+  .winPanel .sub { font-family:var(--pixel); font-size:.5rem; color:var(--ok); margin-bottom:.9rem; }
+  .winPanel .nums { font-family:var(--pixel); font-size:.5rem; color:var(--muted); margin-bottom:1.3rem; }
+  .winPanel .press { font-family:var(--pixel); font-size:.5rem; color:var(--err); }
+  @media (prefers-reduced-motion: no-preference) {
+    .winPanel .press { animation:blink 1.1s steps(1) infinite; }
+    .winPanel { animation:rise .16s steps(3,end); }
+  }
+  @keyframes blink { 50% { opacity:0; } }
+
+  .cards .item.pop { animation:cellPop .24s steps(3,end); }
+  @keyframes cellPop { 50% { transform:scale(1.06); } }
+
+  /* Sync panel */
+  #syncPanel { border:2px solid var(--border); background:var(--panel);
+    box-shadow:4px 4px 0 var(--shadow); padding:.9rem 1rem; margin-bottom:1.25rem; }
+  #syncPanel .planGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr));
+    gap:.7rem; margin-bottom:1rem; }
+  .warnCard { border-left:5px solid var(--warn); background:var(--panel2);
+    padding:.6rem .8rem; margin-bottom:.6rem; font-size:.88rem; color:var(--fg); }
+  .warnCard.err { border-left-color:var(--err); }
+  #spCap { margin-bottom:1rem; }
+  .spActions { display:flex; gap:.7rem; align-items:center; flex-wrap:wrap; }
+  .spErrs { color:var(--err); font-family:var(--pixel); font-size:.5rem; }
+  .moreLink { font-family:var(--pixel); font-size:.5rem; color:var(--muted);
+    text-decoration:none; margin-left:.3rem; }
+  .moreLink:hover { color:var(--fg); }
+
+  /* Selection mode */
+  #series.selecting .item { cursor:copy; }
+  #series.selecting .item .devIco { display:none; }
+  .item .selTick { display:none; position:absolute; top:.35rem; left:.35rem;
+    width:1rem; height:1rem; border:2px solid var(--border); background:var(--bg);
+    z-index:1; }
+  #series.selecting .cards .item .selTick,
+  #series.selecting.cards .item .selTick { display:block; }
+  #series.selecting .item { position:relative; }
+  #series:not(.cards).selecting .item .selTick { position:static; flex:none; display:block; }
+  .item.selected .selTick { background:var(--accent); border-color:var(--accent); }
+  .item.selected { border-color:var(--accent) !important; }
+  .selBar { position:fixed; left:50%; transform:translateX(-50%); bottom:1rem; z-index:40;
+    display:flex; gap:.7rem; align-items:center; padding:.6rem .9rem;
+    border:2px solid var(--accent); background:var(--panel);
+    box-shadow:4px 4px 0 var(--shadow); }
+  .selBar .selN { font-family:var(--pixel); font-size:.55rem; color:var(--fg); }
+  .selBar button { min-height:2.1rem; font-size:.5rem; }
+
+  /* Skipped report (via the ⋯ menu) */
+  #skipped details { border:2px solid var(--border); margin-bottom:.5rem; background:var(--panel); }
+  #skipped summary { cursor:pointer; padding:.45rem .7rem; }
+  #skipped pre { border:none; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Collection</h1>
-  <p class="sub">Every amiibo in the database, and whether you have it.</p>
-
-  <div class="note">
-    Identity comes from the amiibo ID inside each dump (bytes 84–91), not from
-    the filename and not from a content hash — two dumps of the same character
-    differ in UID and save data.
-    <br>
-    Kirby Air Riders amiibo are a character plus a vehicle, and only the
-    character is in the amiibo ID. Every character takes every vehicle, so the
-    full line-up is shown per character: solid means you hold that pairing,
-    dashed means you do not. Completion still counts the character once,
-    because that is all the database records.
+  <div class="pageHead">
+    <h1>Collection</h1>
+    <span class="pageMeta" id="pageMeta"></span>
   </div>
 
-  <div class="row" style="margin-top:1rem">
-    <button id="pickFolder" class="primary">Choose local folder</button>
-    <button id="scan" disabled>Scan collection</button>
-    <button id="forget" disabled>Forget folder</button>
-    <span id="folderName" class="status" style="margin:0;padding:.3rem .6rem"></span>
+  <div class="srcStrip" id="srcStrip">
+    <span id="folderChip"></span>
+    <span id="deviceChip"></span>
+    <button id="syncBtn" class="primary" hidden><span class="ico" data-ico="sync"></span>SYNC</button>
+    <button id="stop" hidden>STOP</button>
+    <a id="moreSync" class="moreLink advanced-only" href="./sync.html">MORE OPTIONS →</a>
   </div>
 
-  <div class="row">
-    <button id="connect">Connect device</button>
-    <button id="scanDevice" disabled>Add device contents (slow)</button>
-    <button id="stop" disabled>Stop</button>
+  <section id="syncPanel" hidden>
+    <div id="spReview">
+      <div id="spWarn"></div>
+      <div class="planGrid" id="spCards"></div>
+      <div class="capBar" id="spCap" hidden>
+        <div class="track"><div class="fill"></div></div>
+        <div class="capLbl"><span id="spCapName"></span><span class="mono" id="spCapText"></span></div>
+      </div>
+      <div class="spActions">
+        <button id="spApply" class="primary">APPLY</button>
+        <button id="spCancel">CANCEL</button>
+      </div>
+    </div>
+    <div id="spRun" hidden>
+      <div class="pbar" id="spPbar" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+        <div class="track"><div class="fill"></div></div>
+        <div class="track sub" hidden><div class="fill"></div></div>
+        <div class="pLbl"><span class="left"></span><span class="right"></span></div>
+      </div>
+      <div class="spActions">
+        <span class="spErrs" id="spErrs" hidden></span>
+        <button id="spStop">STOP</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="hero" hidden></div>
+
+  <div id="status" class="status" hidden></div>
+  <div class="pbar" id="pbar" hidden role="progressbar" aria-valuemin="0" aria-valuemax="100">
+    <div class="track"><div class="fill"></div></div>
+    <div class="pLbl"><span class="left"></span><span class="right"></span></div>
   </div>
 
-  <div id="status" class="status">Choose the folder holding your dumps.</div>
-  <progress id="progress" value="0" max="100"></progress>
-
-  <div class="bar" id="stats" hidden>
-    <div class="metric"><b id="mOwned">–</b><span>of the database owned</span></div>
-    <div class="metric"><b id="mMissing">–</b><span>missing</span></div>
-    <div class="metric"><b id="mDevice">–</b><span>on device</span></div>
-    <div class="metric"><b id="mExtra">–</b><span>not in database</span></div>
-    <div class="metric"><b id="mTotal">–</b><span>dumps you hold</span></div>
-  </div>
-
-  <div class="row">
-    <label class="inline"><input type="radio" name="filter" value="all" checked> All</label>
-    <label class="inline"><input type="radio" name="filter" value="owned"> Owned</label>
-    <label class="inline"><input type="radio" name="filter" value="missing"> Missing</label>
-    <label class="inline"><input type="radio" name="filter" value="notondevice"> Not on device</label>
-    <input id="search" type="search" placeholder="Search name or ID…">
-    <select id="sortMode">
-      <option value="release">Sort by release</option>
-      <option value="name">Sort by name</option>
+  <div class="toolbar">
+    <div class="searchBox">
+      <span class="ico" id="searchIco"></span>
+      <input id="search" type="search" placeholder="Search amiibo…" aria-label="Search name, series or ID">
+      <button class="clear" id="searchClear" hidden aria-label="Clear search"></button>
+    </div>
+    <div class="pillRow" id="filters" role="group" aria-label="Filter"></div>
+    <select id="sortMode" aria-label="Sort series">
+      <option value="release">By release</option>
+      <option value="name">By name</option>
+      <option value="completion">By completion</option>
     </select>
-    <button id="viewToggle">Card view</button>
-    <button id="copyMissing">Copy missing list</button>
+    <div class="segCtl" id="segView" role="group" aria-label="View">
+      <input type="radio" name="view" id="viewCards" value="cards" checked>
+      <label for="viewCards"><span class="ico" data-ico="cards"></span>CARDS</label>
+      <input type="radio" name="view" id="viewList" value="list">
+      <label for="viewList"><span class="ico" data-ico="list"></span>LIST</label>
+      <span class="thumb" aria-hidden="true"></span>
+    </div>
+    <button id="selectBtn" title="Pick amiibo to send to the device or download from it"><span class="ico" data-ico="checkboxOn"></span>SELECT</button>
+    <details class="moreMenu" id="moreMenu">
+      <summary aria-label="More actions"><span class="ico" id="moreIco"></span></summary>
+      <div class="menu">
+        <button id="copyMissing">COPY MISSING LIST</button>
+        <button id="showReport">SCAN REPORT</button>
+        <button id="expandAll">EXPAND ALL</button>
+        <button id="collapseAll">COLLAPSE ALL</button>
+      </div>
+    </details>
+  </div>
+
+  <div class="selBar" id="selBar" hidden>
+    <span class="selN" id="selN">0 SELECTED</span>
+    <button id="selSend"><span class="ico" data-ico="upload"></span>SEND TO DEVICE</button>
+    <button id="selDown"><span class="ico" data-ico="download"></span>DOWNLOAD</button>
+    <button id="selCancel"><span class="ico" data-ico="close"></span></button>
   </div>
 
   <section id="skipped" hidden></section>
-
   <section id="series"></section>
+  <div id="emptyState" hidden></div>
 </main>
 <script type="module" src="./js/header.js"></script>
 <script type="module" src="./js/collectionui.js"></script>

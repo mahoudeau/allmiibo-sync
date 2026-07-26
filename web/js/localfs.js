@@ -1,7 +1,7 @@
 // Local folder access via the File System Access API, plus SHA-256 hashing.
 // Browser-only (Chrome/Edge). No dependencies.
 
-import { parseAmiiboId, parseVehicle } from './amiibo.js';
+import { parseAmiiboId, parseVehicle, parseUid, isHhdItemCards } from './amiibo.js';
 
 const DB_NAME = 'allmiibo-sync';
 const STORE = 'handles';
@@ -84,7 +84,9 @@ export async function restoreDirectory({ prompt = false } = {}) {
 // Files are hashed as they are read — local reads are cheap compared with the
 // ~2 KB/s BLE link, and every amiibo dump is 540 bytes so size alone cannot
 // detect a change.
-export async function walkLocal(rootHandle, { onProgress = () => {} } = {}) {
+// `hash` is skippable: the collection page only needs identity, and hashing
+// ~1000 files it will never compare is pure wasted time. Sync keeps hashes.
+export async function walkLocal(rootHandle, { onProgress = () => {}, hash = true } = {}) {
   const index = new Map();
   let count = 0;
 
@@ -98,13 +100,16 @@ export async function walkLocal(rootHandle, { onProgress = () => {} } = {}) {
         if (name === STATE_FILENAME) continue;
         const f = await handle.getFile();
         const buf = new Uint8Array(await f.arrayBuffer());
+        const amiiboId = parseAmiiboId(buf);
         index.set(relPath, {
           size: f.size,
-          hash: await sha256(buf),
-          // Free here — the bytes are already in hand — and it is the only
-          // reliable way to tell which amiibo a dump actually is.
-          amiiboId: parseAmiiboId(buf),
+          hash: hash ? await sha256(buf) : null,
+          // The bytes are already in hand — and this is the only reliable way
+          // to tell which amiibo a dump actually is.
+          amiiboId,
           vehicle: parseVehicle(buf)?.name ?? parseVehicle(buf)?.code ?? null,
+          // The HHD pack shares one amiibo ID; the UID tells the cards apart.
+          uid: amiiboId && isHhdItemCards(amiiboId) ? parseUid(buf) : null,
           isDir: false,
           lastModified: f.lastModified,
         });

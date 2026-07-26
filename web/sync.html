@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>allmiibo-sync</title>
+<title>Advanced sync · allmiibo-sync</title>
 <meta name="description" content="Keep a local folder in sync with your device, in the direction you choose.">
 <meta name="theme-color" content="#2b2b2a">
 <link rel="icon" href="./favicon.svg" type="image/svg+xml">
@@ -12,7 +12,7 @@
 <link rel="manifest" href="./manifest.webmanifest">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="allmiibo-sync">
-<meta property="og:title" content="Sync — allmiibo-sync">
+<meta property="og:title" content="Advanced sync — allmiibo-sync">
 <meta property="og:description" content="Keep a local folder in sync with your device, in the direction you choose.">
 <meta property="og:url" content="https://allmiibo.mathieu.dev/sync.html">
 <meta property="og:image" content="https://allmiibo.mathieu.dev/icons/og.png">
@@ -25,120 +25,128 @@
 try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
 </script>
 <style>
-  .grid { display: grid; grid-template-columns: auto 1fr; gap: .6rem 1rem; align-items: center; margin-bottom: 1rem; }
-  .grid > label:not(.inline) { justify-self: end; color: var(--muted); }
-  input[type=text], select {
-    font: inherit; padding: .35rem .5rem; border: 2px solid var(--border); background: var(--bg); color: var(--fg); min-width: 14rem;
-  }
-  progress { width: 100%; height: .5rem; margin-bottom: 1rem; }
-  h2 { margin-top: 1.5rem; }
-  .ops { display: grid; gap: .5rem; margin-bottom: 1.25rem; }
-  .op { display: grid; grid-template-columns: auto 1fr; gap: .1rem .6rem; align-items: start;
-        padding: .6rem .8rem; border: 2px solid var(--border);
-        background: var(--panel); cursor: pointer; color: var(--fg); }
-  .op:hover { border-color: var(--accent); }
-  .op:has(input:checked) { border-color: var(--accent); }
-  .op input { grid-row: 1 / 3; margin-top: .25rem; }
-  .opName { font-weight: 600; }
-  .opName.danger { color: var(--warn); }
-  .opDesc { color: var(--muted); font-size: .85rem; }
-  #planBox { max-height: 28rem; overflow-y: auto; }
-  .danger { color: var(--warn); }
+  .step { margin-bottom:1.6rem; }
+  .step > h2 { display:flex; align-items:center; gap:.6rem; margin-bottom:.7rem; }
+  .step.locked { opacity:.45; pointer-events:none; }
+  .stepRow { display:flex; flex-wrap:wrap; gap:.7rem; align-items:center; }
+  .stepRow label { font-size:.85rem; }
+  .stepRow input[type=text] { font:inherit; padding:.35rem .5rem; border:2px solid var(--border);
+                              background:var(--bg); color:var(--fg); }
+
+  /* Operation cards */
+  .ops { display:grid; gap:.5rem; margin-bottom:1rem; }
+  .op { display:grid; grid-template-columns:auto auto 1fr; gap:.15rem .6rem; align-items:center;
+        padding:.6rem .8rem; border:2px solid var(--border);
+        background:var(--panel); cursor:pointer; color:var(--fg); }
+  .op:hover { border-color:var(--accent); }
+  .op:has(input:checked) { border-color:var(--accent); background:var(--panel2);
+                           box-shadow:3px 3px 0 var(--shadow); }
+  .op input { grid-row:1 / 2; }
+  .op .oIco { display:inline-flex; color:var(--muted); }
+  .op:has(input:checked) .oIco { color:var(--fg); }
+  .op .oIco .ico { width:1.3rem; height:1.3rem; }
+  .opName { font-family:var(--pixel); font-size:.6rem; }
+  .opName.danger { color:var(--err); }
+  .opDesc { grid-column:3; color:var(--muted); font-size:.85rem; }
+  .opOpts { grid-column:1 / -1; display:none; flex-wrap:wrap; gap:.4rem 1.4rem;
+            padding-top:.5rem; margin-top:.4rem; border-top:1px solid var(--border); }
+  .op:has(input:checked) .opOpts:not(:empty) { display:flex; }
+  .opOpts label { font-size:.85rem; }
+
+  /* Review */
+  #review .planGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr));
+                      gap:.7rem; margin-bottom:1rem; }
+  .warnCard { border-left:5px solid var(--warn); background:var(--panel);
+              padding:.6rem .8rem; margin-bottom:.6rem; font-size:.88rem; color:var(--fg); }
+  .warnCard.err { border-left-color:var(--err); }
+  #capBar { margin-bottom:1rem; }
+  #drawers { margin-top:1rem; }
+  .reviewActions { display:flex; gap:.7rem; margin-top:1.2rem; align-items:center; flex-wrap:wrap; }
+
+  /* Run panel */
+  #runPanel h2 { margin-bottom:.8rem; }
+  #runPanel .runErrs { color:var(--err); font-family:var(--pixel); font-size:.5rem; }
+
+  /* Log drawer */
+  #logDrawer .logbox { max-height:16rem; }
+  #logDrawer .lgActions { display:flex; gap:.6rem; padding:.5rem 0; }
+
+  .empty { margin:2rem 0; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Sync</h1>
-  <p class="sub">Keep a local folder in sync with the device, in the direction you choose.</p>
+  <h1>Advanced sync</h1>
+  <p class="sub">Every operation and option. The everyday sync lives on the Collection.</p>
 
-  <div class="note">
-    Nothing is written until you review the plan and press <strong>Apply</strong>.
-    Deletions are off by default and always ask for confirmation.
-    <br>
-    <strong>Compare by content</strong> is read-only: it reads every file off the
-    device to find dumps whose bytes exist nowhere in your local folder, whatever
-    they are named. Slow — roughly 0.2 s per file.
-  </div>
+  <div id="unsupported" hidden></div>
 
-  <div class="row" style="margin-top:1rem">
-    <button id="connect" class="primary">Connect device</button>
-    <button id="disconnect" disabled>Disconnect</button>
-    <button id="pickFolder">Choose local folder</button>
-    <span id="folderName" class="danger"></span>
-  </div>
-
-  <h2>What do you want to do?</h2>
-  <div class="ops" id="ops">
-    <label class="op">
-      <input type="radio" name="op" value="dump" checked>
-      <span class="opName">Download everything</span>
-      <span class="opDesc">Copy the whole device into your local folder, keeping the device's
-        layout. Writes nothing to the device and deletes nothing.</span>
-    </label>
-    <label class="op advanced-only">
-      <input type="radio" name="op" value="replace">
-      <span class="opName danger">Replace device with local</span>
-      <span class="opDesc">Erase everything under the device folder, then write your whole
-        local folder back. <strong>Nothing is skipped and nothing is checked</strong> — the only
-        way to be certain the device matches, since a file of the right size and the wrong
-        contents cannot be spotted without reading it back. Slow: the entire library over a
-        ~2 KB/s link.</span>
-    </label>
-    <label class="op">
-      <input type="radio" name="op" value="smart">
-      <span class="opName">Smart sync</span>
-      <span class="opDesc">Send each side the other's changes, using the record of the last
-        sync. Matches on path, so it works best when both sides are laid out the same.</span>
-    </label>
-    <label class="op advanced-only">
-      <input type="radio" name="op" value="identity">
-      <span class="opName">Sync by amiibo</span>
-      <span class="opDesc">Ignore folders and filenames entirely; ask only whether each amiibo
-        is present on the other side. Use this when the two layouts differ. Never deletes.</span>
-    </label>
-  </div>
-
-  <div class="grid advanced-only">
-    <label for="deviceRoot">Device folder</label>
-    <input id="deviceRoot" type="text" value="E:/amiibo">
-
-    <span></span>
-    <label class="inline" id="wrapDelete"><input id="allowDelete" type="checkbox"> Propagate deletions</label>
-
-    <span></span>
-    <label class="inline" id="wrapVerify"><input id="verify" type="checkbox"> Verify same-size files by reading them back (slow)</label>
-
-    <span></span>
-    <label class="inline" id="wrapDeviceFiles"><input id="includeDeviceFiles" type="checkbox"> Include settings.bin and key_retail.bin</label>
-
-    <span></span>
-    <label class="inline" id="wrapForce"><input id="force" type="checkbox"> Download everything again, even files already held</label>
-  </div>
-
-  <div class="row">
-    <button id="scan" class="primary" disabled>Scan &amp; plan</button>
-    <button id="apply" disabled>Apply plan</button>
-    <button id="audit" disabled class="advanced-only">Compare by content</button>
-    <button id="stop" disabled>Stop</button>
-  </div>
-
-  <div class="row">
-    <button id="saveLog" disabled>Save run log</button>
-    <button id="copyLog">Copy log</button>
-  </div>
-
-  <div id="status" class="status">Ready</div>
-  <progress id="progress" value="0" max="100"></progress>
-
-  <section>
-    <h2>Plan</h2>
-    <pre id="planBox">(not yet scanned)</pre>
+  <section class="step" id="step1">
+    <h2>STEP 1 · CONNECT</h2>
+    <div class="stepRow">
+      <span id="folderChip"></span>
+      <span id="deviceChip"></span>
+    </div>
   </section>
 
-  <section>
-    <h2>Log</h2>
-    <div id="log" class="logbox"></div>
+  <section class="step locked" id="step2">
+    <h2>STEP 2 · CHOOSE</h2>
+    <div class="ops" id="ops"></div>
+    <div class="stepRow">
+      <button id="scan" class="primary" disabled>SCAN &amp; PLAN</button>
+      <button id="stop" hidden>STOP</button>
+    </div>
   </section>
+
+  <section class="step" id="step3" hidden>
+    <h2>STEP 3 · REVIEW</h2>
+    <div id="review">
+      <div id="warnBox"></div>
+      <div class="planGrid" id="planCards"></div>
+      <div class="capBar" id="capBar" hidden>
+        <div class="track"><div class="fill"></div></div>
+        <div class="capLbl"><span id="capName"></span><span class="mono" id="capText"></span></div>
+      </div>
+      <div id="drawers"></div>
+      <details class="drawer advanced-only" id="rawPlanDrawer" hidden>
+        <summary><span class="chev" data-ico="chevronRight"></span>RAW PLAN</summary>
+        <div class="body"><pre id="planBox"></pre></div>
+      </details>
+      <div class="reviewActions">
+        <button id="apply" class="primary">APPLY</button>
+        <button id="back2">BACK</button>
+      </div>
+    </div>
+    <div id="runPanel" hidden>
+      <h2 id="runTitle">SYNCING</h2>
+      <div class="pbar" id="pbar" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+        <div class="track"><div class="fill"></div></div>
+        <div class="track sub" hidden><div class="fill"></div></div>
+        <div class="pLbl"><span class="left"></span><span class="right"></span></div>
+      </div>
+      <div class="stepRow">
+        <span class="runErrs" id="runErrs" hidden></span>
+        <button id="stopRun">STOP</button>
+      </div>
+      <details class="drawer" id="errDrawer" hidden>
+        <summary><span class="chev" data-ico="chevronRight"></span>ERRORS <span class="n" id="errN"></span></summary>
+        <div class="body"><ul class="fileList" id="errList"></ul></div>
+      </details>
+    </div>
+  </section>
+
+  <div id="status" class="status" hidden></div>
+
+  <details class="drawer advanced-only" id="logDrawer">
+    <summary><span class="chev" data-ico="chevronRight"></span>RUN LOG</summary>
+    <div class="body">
+      <div class="lgActions">
+        <button id="saveLog" disabled>SAVE JSON</button>
+        <button id="copyLog">COPY</button>
+      </div>
+      <div id="log" class="logbox"></div>
+    </div>
+  </details>
 </main>
 <script type="module" src="./js/header.js"></script>
 <script type="module" src="./js/syncui.js"></script>

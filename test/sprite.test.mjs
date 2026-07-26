@@ -51,3 +51,10 @@ test('grid preserves aspect ratio and skips transparent cells', () => {
   assert.match(svg, /viewBox="0 0 2 2"/);
   assert.equal((svg.match(/<rect/g) ?? []).length, 3);
 });
+
+test('the HHD mark is our own art: a parseable svg with the card-stack palette', async () => {
+  const { hhdMark } = await import('../web/js/sprite.js');
+  const svg = hhdMark(10);
+  assert.match(svg, /^<svg /);
+  for (const c of ['#1a1a1a', '#e8e4d0', '#c9a24a']) assert.ok(svg.includes(c), c);
+});

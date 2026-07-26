@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Debug · allmiibo-sync</title>
+<meta name="description" content="Device internals: read-only probe and sandboxed write test. For debugging.">
+<meta name="theme-color" content="#2b2b2a">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="icon" href="./icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="manifest" href="./manifest.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="allmiibo-sync">
+<meta property="og:title" content="Debug — allmiibo-sync">
+<meta property="og:description" content="Device internals: read-only probe and sandboxed write test. For debugging.">
+<meta property="og:url" content="https://allmiibo.mathieu.dev/debug.html">
+<meta property="og:image" content="https://allmiibo.mathieu.dev/icons/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="./css/app.css">
+<script>
+// First paint honours the stored preferences (header.js manages them after).
+try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
+</script>
+<style>
+  .tool { border:2px solid var(--border); background:var(--panel);
+          box-shadow:4px 4px 0 var(--shadow); padding:1rem 1.1rem; margin-bottom:1.6rem; }
+  .tool > h2 { display:flex; align-items:center; gap:.5rem; margin-bottom:.25rem; color:var(--fg); }
+  .tool .sub { margin-bottom:1rem; }
+  .tool pre { max-height:22rem; overflow:auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Debug</h1>
+  <p class="sub">Device internals, in protocol language. Each tool connects on its own — one at a time.</p>
+
+  <section class="tool" id="probe">
+    <h2>PROBE</h2>
+    <p class="sub">Read-only device inspection. Creates nothing, deletes nothing.</p>
+
+    <div class="row">
+      <button id="p_connect" class="primary">Connect</button>
+      <button id="p_disconnect" disabled>Disconnect</button>
+      <button id="p_probe" disabled>Run probe</button>
+      <label>Max depth <input id="p_maxDepth" type="number" min="1" max="12" value="4"></label>
+      <label><input id="p_readSample" type="checkbox" checked> Read one file back</label>
+    </div>
+
+    <div id="p_status" class="status">Ready</div>
+
+    <section>
+      <h2>Filesystem</h2>
+      <pre id="p_tree">(not yet probed)</pre>
+    </section>
+
+    <section>
+      <h2>Log</h2>
+      <div id="p_log" class="logbox"></div>
+    </section>
+
+    <div class="row">
+      <button id="p_copy" disabled>Copy report</button>
+      <button id="p_save" disabled>Save report JSON</button>
+    </div>
+  </section>
+
+  <section class="tool" id="writetest">
+    <h2>WRITE TEST</h2>
+    <p class="sub">Writes only inside <code>E:/_synctest</code>, then cleans up — even on failure.
+      Aborts if that folder isn't empty.</p>
+
+    <div class="row">
+      <button id="w_connect" class="primary">Connect</button>
+      <button id="w_disconnect" disabled>Disconnect</button>
+      <button id="w_run" disabled>Run write test</button>
+      <button id="w_cleanup" disabled>Clean up only</button>
+      <label><input id="w_keep" type="checkbox"> Leave test folder in place</label>
+    </div>
+
+    <div id="w_status" class="status">Ready</div>
+
+    <section>
+      <h2>Results</h2>
+      <pre id="w_results">(not yet run)</pre>
+    </section>
+
+    <section>
+      <h2>Log</h2>
+      <div id="w_log" class="logbox"></div>
+    </section>
+
+    <div class="row">
+      <button id="w_copy" disabled>Copy report</button>
+      <button id="w_save" disabled>Save report JSON</button>
+    </div>
+  </section>
+</main>
+<script type="module" src="./js/header.js"></script>
+<script type="module" src="./js/probe.js"></script>
+<script type="module" src="./js/writetest.js"></script>
+<script type="module" src="./js/footer.js"></script>
+</body>
+</html>

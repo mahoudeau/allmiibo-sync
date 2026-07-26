@@ -9,16 +9,16 @@ import { AllmiiboClient, joinPath, driveRoot } from './protocol.js';
 import { toHex } from './bytes.js';
 
 const els = {
-  connect: document.getElementById('connect'),
-  disconnect: document.getElementById('disconnect'),
-  probe: document.getElementById('probe'),
-  copy: document.getElementById('copy'),
-  save: document.getElementById('save'),
-  status: document.getElementById('status'),
-  log: document.getElementById('log'),
-  tree: document.getElementById('tree'),
-  maxDepth: document.getElementById('maxDepth'),
-  readSample: document.getElementById('readSample'),
+  connect: document.getElementById('p_connect'),
+  disconnect: document.getElementById('p_disconnect'),
+  probe: document.getElementById('p_probe'),
+  copy: document.getElementById('p_copy'),
+  save: document.getElementById('p_save'),
+  status: document.getElementById('p_status'),
+  log: document.getElementById('p_log'),
+  tree: document.getElementById('p_tree'),
+  maxDepth: document.getElementById('p_maxDepth'),
+  readSample: document.getElementById('p_readSample'),
 };
 
 let transport = null;
