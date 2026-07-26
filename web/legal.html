@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Legal &amp; licensing · allmiibo-sync</title>
+<meta name="description" content="Affiliations, trademarks, artwork, third-party data and the licences behind allmiibo-sync.">
+<meta name="theme-color" content="#2b2b2a">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="icon" href="./icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="manifest" href="./manifest.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="allmiibo-sync">
+<meta property="og:title" content="Legal &amp; licensing — allmiibo-sync">
+<meta property="og:description" content="Affiliations, trademarks, artwork, third-party data and the licences behind allmiibo-sync.">
+<meta property="og:url" content="https://allmiibo.mathieu.dev/legal.html">
+<meta property="og:image" content="https://allmiibo.mathieu.dev/icons/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="./css/app.css">
+<script>
+// First paint honours the stored preferences (header.js manages them after).
+try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
+</script>
+<style>
+  .helpSec { border:2px solid var(--border); background:var(--panel);
+             box-shadow:4px 4px 0 var(--shadow); padding:1rem 1.2rem; margin-bottom:1.2rem; }
+  .helpSec h2 { display:flex; align-items:center; gap:.55rem; color:var(--fg);
+                font-size:.65rem; margin-bottom:.7rem; }
+  .helpSec h2 .ico { width:1.2rem; height:1.2rem; margin:-.4rem 0; }
+  .helpSec p { margin:.4rem 0; font-size:.92rem; }
+  .helpSec ul { margin:.4rem 0 .4rem 1.2rem; padding:0; font-size:.92rem; }
+  .helpSec li { margin:.35rem 0; }
+  .helpSec b { color:var(--fg); }
+  .helpSec code { font-family:var(--mono); font-size:.82rem; background:var(--bg);
+                  border:1px solid var(--border); padding:.05rem .3rem; }
+  .helpSec a { color:var(--fg); }
+  .lTable { width:100%; border-collapse:collapse; font-size:.85rem; margin:.5rem 0; }
+  .lTable th, .lTable td { border:1px solid var(--border); padding:.4rem .55rem;
+                           text-align:left; vertical-align:top; }
+  .lTable th { font-family:var(--pixel); font-size:.45rem; color:var(--muted); }
+  .lWrap { overflow-x:auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Legal &amp; licensing</h1>
+  <p class="sub">A non-commercial, community fan project, provided as-is and
+     without warranty of any kind. Use it at your own risk; the author accepts
+     no liability for data loss, damage to a device, or any other consequence
+     of its use.</p>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="info"></span>NO AFFILIATION</h2>
+    <p>Not affiliated with, authorised by, or endorsed by Nintendo, the
+       Pixl.js or AmiiboLink projects, or any hardware vendor. "amiibo" and
+       all game, character, and product names are trademarks of their
+       respective owners, used here only descriptively to identify the files
+       a user is managing. No trademark claim is made or implied.</p>
+  </section>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="eyeOff"></span>WHAT THIS PROJECT DOES NOT CONTAIN</h2>
+    <p>No amiibo dumps (<code>.bin</code> files), no NTAG contents, and no
+       cryptographic keys (such as <code>key_retail.bin</code>). None of that
+       is in the project or its repository. The tool neither generates,
+       decrypts, nor modifies amiibo data; it only moves and catalogues the
+       files already present on a connected device.</p>
+    <p>Nothing is uploaded anywhere and there is no server: your folder, your
+       device, your browser.</p>
+  </section>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="bluetooth"></span>INTEROPERABILITY</h2>
+    <p>The Bluetooth protocol this app speaks was determined from the device
+       firmware, which is published as open source by its authors, and from
+       the vendors' own publicly served web clients, for the sole purpose of
+       interoperating with a compatible device over Bluetooth.</p>
+  </section>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="cards"></span>ARTWORK</h2>
+    <p>amiibo images shown by the collection, and the Air Riders vehicle
+       renders on detail pages, are © Nintendo. They are fetched at the
+       user's request for personal, local use and are not redistributed by
+       the project's repository.</p>
+    <p>The pirate mascot and logo are original pixel art made for this
+       project. They depict no Nintendo character or mark.</p>
+    <p>The 91 Happy Home Designer item cards listed here are a fan-made,
+       community pack, not official Nintendo products. This site holds only a
+       factual index of them (card number, NFC UID, item count), and no tag
+       data.</p>
+  </section>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="copy"></span>THIRD-PARTY DATA AND CODE</h2>
+    <div class="lWrap"><table class="lTable">
+      <tr><th>Source</th><th>Used for</th><th>Licence</th></tr>
+      <tr><td><a href="https://github.com/8bitDream/AmiiboAPI" target="_blank" rel="noreferrer noopener">8bitDream/AmiiboAPI</a>
+              (fork of <a href="https://github.com/N3evin/AmiiboAPI" target="_blank" rel="noreferrer noopener">N3evin/AmiiboAPI</a>)</td>
+          <td>amiibo series and type labels, release dates, artwork URLs</td>
+          <td>MIT</td></tr>
+      <tr><td><a href="https://github.com/solosky/pixl.js" target="_blank" rel="noreferrer noopener">solosky/pixl.js</a></td>
+          <td>wire protocol reference; amiibo name table</td>
+          <td>GPL-2.0</td></tr>
+      <tr><td><a href="https://fonts.google.com/specimen/Press+Start+2P" target="_blank" rel="noreferrer noopener">Press Start 2P</a> (vendored)</td>
+          <td>pixel display font</td>
+          <td>SIL OFL 1.1</td></tr>
+      <tr><td><a href="https://pixelarticons.com" target="_blank" rel="noreferrer noopener">Pixelarticons</a> by Gerrit Halfmann (inlined)</td>
+          <td>8-bit UI icons</td>
+          <td>MIT</td></tr>
+      <tr><td>amiibo artwork and vehicle renders</td>
+          <td>collection and detail images, shown to identify the files you manage</td>
+          <td>©&nbsp;Nintendo</td></tr>
+    </table></div>
+  </section>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="check"></span>LICENCES</h2>
+    <ul>
+      <li>The project's own source is <b>MIT</b>.</li>
+      <li>The generated amiibo database embeds the name table from pixl.js
+          and is therefore <b>GPL-2.0</b>; its series and type labels and its
+          dates come from AmiiboAPI (MIT).</li>
+      <li>Full texts, and the same statements from the repository's side,
+          live in the
+          <a href="https://github.com/mahoudeau/allmiibo-sync" target="_blank" rel="noreferrer noopener">README on GitHub</a>.</li>
+    </ul>
+  </section>
+</main>
+<script type="module" src="./js/header.js"></script>
+<script type="module">
+import { ICONS } from './js/icons.js';
+for (const el of document.querySelectorAll('[data-ico]')) el.innerHTML = ICONS[el.dataset.ico] ?? '';
+</script>
+<script type="module" src="./js/footer.js"></script>
+</body>
+</html>

@@ -31,7 +31,8 @@ footer.innerHTML = `
       Amiibo artwork and names are Nintendo's.
       Database from ${ext(AMIIBOAPI_URL, 'AmiiboAPI')} via the ${ext(AMIIBOAPI_FORK_URL, '8bitDream fork')} (MIT) ·
       protocol and name table from ${ext(PIXLJS_URL, 'pixl.js')} (GPL) ·
-      not affiliated with Nintendo.
+      not affiliated with Nintendo ·
+      <a href="./legal.html">legal &amp; licensing</a>.
     </p>
   </div>`;
 

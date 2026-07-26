@@ -21,7 +21,7 @@ export const OPS = [
     value: 'smart', name: 'SYNC', ico: 'sync',
     desc: 'Send each side the other\u2019s changes.',
     opts: [
-      { key: 'allowDelete', label: 'Also delete — removals carry over' },
+      { key: 'allowDelete', label: 'Also delete (removals carry over)' },
       { key: 'verify', label: 'Verify doubtful files (slow)' },
     ],
   },
