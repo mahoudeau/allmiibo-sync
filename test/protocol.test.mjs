@@ -351,3 +351,32 @@ test('a disconnect rejects both in-flight and queued commands', async () => {
   await assert.rejects(() => first, /disconnected/);
   await assert.rejects(() => second, /disconnected/);
 });
+
+test('after real silence the client pings get_version, but never while busy', async () => {
+  const t = new FakeTransport();
+  t.connected = true; // the keep-alive checks the link before pinging
+  t.onWrite = (frame) => {
+    // answer everything as a version reply so the queue keeps draining
+    t.respond(frame[0], 0, new ByteWriter(32).string('1.2.3').toUint8Array());
+  };
+  const c = new AllmiiboClient(t, { keepAliveMs: 120 });
+  try {
+    // Active phase: constant traffic for longer than the idle threshold.
+    const t0 = Date.now();
+    while (Date.now() - t0 < 300) await c.getVersion();
+    const activeWrites = t.writes.length;
+
+    // Idle phase: no calls from us — the ping must fire on its own.
+    await new Promise((r) => setTimeout(r, 400));
+    assert.ok(t.writes.length > activeWrites, 'idle silence produced no keep-alive ping');
+    assert.equal(t.writes[t.writes.length - 1][0], CMD.GET_VERSION);
+
+    // Disconnect tears the timer down: no writes appear afterwards.
+    t.dispatchEvent(new CustomEvent('disconnected'));
+    const after = t.writes.length;
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(t.writes.length, after, 'keep-alive survived disconnect');
+  } finally {
+    t.dispatchEvent(new CustomEvent('disconnected')); // always clear the interval
+  }
+});

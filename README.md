@@ -91,13 +91,16 @@ greyed out until a source says otherwise. Two sources, either or both:
   back and identified. That costs ~0.2 s per file, so a few minutes for a full
   library; it shows live progress and can be stopped part-way.
 
-Both sources live in one **SOURCES** panel. Each source is a chip with its
-controls (rescan, change folder, forget) and its own detail line right below:
-the folder shows owned count, completion bar and dump-file total; the device
-shows its amiibo count and a bar for how much of the union is synced. One
-line at the panel's foot gives the verdict: **ALL SYNCED** when the two
-sides are identical, otherwise the synced percentage with what's left
-(`15 to send · 5 to fetch`). The first time a state reaches identical, an
+Both sources live in one **SOURCES** panel as identical rows, each a chip
+with its controls (rescan, change folder, forget) and only its own facts
+beneath: the folder shows its dump-file total, the device its amiibo count
+and a bar for how much of the union is synced. One line at the panel's foot
+gives the verdict: **ALL SYNCED** when the two sides are identical,
+otherwise the synced percentage with what's left (`15 to send · 5 to
+fetch`). Below the panel sits the collection's completion, hero-sized:
+owned out of total with a chunky bar, where owned counts both sources, so
+an amiibo that lives only on the device still counts; when that happens the
+stat carries an **ONLY ON DEVICE** sub-count. The first time a state reaches identical, an
 old-game victory overlay plays once; the counts under each source double as
 filter shortcuts.
 The toolbar has search (press `/`), filter pills with live counts, three
@@ -319,6 +322,11 @@ Service: `vfs_read_dir`, `vfs_open_file`, `vfs_read_file`, `vfs_write_file`,
 `vfs_create_folder`, `vfs_remove`, `vfs_rename`. Files move in 242-byte
 chunks with one command in flight at a time. The full wire format is in
 [PROTOCOL.md](PROTOCOL.md).
+
+The protocol has no heartbeat, and an idle device can power itself off, so
+after ten seconds of silence the client sends a `get_version` as a
+keep-alive: the cheapest command there is, and it never interleaves with
+real work.
 
 ## Tests
 

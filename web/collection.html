@@ -58,6 +58,27 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
   /* Per-source detail lines + shared sync state, inside the sources panel */
   .hDetail { display:flex; align-items:center; gap:.9rem; flex-wrap:wrap;
              margin:.1rem 0 .65rem 2.4rem; }
+  /* Collection completion: hero-sized, below the sources panel, above the filters */
+  .heroProg { margin:0 0 1.2rem; display:grid; gap:.5rem; }
+  .heroProg .hpTop { display:flex; align-items:baseline; gap:.7rem; flex-wrap:wrap; }
+  .heroProg .hpOwned { background:none; border:none; box-shadow:none; padding:0;
+    min-height:0; cursor:pointer; font-family:var(--pixel); }
+  .heroProg .hpOwned b { font-size:1.15rem; color:var(--ok); font-weight:400; }
+  .heroProg .hpOwned .of { font-size:.65rem; color:var(--fg); }
+  .heroProg .hpOwned:hover b { color:var(--fg); }
+  .heroProg .hpLbl { font-family:var(--pixel); font-size:.55rem; color:var(--muted); }
+  .heroProg .hpPct { margin-left:auto; font-family:var(--pixel); font-size:.75rem;
+                     color:var(--fg); font-weight:400; }
+  .heroProg .hpBar { height:16px; border:2px solid var(--border); background:var(--bg);
+                     position:relative; overflow:hidden; }
+  .heroProg .hpBar .fill { position:absolute; inset:0 auto 0 0; background:var(--ok);
+                           transition:width .3s steps(6,end); }
+  .heroProg .hpBar::after { content:''; position:absolute; inset:0;
+    background:repeating-linear-gradient(90deg, transparent 0 calc(5% - 2px), var(--bg) calc(5% - 2px) 5%); }
+  .heroProg .hStat { display:inline-flex; align-items:center; gap:.35rem;
+    font-family:var(--pixel); font-size:.5rem; color:var(--muted); }
+  .heroProg .hStat .ico { width:.85rem; height:.85rem; }
+  .heroProg .hStat b { font-weight:400; color:var(--accent2); }
   .hDetail .hStat { display:inline-flex; align-items:center; gap:.35rem;
     font-family:var(--pixel); font-size:.5rem; color:var(--muted);
     background:none; border:none; box-shadow:none; padding:0; min-height:0; }
@@ -288,6 +309,7 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
   </section>
 
   <div id="hero" hidden></div>
+  <div id="collProg" hidden></div>
 
   <div id="status" class="status" hidden></div>
   <div class="pbar" id="pbar" hidden role="progressbar" aria-valuemin="0" aria-valuemax="100">

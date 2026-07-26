@@ -350,9 +350,12 @@ export function buildCollection(
       knownTotal: all.filter((i) => i.inDatabase || i.special).length,
       listed: all.length,
       ownedLocal: all.filter((i) => i.hasLocal).length,
-      // Owned *and* recognised (database or curated), so it reads sensibly
-      // against knownTotal.
-      ownedKnown: all.filter((i) => i.hasLocal && (i.inDatabase || i.special)).length,
+      // Owned = present in either source, *and* recognised (database or
+      // curated) so it reads sensibly against knownTotal. The folder/device
+      // split is exposed alongside for the difference sub-counts.
+      ownedKnown: all.filter((i) => (i.hasLocal || i.hasDevice) && (i.inDatabase || i.special)).length,
+      ownedLocalKnown: all.filter((i) => i.hasLocal && (i.inDatabase || i.special)).length,
+      ownedDeviceOnly: all.filter((i) => i.hasDevice && !i.hasLocal && (i.inDatabase || i.special)).length,
       ownedDevice: deviceSet ? all.filter((i) => i.hasDevice).length : null,
       missingLocal: all.filter((i) => !i.hasLocal && (i.inDatabase || i.special)).length,
       // curated outliers (the HHD card set) are recognised, not "not in db"

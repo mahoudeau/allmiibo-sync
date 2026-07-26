@@ -73,7 +73,7 @@ export function assertPath(path) {
 export class AllmiiboClient {
   // transport: a BleTransport (or anything emitting 'frame' with Uint8Array
   // payloads and exposing async write()).
-  constructor(transport, { timeoutMs = 15000, log = () => {} } = {}) {
+  constructor(transport, { timeoutMs = 15000, log = () => {}, keepAliveMs = 10000 } = {}) {
     this.transport = transport;
     this.timeoutMs = timeoutMs;
     this.log = log;
@@ -82,9 +82,29 @@ export class AllmiiboClient {
     this._inFlight = null;
     this._acc = null; // reassembly buffer for multi-frame responses
     this._accActive = false;
+    this.lastActivityAt = Date.now();
 
     transport.addEventListener('frame', (e) => this._onFrame(e.detail));
     transport.addEventListener('disconnected', () => this._onDisconnected());
+
+    // The device can power itself off when the link goes quiet, and the
+    // protocol has no heartbeat, so after keepAliveMs of real silence the
+    // client sends the cheapest command there is (get_version, empty
+    // payload, one notification back). Never fires while work is queued.
+    if (keepAliveMs > 0) {
+      this._keepAlive = setInterval(() => {
+        if (!this.transport.connected || this.busy) return;
+        if (Date.now() - this.lastActivityAt < keepAliveMs) return;
+        this.getVersion().catch(() => {}); // a real drop is reported by the disconnect path
+      }, Math.max(250, Math.floor(keepAliveMs / 2)));
+      // In Node (tests) an interval pins the event loop open; browsers
+      // return a number and skip this.
+      this._keepAlive.unref?.();
+    }
+  }
+
+  get busy() {
+    return !!this._inFlight || this._queue.length > 0;
   }
 
   // ---- command plumbing -------------------------------------------------
@@ -104,6 +124,7 @@ export class AllmiiboClient {
     this._inFlight = job;
     this._acc = null;
     this._accActive = false;
+    this.lastActivityAt = Date.now();
 
     job.timer = setTimeout(() => {
       this._fail(new ProtocolError(`timeout waiting for response to cmd ${job.cmd}`, { cmd: job.cmd }));
@@ -131,6 +152,8 @@ export class AllmiiboClient {
   }
 
   _onDisconnected() {
+    clearInterval(this._keepAlive);
+    this._keepAlive = null;
     const pending = [this._inFlight, ...this._queue].filter(Boolean);
     this._inFlight = null;
     this._queue = [];
@@ -181,6 +204,7 @@ export class AllmiiboClient {
     }
     clearTimeout(job.timer);
     this._inFlight = null;
+    this.lastActivityAt = Date.now();
 
     try {
       const r = new ByteReader(frame);

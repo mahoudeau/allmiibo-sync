@@ -325,3 +325,16 @@ test('the read-only folder fallback builds the same index walkLocal would', asyn
   assert.equal(index.get('notes.txt').amiiboId, null);
   assert.equal(index.get('mario.bin').hash, null, 'hash skipped when not requested');
 });
+
+test('owned counts the union of folder and device, with the split exposed', () => {
+  const local = new Set(['0000000000000002', '0181000100440502']);
+  const device = new Set(['0181000100440502', '0000010000190002']); // one shared, one device-only
+  const c = buildCollection(local, device);
+  assert.equal(c.stats.ownedKnown, 3, 'anything in either source is owned');
+  assert.equal(c.stats.ownedLocalKnown, 2);
+  assert.equal(c.stats.ownedDeviceOnly, 1);
+  // Without a device, the numbers are exactly the local ones (no behaviour change).
+  const solo = buildCollection(local, null);
+  assert.equal(solo.stats.ownedKnown, 2);
+  assert.equal(solo.stats.ownedDeviceOnly, 0);
+});

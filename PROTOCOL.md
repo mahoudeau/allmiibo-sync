@@ -534,6 +534,11 @@ Still open:
 - Whether the device tolerates write-without-response, which is the obvious
   lever for improving on 2 KB/s.
 - Whether a larger ATT MTU is negotiable.
+- Idle behaviour: the device can power itself off while connected but
+  quiet, and nothing in the protocol documents an idle timer or a way to
+  reset it. The web client mitigates by sending `get_version` after ten
+  seconds of silence; whether that traffic actually defers the power-off
+  needs confirming on hardware.
 
 ---
 

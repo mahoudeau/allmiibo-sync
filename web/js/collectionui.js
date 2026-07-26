@@ -26,7 +26,7 @@ prefs.migrate();
 const els = {};
 for (const id of [
   'srcStrip',
-  'pageMeta', 'folderChip', 'deviceChip', 'stop', 'hero', 'status', 'pbar',
+  'pageMeta', 'folderChip', 'deviceChip', 'stop', 'hero', 'collProg', 'status', 'pbar',
   'search', 'searchClear', 'searchIco', 'filters', 'sortMode', 'segView',
   'moreMenu', 'moreIco', 'copyMissing', 'showReport', 'expandAll', 'collapseAll',
   'skipped', 'series', 'emptyState',
@@ -409,7 +409,7 @@ async function scanDevice() {
     saveScanCache();
     say(stopRequested
       ? `Stopped — ${deviceIds.size} read so far. Results partial.`
-      : `Device holds ${deviceIds.size} amiibo.`, stopRequested ? 'warn' : 'ok');
+      : '', stopRequested ? 'warn' : '');
     if (!stopRequested) maybeCelebrateAllSynced();
   } catch (err) {
     pbar.hide();
@@ -485,6 +485,32 @@ function syncDeltas() {
 
 function renderStats() {
   renderHero();
+  renderProgress();
+}
+
+// The collection's completion, hero-sized, between the sources panel and
+// the filters: one global number over both sources.
+function renderProgress() {
+  const stats = collection?.stats;
+  const show = !!stats && (localIds.size > 0 || !!deviceIds);
+  els.collProg.hidden = !show;
+  if (!show) { els.collProg.innerHTML = ''; return; }
+
+  const pct = stats.knownTotal ? Math.round((stats.ownedKnown / stats.knownTotal) * 100) : 0;
+  const split = stats.ownedDeviceOnly > 0
+    ? `title="${stats.ownedLocalKnown} in your folder · ${stats.ownedDeviceOnly} only on the device"`
+    : '';
+  els.collProg.innerHTML = `<div class="heroProg">
+    <div class="hpTop">
+      <button class="hpOwned" data-filter="owned" ${split}><b>${stats.ownedKnown}</b><span class="of"> / ${stats.knownTotal}</span></button>
+      <span class="hpLbl">OWNED</span>
+      ${stats.ownedDeviceOnly > 0 ? `<span class="hStat dev" title="On the device but not in your folder — SYNC or DOWNLOAD brings them over">${icon('bluetooth')}<b>${stats.ownedDeviceOnly}</b> ONLY ON DEVICE</span>` : ''}
+      <b class="hpPct">${pct}%</b>
+    </div>
+    <div class="hpBar"><span class="fill" style="width:${pct}%"></span></div>
+  </div>`;
+  const b = els.collProg.querySelector('button[data-filter]');
+  b.addEventListener('click', () => setFilter(b.dataset.filter === currentFilter() ? 'all' : b.dataset.filter));
 }
 
 // The old-game moment: shown once per state when the folder and the device
@@ -547,7 +573,7 @@ function celebrate(freshIds) {
       shown++;
     }
   }
-  const track = els.hero.querySelector('.hBar');
+  const track = els.collProg.querySelector('.hpBar') ?? els.hero.querySelector('.hBar');
   if (track) burst(track);
 }
 
@@ -565,26 +591,22 @@ function renderHero() {
   els.hero.hidden = false;
 
 
-  // Each source carries its own numbers, right under its chip; one shared
-  // line at the bottom says how far apart the two sides are.
+  // One shared OWNED progression for the whole collection, then the two
+  // sources as identical rows, each with only its own facts beneath it.
   const stats = collection?.stats;
   const scannedFolder = localIds.size > 0;
-
-  let folderDetail = '';
-  if (stats && scannedFolder) {
-    const pct = stats.knownTotal ? Math.round((stats.ownedKnown / stats.knownTotal) * 100) : 0;
-    folderDetail = `<div class="hDetail">
-      <button class="hStat ok" data-filter="owned">${icon('checkboxOn')}<b>${stats.ownedKnown}</b>/${stats.knownTotal} OWNED</button>
-      <span class="hBar"><span class="fill" style="width:${pct}%"></span></span>
-      <b class="hPct">${pct}%</b>
-      <span class="hStat">${icon('copy')}<b>${countDumps()}</b> DUMP FILES</span>
-      ${stats.notInDatabase > 0 ? `<span class="hStat warn">${icon('sparkles')}<b>${stats.notInDatabase}</b> NOT IN DB</span>` : ''}
-    </div>`;
-  }
 
   const { up, down, matched } = syncDeltas();
   const syncDenom = matched + up + down;
   const syncPct = syncDenom ? Math.round((matched / syncDenom) * 100) : 0;
+
+  let folderDetail = '';
+  if (stats && scannedFolder) {
+    folderDetail = `<div class="hDetail">
+      <span class="hStat">${icon('copy')}<b>${countDumps()}</b> DUMP FILES</span>
+      ${stats.notInDatabase > 0 ? `<span class="hStat warn">${icon('sparkles')}<b>${stats.notInDatabase}</b> NOT IN DB</span>` : ''}
+    </div>`;
+  }
 
   let deviceDetail = '';
   if (stats && step2Done) {
@@ -679,7 +701,7 @@ function filterCounts() {
   for (const g of collection.series) {
     for (const i of g.items) {
       counts.all++;
-      if (i.hasLocal) counts.owned++;
+      if (i.hasLocal || i.hasDevice) counts.owned++;
       else counts.missing++;
       if (i.hasDevice === false) counts.notondevice++;
     }
@@ -715,7 +737,7 @@ function seriesDate(group) {
 function completionRatio(group) {
   const known = group.items.filter((i) => i.inDatabase || i.special).length;
   if (!known) return -1;
-  return group.items.filter((i) => i.hasLocal && (i.inDatabase || i.special)).length / known;
+  return group.items.filter((i) => (i.hasLocal || i.hasDevice) && (i.inDatabase || i.special)).length / known;
 }
 
 function sortedSeries() {
@@ -851,7 +873,7 @@ function makeCell(item) {
   const row = document.createElement('a');
   const q = new URLSearchParams({ id: item.id });
   row.href = `./amiibo.html?${q}`;
-  row.className = `item${hasLocal ? '' : ' missing'}`;
+  row.className = `item${hasLocal || hasDevice ? '' : ' missing'}`;
 
   const art = document.createElement('span');
   art.className = 'art';
@@ -942,7 +964,7 @@ function makeCell(item) {
 // when device data exists, ▲n to send, ▼n to download, ✨+n unlisted extras.
 function makeSeriesPill(group) {
   const known = group.items.filter((i) => i.inDatabase || i.special).length;
-  const owned = group.items.filter((i) => i.hasLocal && (i.inDatabase || i.special)).length;
+  const owned = group.items.filter((i) => (i.hasLocal || i.hasDevice) && (i.inDatabase || i.special)).length;
   const extra = group.items.filter((i) => !i.inDatabase && !i.special && i.hasLocal).length;
   const hasDev = deviceIds !== null;
   const up = hasDev ? group.items.filter((i) => i.hasLocal && i.hasDevice === false).length : 0;
@@ -989,8 +1011,8 @@ function applyFilter() {
   try { sessionStorage.setItem(Q_KEY, q); } catch {}
 
   const keep = (item, text) => {
-    if (filter === 'owned' && !item.hasLocal) return false;
-    if (filter === 'missing' && item.hasLocal) return false;
+    if (filter === 'owned' && !item.hasLocal && !item.hasDevice) return false;
+    if (filter === 'missing' && (item.hasLocal || item.hasDevice)) return false;
     if (filter === 'notondevice' && item.hasDevice !== false) return false;
     if (q && !text.includes(q)) return false;
     return true;
@@ -1301,7 +1323,7 @@ els.copyMissing.addEventListener('click', async () => {
   const lines = [];
   let n = 0;
   for (const group of collection.series) {
-    const missing = group.items.filter((i) => !i.hasLocal && i.inDatabase);
+    const missing = group.items.filter((i) => !i.hasLocal && !i.hasDevice && i.inDatabase);
     if (!missing.length) continue;
     n += missing.length;
     lines.push(`${group.seriesName} (${missing.length})`);

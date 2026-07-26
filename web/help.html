@@ -57,15 +57,19 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
           picking it again.</li>
       <li><b>Your device.</b> Connect over Bluetooth and pick the folder on
           the device to read. Its contents appear with a
-          <span class="muted">bluetooth badge</span>. Reading takes a few
-          minutes, and you can stop at any time.</li>
+          <span class="muted">bluetooth badge</span> and count as owned,
+          even before they reach your folder. Reading takes a few minutes,
+          you can stop at any time, and while connected the app quietly
+          pings the device so it does not fall asleep.</li>
     </ul>
-    <p>Each source is a chip in the panel with its own numbers right below
-       it: owned count, dump files, how much is synced. The counts double as
-       shortcuts: click <b>OWNED</b> or <b>ON DEVICE</b> to filter by them.
-       From the chip you can rescan a source, change its folder, or remove
-       it. Amiibo are recognised by the identity inside each file, so
-       filenames do not matter.</p>
+    <p>Each source is a chip in the panel with its own facts: dump files
+       for the folder, amiibo count and synced bar for the device. Your
+       collection's overall progress sits right below the panel, counting
+       both sources together. The counts double as shortcuts: click
+       <b>OWNED</b> or <b>ON DEVICE</b> to filter by them. From the chip you
+       can rescan a source, change its folder, or remove it. Amiibo are
+       recognised by the identity inside each file, so filenames do not
+       matter.</p>
   </section>
 
   <section class="helpSec">
