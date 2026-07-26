@@ -4,12 +4,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>amiibo</title>
+<meta name="description" content="Per-amiibo detail: artwork, series, release and ID breakdown.">
+<meta name="theme-color" content="#2b2b2a">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="icon" href="./icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="manifest" href="./manifest.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="allmiibo-sync">
+<meta property="og:title" content="amiibo — allmiibo-sync">
+<meta property="og:description" content="Per-amiibo detail: artwork, series, release and ID breakdown.">
+<meta property="og:url" content="https://allmiibo.mathieu.dev/amiibo.html">
+<meta property="og:image" content="https://allmiibo.mathieu.dev/icons/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="./css/app.css">
+<script>
+// First paint honours the stored preferences (header.js manages them after).
+try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
+</script>
 <style>
   .detail { display: grid; gap: 1.5rem; grid-template-columns: 1fr; margin-top: 1rem; }
   @media (min-width: 700px) { .detail { grid-template-columns: minmax(16rem, 22rem) 1fr; } }
 
-  .portrait { border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+  .portrait { border: 2px solid var(--border); background: var(--panel);
               display: flex; align-items: center; justify-content: center;
               min-height: 20rem; padding: 1.5rem; position: relative; }
   .portrait img { max-width: 100%; max-height: 26rem; object-fit: contain; }
@@ -22,18 +41,18 @@
   .factGrid dd { margin: 0; font-variant-numeric: tabular-nums; }
   .badges { display: flex; gap: .4rem; margin: .75rem 0 1rem; flex-wrap: wrap; }
   .idmono { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel);
-            border: 1px solid var(--border); border-radius: 5px; padding: .15rem .45rem; }
+            border: 2px solid var(--border); padding: .15rem .45rem; }
   .vehiclesBlock { margin-top: 1.25rem; }
   .vehiclesBlock h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em;
                       color: var(--muted); margin: 0 0 .5rem; }
-  .tag { font-size: .72rem; padding: .1rem .45rem; border-radius: 4px;
-         border: 1px solid var(--border); color: var(--muted); }
+  .tag { font-size: .72rem; padding: .1rem .45rem;
+         border: 2px solid var(--border); color: var(--muted); }
   .tag.ok-tag { border-color: var(--ok); color: var(--ok); }
   .tag.dev { border-color: var(--accent); color: var(--accent); }
   .tag.new { border-color: var(--warn); color: var(--warn); }
   .vehicles { display: flex; flex-wrap: wrap; gap: .35rem; }
-  .chip { font-size: .75rem; padding: .12rem .5rem; border-radius: 99px;
-          border: 1px dashed var(--border); color: var(--muted); opacity: .6; }
+  .chip { font-size: .75rem; padding: .12rem .5rem;
+          border: 2px dashed var(--border); color: var(--muted); opacity: .6; }
   .chip.have { border-style: solid; border-color: var(--ok); color: var(--ok); opacity: 1; }
 </style>
 </head>
@@ -45,6 +64,7 @@
     <div class="status">Loading…</div>
   </div>
 </main>
+<script type="module" src="./js/header.js"></script>
 <script type="module" src="./js/amiibodetail.js"></script>
 <script type="module" src="./js/footer.js"></script>
 </body>

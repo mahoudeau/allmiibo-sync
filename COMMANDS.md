@@ -17,10 +17,15 @@ accepts one BLE connection at a time.
 
 | Page | What it does |
 |---|---|
+| <http://localhost:8080/> | 8-bit title screen — leads into collection and sync |
 | <http://localhost:8080/collection.html> | collection tracker — artwork, per-series completion, device comparison |
 | <http://localhost:8080/sync.html> | the four operations: download everything, replace device, smart sync, sync by amiibo |
-| <http://localhost:8080/index.html> | read-only device probe (walks the filesystem, touches nothing) |
-| <http://localhost:8080/write-test.html> | write-behaviour test, confined to `E:/_synctest` |
+| <http://localhost:8080/probe.html> | read-only device probe (walks the filesystem, touches nothing) — Advanced |
+| <http://localhost:8080/write-test.html> | write-behaviour test, confined to `E:/_synctest` — Advanced |
+| <http://localhost:8080/design-lab.html> | the design moodboard the NES skin was chosen from (not deployed) |
+
+The probe and write-test pages are hidden from the navigation until the
+**Advanced** toggle (header → Settings) is on; the URLs always work.
 
 ## Tests
 

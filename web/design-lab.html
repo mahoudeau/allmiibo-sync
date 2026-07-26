@@ -1,0 +1,860 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>allmiibo-sync — design lab (throwaway)</title>
+<style>
+/* Press Start 2P (SIL OFL) embedded as a data URI so this file is fully
+   self-contained and portable — open it directly or via serve.mjs. */
+@font-face {
+  font-family: 'Press Start 2P';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('data:font/woff2;base64,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') format('woff2');
+}
+
+/* ---- tokens: shared shape language, colours come from palette wrappers ---- */
+:root {
+  --pixel: 'Press Start 2P', monospace;
+  --body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Palette A — "CRT Indigo" */
+[data-pal="a"] {
+  --bg:#0f0f18; --panel:#1b1b2b; --panel2:#23233a; --border:#4a4a6a;
+  --fg:#f4f4f4; --muted:#9a9ab5; --accent:#e23b2e; --accent2:#5a7be5;
+  --ok:#6abe30; --warn:#f2c531; --err:#ff5c4d; --shadow:#000000;
+}
+/* Palette B — "Console Black" */
+[data-pal="b"] {
+  --bg:#0a0a0a; --panel:#161616; --panel2:#202020; --border:#3a3a3a;
+  --fg:#eaeaea; --muted:#8a8a8a; --accent:#e5473b; --accent2:#4f8cff;
+  --ok:#7ac943; --warn:#ffcf40; --err:#ff5347; --shadow:#000000;
+}
+/* Palette C — "Console Shell": the authentic NES-shell greys + stripe red.
+   Greens/yellows are derived (the source palette is greyscale + red only). */
+[data-pal="c"] {
+  --bg:#2b2b2a; --panel:#3a3a39; --panel2:#4a4947; --border:#72706f;
+  --fg:#c9c7c3; --muted:#9a938a; --accent:#9a2a26; --accent2:#6f6459;
+  /* green tuned to the brick red: same muted saturation + value, so the
+     completeness pills read as a matched pair, not a bright outlier. */
+  --ok:#3e8e3e; --warn:#c9a24a; --err:#c23a34; --shadow:#1a1a19;
+}
+
+* { box-sizing: border-box; }
+html { background:#050509; }
+body {
+  margin:0; padding:0 0 4rem;
+  font-family: var(--body);
+  color:#e8e8ea; background:#050509;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap { max-width: 72rem; margin: 0 auto; padding: 0 1.25rem; }
+
+/* Doc chrome (the moodboard's own UI, deliberately plain) */
+.docHead { padding: 2rem 1.25rem 1rem; border-bottom:1px solid #24242e; margin-bottom:2rem; }
+.docHead h1 { font-family:var(--pixel); font-size:1.1rem; line-height:1.5; margin:0 0 .75rem; color:#fff; }
+.docHead p { color:#9a9ab5; max-width:46rem; font-size:.95rem; line-height:1.6; margin:.25rem 0; }
+.docHead .tag { display:inline-block; font-family:var(--pixel); font-size:.55rem; padding:.35rem .5rem;
+  border:1px solid #e5473b; color:#e5473b; margin-bottom:.75rem; }
+h2.sec { font-family:var(--pixel); font-size:.8rem; color:#fff; margin:2.75rem 0 .35rem;
+  padding-top:1.5rem; border-top:1px solid #24242e; }
+p.hint { color:#8a8a8a; font-size:.85rem; margin:.15rem 0 1.25rem; max-width:52rem; line-height:1.55; }
+.pill { font-family:var(--pixel); font-size:.5rem; padding:.25rem .4rem; border:1px solid #444;
+  color:#aaa; vertical-align:middle; margin-left:.5rem; }
+.pill.rec { border-color:#6abe30; color:#6abe30; }
+.pill.no { border-color:#ff5c4d; color:#ff5c4d; }
+
+/* two-up comparison grid */
+.two { display:grid; grid-template-columns:1fr; gap:1.25rem; }
+@media (min-width:820px){ .two { grid-template-columns:1fr 1fr; } }
+/* three-up palette comparison */
+.palRow { display:grid; grid-template-columns:1fr; gap:1.25rem; }
+@media (min-width:720px){ .palRow { grid-template-columns:1fr 1fr; } }
+@media (min-width:1040px){ .palRow { grid-template-columns:repeat(3,1fr); } }
+/* the 3 palette boards are clickable and re-theme the whole page */
+.palRow .board { cursor:pointer; position:relative; }
+.palRow .board:hover { outline:2px solid var(--accent); outline-offset:2px; }
+.palRow .board.selected { outline:3px solid var(--accent); outline-offset:2px; }
+.palRow .board.selected::after { content:'APPLIED'; position:absolute; top:.4rem; right:.4rem;
+  font-family:var(--pixel); font-size:.45rem; color:#fff; background:var(--accent); padding:.25rem .35rem; }
+
+/* amiibo-logo proposals gallery */
+.amiiboGrid { display:grid; grid-template-columns:repeat(2,1fr); gap:.9rem; }
+@media (min-width:560px){ .amiiboGrid { grid-template-columns:repeat(4,1fr); } }
+.amiiboCell { background:var(--panel); border:2px solid var(--border); box-shadow:3px 3px 0 var(--shadow);
+  padding:1rem .5rem .7rem; text-align:center; cursor:pointer; transition:border-color .1s; }
+.amiiboCell:hover { border-color:var(--accent); }
+.amiiboCell .mark { display:inline-block; margin-bottom:.6rem; }
+.amiiboCell .cap { font-family:var(--pixel); font-size:.5rem; color:var(--muted); }
+.amiiboCell .num { font-family:var(--pixel); font-size:.5rem; color:var(--accent); }
+.lockup { display:flex; align-items:center; gap:.8rem; justify-content:center; margin-top:1.1rem;
+  padding:1rem; border:2px dashed var(--border); }
+.lockup .wordmark { font-size:1.05rem; }
+.capRow { display:flex; flex-direction:column; gap:.6rem; }
+.capRow .lockup { margin-top:0; }
+
+/* A palette board = a themed surface using its own vars */
+.board { background:var(--bg); color:var(--fg); border:2px solid var(--border);
+  box-shadow:6px 6px 0 var(--shadow); padding:1.1rem 1.1rem 1.4rem; }
+.board .boardName { font-family:var(--pixel); font-size:.6rem; color:var(--muted);
+  display:flex; justify-content:space-between; align-items:center; margin-bottom:.9rem; }
+.board .boardName b { color:var(--fg); }
+.swatches { display:flex; flex-wrap:wrap; gap:.35rem; margin-bottom:1rem; }
+.sw { width:2.2rem; height:2.2rem; border:2px solid #0006; position:relative; }
+.sw span { position:absolute; bottom:-1.1rem; left:0; right:0; text-align:center;
+  font-family:var(--mono); font-size:.5rem; color:var(--muted); }
+.swrow { display:flex; gap:.35rem; margin-bottom:1.6rem; flex-wrap:wrap; }
+
+/* ---- NES component language (uses the palette vars in scope) ---- */
+.nbtn {
+  font-family:var(--pixel); font-size:.6rem; line-height:1; color:var(--fg);
+  background:var(--panel2); border:2px solid var(--border);
+  box-shadow:3px 3px 0 var(--shadow); padding:.5em 1em; cursor:pointer;
+  text-transform:none; transition:border-color .1s;
+  /* Uniform height so text-only buttons match icon buttons (the icon would
+     otherwise make its button taller). */
+  min-height:2.4rem; justify-content:center;
+}
+.nbtn:hover { border-color:var(--accent); }
+.nbtn:active { transform:translate(3px,3px); box-shadow:none; }
+.nbtn.primary { background:var(--accent); border-color:#0006; color:#fff; }
+.nbtn.danger { background:transparent; border-color:var(--err); color:var(--err); }
+.nbtn:disabled { opacity:.4; cursor:not-allowed; box-shadow:3px 3px 0 var(--shadow); transform:none; }
+.btnrow { display:flex; flex-wrap:wrap; gap:.7rem; align-items:center; margin-bottom:1.1rem; }
+
+.npanel { background:var(--panel); border:2px solid var(--border);
+  box-shadow:4px 4px 0 var(--shadow); padding:.85rem .95rem; }
+.nnote { border-left:5px solid var(--accent); background:var(--panel);
+  padding:.6rem .8rem; font-size:.82rem; color:var(--muted); line-height:1.5; }
+.nnote.caution { border-left-color:var(--warn); }
+
+.nstatus { font-family:var(--mono); font-size:.8rem; padding:.5rem .7rem;
+  border:2px solid var(--border); background:var(--panel); margin-bottom:.5rem; }
+.nstatus.ok  { color:var(--ok);  border-color:currentColor; }
+.nstatus.warn{ color:var(--warn);border-color:currentColor; }
+.nstatus.err { color:var(--err); border-color:currentColor; }
+
+.chips { display:flex; flex-wrap:wrap; gap:.4rem; margin:.7rem 0; }
+.chip { font-family:var(--pixel); font-size:.5rem; padding:.35rem .5rem; border:2px solid var(--border);
+  color:var(--muted); background:var(--panel); }
+.chip.have { border-color:var(--ok);   color:var(--ok); }
+.chip.dev  { border-color:var(--accent2); color:var(--accent2); }
+.chip.new  { border-color:var(--warn); color:var(--warn); }
+.chip.guess{ border-style:dashed; font-style:italic; }
+
+/* stats bar */
+.statbar { display:flex; gap:1.4rem; flex-wrap:wrap; border:2px solid var(--border);
+  background:var(--panel); box-shadow:4px 4px 0 var(--shadow); padding:.9rem 1rem; margin:.6rem 0 1.2rem; }
+.metric b { font-family:var(--pixel); font-size:1rem; color:var(--fg); display:block; }
+.metric span { font-size:.7rem; color:var(--muted); }
+
+/* collection row + card */
+.artTile { width:40px; height:40px; flex:none; display:grid; place-items:center;
+  background:var(--panel2); border:2px solid var(--border); image-rendering:pixelated;
+  font-family:var(--pixel); font-size:.6rem; color:var(--muted); }
+.crow { display:flex; align-items:center; gap:.6rem; padding:.45rem .5rem; border:2px solid transparent;
+  background:var(--panel); }
+.crow:hover { border-color:var(--accent); }
+.crow .nm { flex:1; font-size:.9rem; }
+.crow.missing { opacity:.5; }
+.dot { width:.55rem; height:.55rem; background:var(--ok); flex:none; }
+.crow.missing .dot { background:transparent; border:2px solid var(--muted); }
+
+.cardgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:.6rem; margin-top:.6rem; }
+.ccard { background:var(--panel); border:2px solid var(--border); box-shadow:3px 3px 0 var(--shadow);
+  padding:.7rem .5rem; text-align:center; }
+.ccard .artTile { width:72px; height:72px; margin:0 auto .5rem; font-size:1rem; }
+.ccard .nm { font-size:.78rem; }
+.ccard.missing { opacity:.55; }
+
+/* series header */
+.shead { display:flex; align-items:center; gap:.6rem; padding:.55rem .7rem; border:2px solid var(--border);
+  background:var(--panel2); box-shadow:3px 3px 0 var(--shadow); }
+.shead .seriesArt { width:26px; height:26px; background:var(--panel); border:2px solid var(--border); }
+.shead .stitle { font-family:var(--pixel); font-size:.62rem; flex:1; }
+.count { font-family:var(--pixel); font-size:.5rem; padding:.25rem .45rem; border:2px solid var(--ok); color:var(--ok); }
+.count.part { border-color:var(--warn); color:var(--warn); }
+
+/* header/nav concept */
+.appbar { display:flex; align-items:center; gap:1rem; padding:.7rem .9rem; border:2px solid var(--border);
+  background:var(--panel); box-shadow:4px 4px 0 var(--shadow); flex-wrap:wrap; }
+.brand { display:flex; align-items:center; gap:.6rem; }
+.brand .wm { font-family:var(--pixel); font-size:.7rem; }
+.brand .wm .sfx { color:var(--accent); }
+.appnav { display:flex; gap:1rem; flex:1; flex-wrap:wrap; }
+.appnav a { font-family:var(--pixel); font-size:.55rem; color:var(--muted); text-decoration:none;
+  display:inline-flex; align-items:center; gap:.35rem; padding:.3rem 0; border-bottom:3px solid transparent; }
+.appnav a:hover { color:var(--fg); }
+.appnav a.active { color:var(--fg); border-bottom-color:var(--accent); }
+/* 8-bit icons (Pixelarticons, MIT + hand-drawn bluetooth). Sized a touch
+   larger than the cap-height and pixel-crisp; flex-centred so they never sit
+   low against pixel-font labels. */
+/* 8-bit icons — sized in rem (not em) so they stay clearly LARGER than the
+   small pixel-font labels beside them, and pixel-crisp. */
+.ico { width:1.35rem; height:1.35rem; flex:none; display:inline-grid; place-items:center; }
+.ico svg { width:100%; height:100%; display:block; image-rendering:pixelated; shape-rendering:crispEdges; }
+/* In buttons, keep the icon modest so it doesn't inflate button height —
+   still larger than the pixel label, but the button stays compact. */
+.nbtn .ico { width:1.1rem; height:1.1rem; }
+/* buttons/nav/labels align their icon + text on a flex baseline */
+.nbtn, .appnav a, .brand { display:inline-flex; align-items:center; gap:.5rem; }
+
+/* advanced toggle (live) */
+.advToggle { display:inline-flex; align-items:center; gap:.5rem; font-family:var(--pixel);
+  font-size:.5rem; color:var(--muted); cursor:pointer; user-select:none; }
+.advToggle .sw2 { width:2.4rem; height:1.2rem; background:var(--panel2); border:2px solid var(--border);
+  position:relative; }
+.advToggle .knob { position:absolute; top:1px; left:1px; width:.85rem; height:.85rem; background:var(--muted);
+  transition:left .1s, background .1s; }
+#advChk { position:absolute; opacity:0; pointer-events:none; }
+#advChk:checked ~ * .advToggle .sw2 { border-color:var(--accent); }
+/* fallback handled by JS toggling body[data-adv] */
+body[data-adv="on"] .advToggle .sw2 { border-color:var(--accent); }
+body[data-adv="on"] .advToggle .knob { left:calc(100% - .85rem - 1px); background:var(--accent); }
+body:not([data-adv="on"]) .advanced-only { display:none !important; }
+.advanced-only { outline:1px dashed var(--accent); outline-offset:3px; }
+.advNote { font-size:.7rem; color:var(--accent); margin:.4rem 0; font-family:var(--mono); }
+
+/* amiibo detail snippet */
+.detail { display:grid; grid-template-columns:120px 1fr; gap:1rem; }
+.portrait { background:var(--panel2); border:2px solid var(--border); box-shadow:4px 4px 0 var(--shadow);
+  aspect-ratio:3/4; display:grid; place-items:center; image-rendering:pixelated;
+  font-family:var(--pixel); font-size:.6rem; color:var(--muted); }
+.facts h3 { font-family:var(--pixel); font-size:.8rem; margin:0 0 .5rem; }
+.factGrid { display:grid; grid-template-columns:auto 1fr; gap:.3rem .8rem; font-size:.82rem; }
+.factGrid dt { color:var(--muted); }
+.factGrid dd { margin:0; }
+.idmono { font-family:var(--mono); font-size:.78rem; background:var(--panel2); border:2px solid var(--border);
+  padding:.15rem .4rem; }
+
+/* title screen */
+.title { position:relative; overflow:hidden; text-align:center; padding:2.5rem 1rem 2.8rem;
+  border:2px solid var(--border); background:radial-gradient(120% 120% at 50% 0%, #1a1830 0%, var(--bg) 70%); }
+.title .logoBig { display:inline-flex; align-items:center; gap:.8rem; margin-bottom:1rem; }
+.title .wm { font-family:var(--pixel); font-size:1.25rem; }
+.title .wm .sfx { color:var(--accent); }
+.title .tagline { font-family:var(--pixel); font-size:.55rem; color:var(--muted); margin-bottom:1.6rem; letter-spacing:.05em; }
+.title .start { display:flex; gap:.9rem; justify-content:center; flex-wrap:wrap; }
+.press { font-family:var(--pixel); font-size:.55rem; color:var(--accent); margin-top:1.5rem; }
+@media (prefers-reduced-motion: no-preference){ .press { animation: blink 1.1s steps(1) infinite; } }
+@keyframes blink { 50% { opacity:0; } }
+.scan { position:absolute; inset:0; pointer-events:none; opacity:.35;
+  background:repeating-linear-gradient(to bottom, #0000 0 2px, #0004 2px 4px); }
+
+/* logo lab */
+.logos { display:grid; grid-template-columns:1fr; gap:1.25rem; }
+@media (min-width:820px){ .logos { grid-template-columns:1fr 1fr; } }
+.logoCard { background:var(--panel); border:2px solid var(--border); box-shadow:4px 4px 0 var(--shadow); padding:1.2rem; }
+.logoCard h4 { font-family:var(--pixel); font-size:.6rem; margin:0 0 1rem; color:var(--fg); }
+.logoRow { display:flex; align-items:center; gap:1rem; margin-bottom:1rem; flex-wrap:wrap; }
+.mark { image-rendering:pixelated; }
+.mark svg { display:block; shape-rendering:crispEdges; }
+.faviconRow { display:flex; align-items:flex-end; gap:1rem; }
+.faviconRow figure { margin:0; text-align:center; }
+.faviconRow figcaption { font-family:var(--mono); font-size:.55rem; color:var(--muted); margin-top:.3rem; }
+.wordmark { font-family:var(--pixel); font-size:.95rem; }
+.wordmark .sfx { color:var(--accent); }
+.small { font-size:.7rem; color:var(--muted); }
+</style>
+</head>
+<body data-pal="a" data-adv="off">
+<input type="checkbox" id="advChk" hidden>
+
+<div class="docHead">
+  <div class="wrap">
+    <span class="tag">THROWAWAY · design lab</span>
+    <h1>allmiibo-sync — NES redesign moodboard</h1>
+    <p>Nothing here touches the real app. Pick a <b>palette</b>, a <b>logo direction</b>, and flag any component
+      tweaks. Everything is dark-only NES: square corners, 2px borders, hard offset shadows, buttons that press in.
+      Pixel font (Press Start 2P) is used for titles/UI chrome; body text stays a clean readable stack.</p>
+    <p class="small">Tell me e.g. “palette B, logo 1, buttons yes, chips smaller” and I’ll build the real thing.</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- 1. PALETTES -->
+  <h2 class="sec">1 · Palette <span class="pill">choose one</span></h2>
+  <p class="hint"><b>Click any palette board to apply it to the whole page.</b> Same components rendered in each scheme. A = deep CRT indigo (a little warmth in the blacks).
+    B = neutral console black (grayscale shell, punchy red). Toggle the Advanced switch in either board to see
+    hidden power-controls appear (dashed blue outline marks advanced-only items).</p>
+  <div class="palRow">
+    <!-- board template repeated per palette -->
+    <div class="board" data-pal="a">
+      <div class="boardName"><b>Palette A — CRT Indigo</b><span>#0f0f18</span></div>
+      <div class="swrow">
+        <div class="sw" style="background:#e23b2e"><span>accent</span></div>
+        <div class="sw" style="background:#5a7be5"><span>link</span></div>
+        <div class="sw" style="background:#6abe30"><span>ok</span></div>
+        <div class="sw" style="background:#f2c531"><span>warn</span></div>
+        <div class="sw" style="background:#ff5c4d"><span>err</span></div>
+        <div class="sw" style="background:#1b1b2b"><span>panel</span></div>
+      </div>
+      <div class="btnrow">
+        <button class="nbtn primary">CONNECT</button>
+        <button class="nbtn">SCAN</button>
+        <button class="nbtn danger">REPLACE</button>
+        <button class="nbtn" disabled>STOP</button>
+      </div>
+      <div class="nstatus ok">946 dumps · 946 distinct amiibos</div>
+      <div class="nstatus warn">Stopped early — 312 identified</div>
+      <div class="chips">
+        <span class="chip have">HAVE</span><span class="chip dev">DEVICE</span>
+        <span class="chip new">NEW</span><span class="chip guess">GUESS?</span>
+      </div>
+      <div class="crow"><div class="artTile">MA</div><div class="nm">Mario</div><span class="dot"></span></div>
+      <div class="crow missing"><div class="artTile">LK</div><div class="nm">Link</div><span class="dot"></span></div>
+      <p class="advNote advanced-only">▸ advanced-only controls now visible</p>
+      <div class="btnrow advanced-only"><button class="nbtn">COMPARE BY CONTENT</button><label class="small">☐ Propagate deletions</label></div>
+    </div>
+
+    <div class="board" data-pal="b">
+      <div class="boardName"><b>Palette B — Console Black</b><span>#0a0a0a</span></div>
+      <div class="swrow">
+        <div class="sw" style="background:#e5473b"><span>accent</span></div>
+        <div class="sw" style="background:#4f8cff"><span>link</span></div>
+        <div class="sw" style="background:#7ac943"><span>ok</span></div>
+        <div class="sw" style="background:#ffcf40"><span>warn</span></div>
+        <div class="sw" style="background:#ff5347"><span>err</span></div>
+        <div class="sw" style="background:#161616"><span>panel</span></div>
+      </div>
+      <div class="btnrow">
+        <button class="nbtn primary">CONNECT</button>
+        <button class="nbtn">SCAN</button>
+        <button class="nbtn danger">REPLACE</button>
+        <button class="nbtn" disabled>STOP</button>
+      </div>
+      <div class="nstatus ok">946 dumps · 946 distinct amiibos</div>
+      <div class="nstatus warn">Stopped early — 312 identified</div>
+      <div class="chips">
+        <span class="chip have">HAVE</span><span class="chip dev">DEVICE</span>
+        <span class="chip new">NEW</span><span class="chip guess">GUESS?</span>
+      </div>
+      <div class="crow"><div class="artTile">MA</div><div class="nm">Mario</div><span class="dot"></span></div>
+      <div class="crow missing"><div class="artTile">LK</div><div class="nm">Link</div><span class="dot"></span></div>
+      <p class="advNote advanced-only">▸ advanced-only controls now visible</p>
+      <div class="btnrow advanced-only"><button class="nbtn">COMPARE BY CONTENT</button><label class="small">☐ Propagate deletions</label></div>
+    </div>
+
+    <div class="board" data-pal="c">
+      <div class="boardName"><b>Palette C — Console Shell</b><span>#3a3a39</span></div>
+      <div class="swrow">
+        <div class="sw" style="background:#9a2a26"><span>accent</span></div>
+        <div class="sw" style="background:#6f6459"><span>link</span></div>
+        <div class="sw" style="background:#3e8e3e"><span>ok</span></div>
+        <div class="sw" style="background:#c9a24a"><span>warn</span></div>
+        <div class="sw" style="background:#c23a34"><span>err</span></div>
+        <div class="sw" style="background:#c9c7c3"><span>text</span></div>
+      </div>
+      <div class="btnrow">
+        <button class="nbtn primary">CONNECT</button>
+        <button class="nbtn">SCAN</button>
+        <button class="nbtn danger">REPLACE</button>
+        <button class="nbtn" disabled>STOP</button>
+      </div>
+      <div class="nstatus ok">946 dumps · 946 distinct amiibos</div>
+      <div class="nstatus warn">Stopped early — 312 identified</div>
+      <div class="chips">
+        <span class="chip have">HAVE</span><span class="chip dev">DEVICE</span>
+        <span class="chip new">NEW</span><span class="chip guess">GUESS?</span>
+      </div>
+      <div class="crow"><div class="artTile">MA</div><div class="nm">Mario</div><span class="dot"></span></div>
+      <div class="crow missing"><div class="artTile">LK</div><div class="nm">Link</div><span class="dot"></span></div>
+      <p class="advNote advanced-only">▸ advanced-only controls now visible</p>
+      <div class="btnrow advanced-only"><button class="nbtn">COMPARE BY CONTENT</button><label class="small">☐ Propagate deletions</label></div>
+    </div>
+  </div>
+
+  <!-- 2. TYPOGRAPHY -->
+  <h2 class="sec">2 · Typography</h2>
+  <p class="hint">Press Start 2P for titles and UI chrome only; a clean system stack for body + data, and system
+    monospace for IDs/hex — so a 946-row list and the ID tables stay scannable.</p>
+  <div class="board">
+    <div style="font-family:var(--pixel); font-size:1.1rem; margin-bottom:.6rem;">Heading H1</div>
+    <div style="font-family:var(--pixel); font-size:.8rem; color:var(--muted); margin-bottom:1rem;">SECTION H2</div>
+    <p style="font-size:.95rem; line-height:1.6; margin:.2rem 0;">Body copy — clean sans. Identity comes from the
+      amiibo ID inside each dump, not the filename. Two dumps of the same character differ in UID and save data.</p>
+    <p style="margin:.6rem 0;">Data row: <b>Bowser</b> · Super Smash Bros. · 2015 &nbsp;
+      <span class="idmono">01000000 00030002</span></p>
+    <p class="small">Recommended pairing <span class="pill rec">recommended</span></p>
+    <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0">
+    <p style="font-family:var(--pixel); font-size:.62rem; line-height:1.9;">Full 8-bit body — every word in the pixel
+      face gets tiring fast in long lists. <span class="pill no">not recommended</span></p>
+  </div>
+
+  <!-- 3. LOGO -->
+  <h2 class="sec">3 · Logo — pixel amiibo <span class="pill">pick a number</span></h2>
+  <p class="hint">Eight <b>original 8-bit mascots</b> on the red NFC dock, NES sprite style (black outlines, flat fills, faces + details). A mix of side-view creatures (snail, ghost, fish, bat) and front-facing human heroes (explorer, ninja, knight, pirate) — all invented, none resembles a real character. Click to preview it in the wordmark lockup below; tell me the number(s) you like and I’ll refine.</p>
+  <div class="amiiboGrid" id="amiiboGrid">
+    <div class="amiiboCell" data-am="1"><span class="mark" id="am1"></span><div class="cap">SNAIL</div><div class="num">01</div></div>
+    <div class="amiiboCell" data-am="2"><span class="mark" id="am2"></span><div class="cap">EXPLORER</div><div class="num">02</div></div>
+    <div class="amiiboCell" data-am="3"><span class="mark" id="am3"></span><div class="cap">GHOST</div><div class="num">03</div></div>
+    <div class="amiiboCell" data-am="4"><span class="mark" id="am4"></span><div class="cap">NINJA</div><div class="num">04</div></div>
+    <div class="amiiboCell" data-am="5"><span class="mark" id="am5"></span><div class="cap">KNIGHT</div><div class="num">05</div></div>
+    <div class="amiiboCell" data-am="6"><span class="mark" id="am6"></span><div class="cap">FISH</div><div class="num">06</div></div>
+    <div class="amiiboCell" data-am="7"><span class="mark" id="am7"></span><div class="cap">PIRATE</div><div class="num">07</div></div>
+    <div class="amiiboCell" data-am="8"><span class="mark" id="am8"></span><div class="cap">BAT</div><div class="num">08</div></div>
+  </div>
+  <p class="hint" style="margin-top:1rem">Selected figure in the wordmark lockup:</p>
+  <div class="lockup"><span class="mark" id="amLock"></span><span class="wordmark">ALLMIIBO<span class="sfx">-SYNC</span></span></div>
+  <p class="hint" style="margin-top:1rem">Still on the table if you prefer non-figurative: the earlier
+    <b>cartridge + wave</b> mark → <span class="mark" id="markCart" style="vertical-align:middle"></span></p>
+
+  <h2 class="sec">3b · Knight variations <span class="pill">detailed</span></h2>
+  <p class="hint">A more detailed right-facing knight (plume, face, kite shield + emblem, cape, greaves, raised sword)
+    in four armour finishes. Tell me which finish you like — or say “this level of detail for the whole set”.</p>
+  <div class="amiiboGrid">
+    <div class="amiiboCell"><span class="mark" id="kv1"></span><div class="cap">CRIMSON</div></div>
+    <div class="amiiboCell"><span class="mark" id="kv2"></span><div class="cap">STEEL</div></div>
+    <div class="amiiboCell"><span class="mark" id="kv3"></span><div class="cap">GOLD</div></div>
+    <div class="amiiboCell"><span class="mark" id="kv4"></span><div class="cap">SHADOW</div></div>
+  </div>
+
+  <h2 class="sec">3c · Pirate colours <span class="pill">12 finishes</span></h2>
+  <p class="hint">The reworked pirate — proper tricorn (points fore &amp; aft), eyepatch, <b>hook hand</b> and
+    <b>wooden peg leg</b> — in twelve coat colours. Tell me which you like.</p>
+  <div class="amiiboGrid" id="pirateGrid"></div>
+
+  <!-- 4. HEADER / NAV + MODE -->
+  <h2 class="sec">4 · Header, navigation &amp; Advanced mode</h2>
+  <p class="hint">One shared header replaces today’s five copy-pasted navs. Active page is underlined in accent. The
+    <b>Advanced</b> switch (top-right) reveals Probe + Write-test links and the danger sync options. Click it — it
+    drives the whole page.</p>
+  <div class="board">
+    <div class="appbar">
+      <div class="brand">
+        <span class="mark" id="markNav"></span>
+        <span class="wm">ALLMIIBO<span class="sfx">-SYNC</span></span>
+      </div>
+      <nav class="appnav">
+        <a href="#" class="active"><span class="ico" data-ico="house"></span>HOME</a>
+        <a href="#"><span class="ico" data-ico="grid"></span>COLLECTION</a>
+        <a href="#"><span class="ico" data-ico="sync"></span>SYNC</a>
+        <a href="#" class="advanced-only"><span class="ico" data-ico="activity"></span>PROBE</a>
+        <a href="#" class="advanced-only"><span class="ico" data-ico="flask"></span>WRITE TEST</a>
+      </nav>
+      <label class="advToggle" for="advChk" id="advLabel">ADVANCED <span class="sw2"><span class="knob"></span></span></label>
+    </div>
+    <p class="advNote advanced-only" style="margin-top:.9rem">▸ Advanced ON — Probe &amp; Write-test appear above; danger sync options unlock.</p>
+  </div>
+
+  <!-- 5. COMPONENT GALLERY -->
+  <h2 class="sec">5 · Components in context</h2>
+  <p class="hint">How the pieces assemble on real screens (rendered in Palette A — swap to your pick later).</p>
+
+  <div class="board">
+    <!-- stats -->
+    <div class="statbar">
+      <div class="metric"><b>412/946</b><span>owned</span></div>
+      <div class="metric"><b>534</b><span>missing</span></div>
+      <div class="metric"><b>128</b><span>on device</span></div>
+      <div class="metric"><b>3</b><span>not in db</span></div>
+      <div class="metric"><b>598</b><span>dumps held</span></div>
+    </div>
+
+    <!-- controls -->
+    <div class="btnrow">
+      <button class="nbtn primary"><span class="ico" data-ico="folder"></span> CHOOSE FOLDER</button>
+      <button class="nbtn">SCAN</button>
+      <button class="nbtn">FORGET</button>
+      <button class="nbtn"><span class="ico" data-ico="bluetooth"></span> CONNECT</button>
+    </div>
+    <div class="nnote">Identity comes from the amiibo ID inside each dump (bytes 84–91), not the filename.</div>
+    <div class="nnote caution" style="margin-top:.5rem">Write test is confined to <b>E:/_synctest</b> and cleans up after itself.</div>
+
+    <!-- series + rows -->
+    <div style="margin-top:1.2rem;">
+      <div class="shead"><span class="seriesArt"></span><span class="stitle">SUPER SMASH BROS.</span><span class="count part">38 / 63</span></div>
+      <div class="crow"><div class="artTile">MA</div><div class="nm">Mario <span class="chip dev" style="font-size:.42rem">DEV</span></div><span class="dot"></span></div>
+      <div class="crow"><div class="artTile">DK</div><div class="nm">Donkey Kong</div><span class="dot"></span></div>
+      <div class="crow missing"><div class="artTile">KB</div><div class="nm">Kirby</div><span class="dot"></span></div>
+    </div>
+
+    <!-- card view -->
+    <div class="cardgrid">
+      <div class="ccard"><div class="artTile">MA</div><div class="nm">Mario</div></div>
+      <div class="ccard"><div class="artTile">LK</div><div class="nm">Link</div></div>
+      <div class="ccard missing"><div class="artTile">FX</div><div class="nm">Fox</div></div>
+    </div>
+  </div>
+
+  <!-- 6. DETAIL + TITLE -->
+  <h2 class="sec">6 · Amiibo detail &amp; title screen</h2>
+  <div class="two">
+    <div class="board">
+      <div class="boardName"><b>Detail page</b></div>
+      <div class="detail">
+        <div class="portrait">ART</div>
+        <div class="facts">
+          <h3>Bowser</h3>
+          <dl class="factGrid">
+            <dt>Series</dt><dd>Super Smash Bros. · 2015</dd>
+            <dt>Type</dt><dd>Figure</dd>
+            <dt>ID</dt><dd><span class="idmono">01000000 00030002</span></dd>
+          </dl>
+          <div class="chips"><span class="chip have">OWNED</span><span class="chip dev">ON DEVICE</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="board" style="padding:0;">
+      <div class="title">
+        <div class="scan"></div>
+        <div class="logoBig"><span class="mark" id="markTitle"></span><span class="wm">ALLMIIBO<span class="sfx">-SYNC</span></span></div>
+        <div class="tagline">SYNC YOUR AMIIBO COLLECTION</div>
+        <div class="start">
+          <button class="nbtn primary">▶ COLLECTION</button>
+          <button class="nbtn">▶ SYNC</button>
+        </div>
+        <div class="press">▸ PRESS START</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint" style="margin-top:2.5rem; border-top:1px solid #24242e; padding-top:1.5rem;">
+    Branded footer stays exactly as it is today (author mark + GitHub + attributions) — just re-coloured to whichever
+    palette you pick. Not re-shown here to avoid confusion.</p>
+
+</div>
+
+<script type="module">
+// ---- inline icon set (Lucide, ISC) — the real build moves these to icons.js ----
+const I = {
+  house:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 20h16v2H4zm16-10h2v10h-2zM2 10h2v10H2zm2-2h2v2H4zm2-2h2v2H6zm2-2h2v2H8zm2-2h4v2h-4zm4 2h2v2h-2zm2 2h2v2h-2zm2 2h2v2h-2zM8 14h2v6H8zm2-2h4v2h-4zm4 2h2v6h-2z"/></svg>',
+  grid:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 2h16v2H4zm0 18h16v2H4zM2 4h2v16H2zm18 0h2v16h-2zM4 8h16v2H4zm0 6h16v2H4z"/> <path d="M8 4h2v16H8zm6 0h2v16h-2z"/></svg>',
+  sync:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 4h2v6h-2zm-2-2h2v2h-2zm0 2h2v8h-2zM4 8H2v5h2z"/> <path d="M4 6h16v2H4zm4 14H6v-6h2zm2 2H8v-2h2zm0-2H8v-8h2zm10-4h2v-5h-2z"/> <path d="M20 18H4v-2h16z"/></svg>',
+  activity:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3h14v2H5zm0 16h14v2H5zM3 5h2v14H3zm16 0h2v14h-2zM9 7h6v2H9zm0 8h6v2H9zM7 9h2v6H7zm8 0h2v6h-2zm-4-8h2v2h-2zm0 20h2v2h-2zM1 11h2v2H1zm20 0h2v2h-2zm0-4h2v2h-2zm0 8h2v2h-2zM1 15h2v2H1zm0-8h2v2H1zm6-6h2v2H7zm8 0h2v2h-2zm0 20h2v2h-2zm-8 0h2v2H7z"/></svg>',
+  flask:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 2h10v2H7zm1 2h2v16H8zm2 16h4v2h-4zm4-16h2v16h-2z"/> <path d="M8 13h8v2H8z"/></svg>',
+  folder:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h6v2H4zm0 14h16v2H4zM20 8h2v10h-2zM2 6h2v12H2zm8 0h10v2H10z"/></svg>',
+  download:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 15v4h-2v-4zm-2 4v2H5v-2zM5 15v4H3v-4zm8-12v14h-2V3z"/> <path d="M7 11v2h10v-2zm2 2v2h2v-2zm4 0v2h2v-2z"/> <path d="M15 11v2h2v-2z"/></svg>',
+  upload:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 21H5v-2h14v2ZM5 19H3v-4h2v4Zm16 0h-2v-4h2v4ZM13 5h2v2h2v2h-4v8h-2V9H7V7h2V5h2V3h2v2Z"/></svg>',
+  trash:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 22H6V20H18V22ZM9 6H15V4H17V6H22V8H20V20H18V8H6V20H4V8H2V6H7V4H9V6ZM15 4H9V2H15V4Z"/></svg>',
+  search:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 22h-2v-2h2v2Zm-2-2h-2v-2h2v2Zm-6-2H6v-2h8v2Zm4 0h-2v-2h2v2ZM6 16H4v-2h2v2Zm10 0h-2v-2h2v2ZM4 14H2V6h2v8Zm14 0h-2V6h2v8ZM6 6H4V4h2v2Zm10 0h-2V4h2v2Zm-2-2H6V2h8v2Z"/></svg>',
+  settings:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 14h2v6H4zm6 0h2v6h-2zm-4-2h4v2H6zm0 8h4v2H6zm-4-4h2v2H2zm20-8h-4V6h4z"/> <path d="M10 16h12v2H10zm4-8H2V6h12zm6-4v2h-2V4zm0 6V8h-2v2zm-6-8h4v2h-4zm0 10h4v-2h-4zm-2-8h2v2h-2zm0 6h2V8h-2z"/></svg>',
+  list:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 5h12v2H10zm0 4h8v2h-8zm0 4h12v2H10zm0 4h8v2h-8zm-4-6H4V9h2v2ZM4 9H2V7h2v2Zm4 0H6V7h2v2ZM6 7H4V5h2v2Zm-2 6h2v2H4zm0 4h2v2H4zm-2 0v-2h2v2zm4 0v-2h2v2z"/></svg>',
+  power:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 20h12v2H6zM18 6h2v2h-2zM4 6h2v2H4zm2-2h2v2H6zm10 0h2v2h-2zM4 18h2v2H4zm14 0h2v2h-2zM2 8h2v10H2zm18 0h2v10h-2zm-9-6h2v9h-2z"/></svg>',
+  check:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 18H8v-2h2v2Zm-2-2H6v-2h2v2Zm4-2v2h-2v-2h2Zm-6 0H4v-2h2v2Zm8 0h-2v-2h2v2Zm2-2h-2v-2h2v2Zm2-2h-2V8h2v2Zm2-2h-2V6h2v2Z"/></svg>',
+  close:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 19H5V17H7V19ZM19 19H17V17H19V19ZM9 15V17H7V15H9ZM17 17H15V15H17V17ZM11 15H9V13H11V15ZM15 15H13V13H15V15ZM13 13H11V11H13V13ZM11 11H9V9H11V11ZM15 11H13V9H15V11ZM9 9H7V7H9V9ZM17 9H15V7H17V9ZM7 7H5V5H7V7ZM19 7H17V5H19V7Z"/></svg>',
+  chevron:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 16h-2v-2h2v2Zm-2-2H9v-2h2v2Zm4 0h-2v-2h2v2Zm-6-2H7v-2h2v2Zm8 0h-2v-2h2v2ZM7 10H5V8h2v2Zm12 0h-2V8h2v2Z"/></svg>',
+  back:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 11v2H4v-2zM8 13v2H6v-2zm2 2v2H8v-2zm2 2v2h-2v-2zm-4-6V9H6v2z"/> <path d="M10 15V7H8v8zm2 2V5h-2v12z"/></svg>',
+  copy:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 6h12v2H8zM4 2h12v2H4zm2 6h2v12H6zM2 4h2v12H2zm6 16h12v2H8zM20 8h2v12h-2zm-4-4h2v2h-2zM4 16h2v2H4z"/></svg>',
+  save:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 22H4V20H6V14H8V20H16V14H18V20H20V22ZM4 20H2V4H4V20ZM22 20H20V6H22V20ZM16 14H8V12H16V14ZM12 10H6V6H12V10ZM20 6H18V4H20V6ZM18 4H4V2H18V4Z"/></svg>',
+  play:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15 11h-2V9h2zm0 4h-2v-2h2zm-2 2h-2v-2h2zm0-8h-2V7h2zm-2-2H9V5h2zM9 21H7V3h2zm6-8h2v-2h-2zm-6 4h2v2H9z"/></svg>',
+  bluetooth:'<svg viewBox="0 0 6 9" fill="currentColor"><rect x="2" y="0" width="1" height="1"/><rect x="2" y="1" width="1" height="1"/><rect x="3" y="1" width="1" height="1"/><rect x="0" y="2" width="1" height="1"/><rect x="2" y="2" width="1" height="1"/><rect x="4" y="2" width="1" height="1"/><rect x="1" y="3" width="1" height="1"/><rect x="2" y="3" width="1" height="1"/><rect x="3" y="3" width="1" height="1"/><rect x="2" y="4" width="1" height="1"/><rect x="1" y="5" width="1" height="1"/><rect x="2" y="5" width="1" height="1"/><rect x="3" y="5" width="1" height="1"/><rect x="0" y="6" width="1" height="1"/><rect x="2" y="6" width="1" height="1"/><rect x="4" y="6" width="1" height="1"/><rect x="2" y="7" width="1" height="1"/><rect x="3" y="7" width="1" height="1"/><rect x="2" y="8" width="1" height="1"/></svg>'
+};
+for (const el of document.querySelectorAll('[data-ico]')) el.innerHTML = I[el.dataset.ico] || '';
+
+// ---- original pixel marks, drawn on a grid of rects (crispEdges) ----
+// grid(): render a string map into <rect> pixels. '.'=empty, letters map to colours.
+// Render a pixel map into crisp <rect> pixels, preserving aspect ratio.
+// '.' and unknown chars are transparent.
+function grid(map, colors, px){
+  const rows = map.replace(/^\n+|\n+$/g,'').split('\n').map(r=>r.trim());
+  const h = rows.length, w = Math.max(...rows.map(r=>r.length));
+  let rects='';
+  rows.forEach((row,y)=>[...row].forEach((c,x)=>{
+    if(colors[c]) rects+=`<rect x="${x}" y="${y}" width="1" height="1" fill="${colors[c]}"/>`;
+  }));
+  return `<svg viewBox="0 0 ${w} ${h}" width="${Math.round(px*w/h)}" height="${px}" shape-rendering="crispEdges" aria-hidden="true">${rects}</svg>`;
+}
+
+// NES-era palette: flat colours + darker shades, black outline (K).
+// D/d = red NFC dock.
+const COL = {
+  K:'#1a1a1a', W:'#f4f4f4',
+  S:'#f0a860', s:'#c47a2e',
+  G:'#7ac124', g:'#4e7a1e',
+  R:'#e23b2e', r:'#9a2a1a',
+  N:'#a0501a', n:'#6a340e',
+  Y:'#f2c531', B:'#5a7be5', b:'#33509a',
+  M:'#f2a0c0', m:'#d46a86',
+  P:'#a86ad6', p:'#6a3f9a', T:'#3ac0b0', t:'#2a8a7e', O:'#e8843a',
+  h:'#a0824a', E:'#f4f4f4', P:'#8a5a2a', q:'#6a1a12', b:'#6a1a12', j:'#2b2b38',
+  D:'#9a2a26', d:'#c23a34',
+};
+
+// Slim red NFC dock (the amiibo "tap base"), outlined.
+const DOCK = `
+...KKKKKKKKKK...
+..KDDDDDDDDDDK..
+..KDddddddddDK..
+..KDDDDDDDDDDK..
+...KKKKKKKKKK...`;
+const DOCK32 = `
+......KKKKKKKKKKKKKKKKKKKK......
+.....KDDDDDDDDDDDDDDDDDDDDK.....
+.....KDeeeeeeeeeeeeeeeeeeDK.....
+.....KDDDDDDDDDDDDDDDDDDDDK.....
+.....KDDDDDDDDDDDDDDDDDDDDK.....
+......KKKKKKKKKKKKKKKKKKKK......`;
+
+// Pirate body (right profile): proper tricorn (points fore + aft), eyepatch,
+// beard, coat, a HOOK on the forward arm and a wooden PEG leg. Reused for the
+// main grid and the colour variants. r=coat, b=trouser, Y=button, W=hook steel,
+// N=beard/peg wood, n=peg tip.
+const PIRATE_BODY = `
+................................
+............kkkkkkkk............
+.......FF..kHHHHHHHHk...........
+.....FFFF..kHHEHHEHHk...........
+.....FFFF..kHHHEEHHHk...........
+....FFFF...kHHEHHEHHk...........
+....FFFFkkk..........kk.........
+.....FkkHHHHHHHHHHHHHHHk.ggg....
+.......kkkkkkkkkkkkkkkk..g.gg...
+..........kkkkkkkkkk.....g.gg...
+.........kkkkkkkkkkkk......gg...
+.........kssskkkksksk....gg.....
+.........kddddddddddk..bbgg.....
+.........kddddddddddkbbbbgg.....
+.........kdddddsssddkbbbb.......
+......kkkkddddddddddkbbk........
+.....kbbbbdddrrrrrrbbbbbk.......
+.....kbbbb.ddwwwwwwbbbbbk.......
+.....kbbbb..drrrrrrbbbbbk.......
+.....kbggg...wwwwwwbbbbbk.......
+.....ssgkg...rrrrrrbbbbbk.......
+.....ssgkg..dddggdddbbbb........
+.....kbggg..dddggdddbbbb........
+.....wwbbbddddddddddbbbb........
+....wwbbbbdddddddddd............
+...ww.....dddddddddd............
+kwww.....dddd....dddd...........
+.........dddd....dddd...........
+.........pp........dddd.........
+.........pp........dddd.........
+........pp..........ddddd.......
+........kk..........kkkkk.......`;
+
+// Eight ORIGINAL side-profile creatures, feet sitting ON the dock. NES sprite
+// style: black outlines, flat fills, one eye in profile. Plus a ghost and a
+// knight. No resemblance to any real character.
+const AM = [
+`................
+..........K.K...
+..........K.K...
+...KKKK...KKK...
+..KttttK.KSSSK..
+.KtTTTtK.KSKSK..
+.KtTKTtKKSSSSK..
+.KtTKTtKSSSSK...
+.KtTTTtKSSK.....
+.KttttKGSK......
+.KKKKKKGGK......
+..GGGGGGGGGGG...
+.KGGGGGGGGGGGK..
+.KKKKKKKKKKKKK..
+..NNNNNNNNNNN...`+DOCK,   // 1 SNAIL (shell + neck + head + antennae)
+`................
+...NNNNNN.......
+..NNNNNNNNNN....
+...sSSSSS.......
+...sSSKSS.......
+...sSSSSSN......
+...sSSSSS.......
+...RRRRRR.......
+..GGGGGGGG......
+..GGGGGGGGSS....
+..GGGGGGGG......
+..GKKKKKG.......
+..GGG.GGG.......
+..bbb.bbb.......
+..NNN.NNN.......`+DOCK,   // 2 EXPLORER (right profile: hat, eye, nose, scarf)
+`................
+.......KKKK.....
+.....KKWWWWK....
+...KKWWWWWWWK...
+..KWWWWWWWKWK...
+..KWWWWWWWKWK...
+.KWWWWWWWWWWWK..
+KWWWWWWWWWWWWK..
+KWWWWWWWWWWWWK..
+KWWWWWWWWWWWWK..
+KWWWWWWWWWWWWK..
+KWWWWWWWWWWWWK..
+KWWWWWWWWWWWWK..
+KWW.WW.WW.WWWK..`+DOCK,   // 3 GHOST (kept)
+`................
+BB..KKKKKK......
+...KKKKKKKK.....
+...KBBBBBBK.....
+...KKWKKKKK.....
+...KKKKKKKK.....
+...KKKKKKK......
+..KKKKKKKK......
+..KKKKKKKKSS....
+..KKKKKKKK......
+..KRRRRRK.......
+..KKKKKKK.......
+..KKK.KKK.......
+..KKK.KKK.......
+..KKK.KKK.......`+DOCK,   // 4 NINJA (right profile: headband tail, eye, belt)
+`......RR........
+R.....WWWW......
+RR...WWWWWW.....
+....WSSSSSS...KK
+....WSSKSSS..WK.
+....WSSSSSN..WK.
+KKKKWWWWWWW..WK.
+KrrKWWWWWWW.WWK.
+KrSKWWWWWWW..K..
+KrrKWWWWWWW..K..
+KrrKWWWWWWW.....
+KKKKWWWWWWW.....
+....WWWWWWW.....
+....KWWWWK......
+....KK..KK......`+DOCK,   // 5 KNIGHT (right profile: face, big shield, raised sword)
+`................
+................
+.KK....KKKK.....
+KBBKKKBBBBBK....
+KBBBBBBBBBBBK...
+.KBBBBBBBBWBK...
+.KBBBBBBBBBBK...
+KBBKKKBBBBBBK...
+KBBBBBBBBBBBK...
+.KBBBBBBBBBBK...
+..KBBBBBBBBK....
+...KBBBBBBK.....
+...KKBBBBKK.....
+....KBBBBK......
+....KKKKKK......`+DOCK,   // 6 FISH
+PIRATE_BODY+DOCK32,   // 7 PIRATE (tricorn, eyepatch, hook, peg leg)
+`................
+..K.......K.....
+.KPK.....KPK....
+.KPPK...KPPK....
+KKPPPKKKPPPKK...
+KPWPPPPPPPWPK...
+KPPPKPPPKPPPK...
+KPPPPPPPPPPPK...
+.KPPPPPPPPPK....
+..KPWWPWWPK.....
+..KPPPPPPPK.....
+...KPPPPPK......
+...KPPPPPK......
+..KKP.PKK.......
+..K.....K.......`+DOCK,   // 8 BAT
+];
+
+AM.forEach((m,i)=>{ const el=document.getElementById('am'+(i+1)); if(el) el.innerHTML=grid(m,COL,58); });
+
+function setLock(i){
+  document.getElementById('amLock').innerHTML   = grid(AM[i],COL,44);
+  document.getElementById('markNav').innerHTML  = grid(AM[i],COL,26);
+  document.getElementById('markTitle').innerHTML= grid(AM[i],COL,52);
+}
+setLock(0);
+document.getElementById('amiiboGrid').addEventListener('click', (e)=>{
+  const cell = e.target.closest('[data-am]'); if(!cell) return;
+  setLock(+cell.dataset.am - 1);
+  for (const c of document.querySelectorAll('.amiiboCell')) c.style.borderColor='';
+  cell.style.borderColor='var(--accent)';
+});
+
+// Bonus: the earlier cartridge + wave mark, still selectable.
+const CART = `
+................
+.....B....BBBB..
+....B....B......
+...B....B..BBB..
+..B....B..B...B.
+..GGGGGGGGGG....
+..G........G.B..
+..G..RRRR..G....
+..G..R..R..G.B..
+..G..RRRR..G....
+..G........G....
+..G.GG..GG.G....
+..G........G....
+..GGGGGGGGGG....
+..G........G....
+..GGGGGGGGGG..`;
+document.getElementById('markCart').innerHTML = grid(CART,{B:'#5a7be5',G:'#c9c9d6',R:'#e23b2e'},26);
+
+// ---- detailed knight variations (larger canvas, recoloured per finish) ----
+// A=armour, Q=shield, e=emblem, P=plume, C=cape; K/W/H/y/D/d shared.
+const KNIGHTD = `
+......PP........
+......PPP...WW..
+.....KKKKK..WW..
+.....KAAAK..WW..
+.....KHHHK..WW..
+.....KKHHK..WW..
+.....KAAAK.KyK..
+...KKKAAAKK.H...
+..QQQKAAAAK.H...
+.QeQQKAAAAK.....
+.QQQQKAAAAK.....
+.QeQQKAAAAK.....
+.QQQQKAAAAK.....
+..QQKAAAAAK.....
+...CKAAAAAK.....
+...CKAAAAK......
+....KAAAAK......
+....KA..AK......
+....KA..AK......
+....KKNNKK......`+DOCK;
+const kbase = {K:'#1a1a1a', W:'#d8d8e0', H:'#f0a860', y:'#f2c531', N:'#5a3010', D:'#9a2a26', d:'#c23a34'};
+const KFINISH = [
+  {id:'kv1', A:'#c0392b', Q:'#7a2018', e:'#f2c531', P:'#e23b2e', C:'#5a1a12'},
+  {id:'kv2', A:'#9aa4b0', Q:'#4a6ad0', e:'#f4f4f4', P:'#e23b2e', C:'#33509a'},
+  {id:'kv3', A:'#e0b23a', Q:'#8a5a1a', e:'#fff8e0', P:'#e23b2e', C:'#6a4212'},
+  {id:'kv4', A:'#4a4a5a', Q:'#6a3f9a', e:'#a86ad6', P:'#5a7be5', C:'#20202a'},
+];
+for (const f of KFINISH) {
+  const el = document.getElementById(f.id);
+  if (el) el.innerHTML = grid(KNIGHTD, {...kbase, A:f.A, Q:f.Q, e:f.e, P:f.P, C:f.C}, 92);
+}
+
+// ---- 12 pirate colour finishes (recolour the coat r + trouser b) ----
+const pbase = {k:'#111111', b:'#2c59b2', r:'#c7281d', w:'#f3efe6', s:'#f29f63',
+               d:'#3b2219', g:'#8d8c8a', p:'#8f5c38', E:'#f3efe6', H:'#2c59b2', F:'#c7281d', K:'#1a1a1a', D:'#9a2a26', e:'#c23a34'};
+const PIRATES = [
+  ['CRIMSON','#c0392b','#7a2018'], ['NAVY','#2c4a8a','#1a2f5a'],
+  ['FOREST','#3a7a3a','#245224'],  ['PLUM','#7a3f9a','#4f2668'],
+  ['TEAL','#2a8a7e','#1a5a52'],    ['RUST','#c0621f','#8a4212'],
+  ['SILVER','#C9C7C4','#8a8885',null,'#c7281d','#f3efe6'],    ['SLATE','#4a5568','#2f3648'],
+  ['GOLD','#c8952a','#8a6212'],    ['MAGENTA','#b0367a','#7a2050'],
+  ['EMERALD','#1f8a5a','#125a3a'], ['ASH','#6a6a72','#42424a'],
+];
+const pgrid = document.getElementById('pirateGrid');
+if (pgrid) {
+  pgrid.innerHTML = PIRATES.map(([name,r,b,em,hat,fe],i) => {
+    const svg = grid(PIRATE_BODY+DOCK32, {...pbase, b:r, H:hat||r, E:em||pbase.E, F:fe||pbase.F}, 58);
+    return `<div class="amiiboCell" data-pi="${i}"><span class="mark">${svg}</span><div class="cap">${name}</div><div class="num">${String(i+1).padStart(2,'0')}</div></div>`;
+  }).join('');
+  pgrid.addEventListener('click', (e) => {
+    const cell = e.target.closest('[data-pi]'); if (!cell) return;
+    const [, r,, em, hat, fe] = PIRATES[+cell.dataset.pi];
+    const colors = {...pbase, b:r, H:hat||r, E:em||pbase.E, F:fe||pbase.F};
+    document.getElementById('amLock').innerHTML    = grid(PIRATE_BODY+DOCK32, colors, 44);
+    document.getElementById('markNav').innerHTML   = grid(PIRATE_BODY+DOCK32, colors, 26);
+    document.getElementById('markTitle').innerHTML = grid(PIRATE_BODY+DOCK32, colors, 52);
+    for (const c of pgrid.querySelectorAll('.amiiboCell')) c.style.borderColor = '';
+    cell.style.borderColor = 'var(--accent)';
+  });
+}
+
+// ---- live advanced toggle ----
+const chk = document.getElementById('advChk');
+document.getElementById('advLabel').addEventListener('click', () => {
+  const on = document.body.dataset.adv !== 'on';
+  document.body.dataset.adv = on ? 'on' : 'off';
+  chk.checked = on;
+});
+
+// ---- clickable palettes: apply the chosen palette to the whole page ----
+const palBoards = [...document.querySelectorAll('.palRow .board[data-pal]')];
+function selectPal(p){
+  document.body.dataset.pal = p;
+  for (const b of palBoards) b.classList.toggle('selected', b.dataset.pal === p);
+}
+for (const b of palBoards) b.addEventListener('click', () => selectPal(b.dataset.pal));
+selectPal('a');
+</script>
+</body>
+</html>

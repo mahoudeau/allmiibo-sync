@@ -1,0 +1,14 @@
+{
+  "name": "allmiibo-sync",
+  "short_name": "allmiibo",
+  "description": "Browse the full amiibo database, track what you own, and keep a local folder in sync with your device over Web Bluetooth.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#2b2b2a",
+  "theme_color": "#2b2b2a",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

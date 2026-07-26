@@ -3,51 +3,110 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>allmiibo-sync — device probe</title>
+<title>allmiibo-sync</title>
+<meta name="description" content="Sync your amiibo collection over Bluetooth — browse the database, track what you own, keep your device in sync. Runs entirely in the browser.">
+<meta name="theme-color" content="#2b2b2a">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="icon" href="./icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="manifest" href="./manifest.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="allmiibo-sync">
+<meta property="og:title" content="allmiibo-sync">
+<meta property="og:description" content="Sync your amiibo collection over Bluetooth — browse the database, track what you own, keep your device in sync. Runs entirely in the browser.">
+<meta property="og:url" content="https://allmiibo.mathieu.dev/">
+<meta property="og:image" content="https://allmiibo.mathieu.dev/icons/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="./css/app.css">
+<script>
+// First paint honours the stored preferences (header.js manages them after).
+try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
+</script>
+<style>
+  /* NES title screen. */
+  .title {
+    position: relative; overflow: hidden; text-align: center;
+    padding: 3.5rem 1rem 3rem; margin-top: .5rem;
+    border: 2px solid var(--border); background: var(--panel);
+    box-shadow: 5px 5px 0 var(--shadow);
+    /* Fill the first screen: viewport minus body padding, header and margins.
+       The note and footer live below the fold. */
+    min-height: calc(100dvh - 8rem);
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+  }
+  .title .logoBig { display: flex; flex-direction: column; align-items: center; gap: 1.2rem; margin-bottom: 1rem; }
+  .title .wm { font-family: var(--pixel); font-size: clamp(.9rem, 4vw, 1.4rem); color: #fff; }
+  .title .wm .sfx { color: var(--err); }
+  .title .tagline { font-family: var(--pixel); font-size: .55rem; color: var(--muted);
+    margin-bottom: 2rem; letter-spacing: .05em; }
+  .start { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+  a.startBtn {
+    font-family: var(--pixel); font-size: .65rem; color: var(--fg); text-decoration: none;
+    display: inline-flex; align-items: center; gap: .55rem;
+    padding: .9em 1.2em; border: 2px solid var(--border);
+    background: var(--panel2); box-shadow: 3px 3px 0 var(--shadow);
+  }
+  a.startBtn:hover { border-color: var(--accent); }
+  a.startBtn:active { transform: translate(3px, 3px); box-shadow: none; }
+  a.startBtn.primary { background: var(--accent); border-color: var(--shadow); color: #fff; }
+  .press { font-family: var(--pixel); font-size: .55rem; color: var(--err); margin-top: 2.2rem; }
+  @media (prefers-reduced-motion: no-preference) {
+    .press { animation: blink 1.1s steps(1) infinite; }
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  .scan { position: absolute; inset: 0; pointer-events: none; opacity: .28;
+    background: repeating-linear-gradient(to bottom, #0000 0 2px, #0005 2px 4px); }
+  .homeNotes { margin-top: 1.5rem; }
+</style>
 </head>
 <body>
 <main>
-  <h1>allmiibo-sync — device probe</h1>
-  <p class="sub">Read-only. Issues no writes, creates nothing, deletes nothing.</p>
-
-  <nav>
-    <a href="./collection.html">collection</a>
-    <a href="./sync.html">sync</a>
-    <a href="./write-test.html">write test</a>
-  </nav>
-
-  <div class="note">
-    Requires Chrome or Edge, served over <code>http://localhost</code>.
-    Close any other tab connected to the device first — it accepts one connection at a time.
+  <div class="title">
+    <div class="scan"></div>
+    <div class="logoBig">
+      <span data-pirate-mark="120"></span>
+      <span class="wm">ALLMIIBO<span class="sfx">-SYNC</span></span>
+    </div>
+    <div class="tagline">SYNC YOUR AMIIBO COLLECTION OVER BLUETOOTH</div>
+    <div class="start">
+      <a class="startBtn primary" href="./collection.html">&#9654; COLLECTION</a>
+      <a class="startBtn" href="./sync.html">&#9654; SYNC</a>
+    </div>
+    <div class="press">&#9656; PRESS START</div>
   </div>
 
-  <div class="row" style="margin-top:1rem">
-    <button id="connect" class="primary">Connect</button>
-    <button id="disconnect" disabled>Disconnect</button>
-    <button id="probe" disabled>Run probe</button>
-    <label>Max depth <input id="maxDepth" type="number" min="1" max="12" value="4"></label>
-    <label><input id="readSample" type="checkbox" checked> Read one file back</label>
-  </div>
-
-  <div id="status" class="status">Ready</div>
-
-  <section>
-    <h2>Filesystem</h2>
-    <pre id="tree">(not yet probed)</pre>
-  </section>
-
-  <section>
-    <h2>Log</h2>
-    <div id="log" class="logbox"></div>
-  </section>
-
-  <div class="row">
-    <button id="copy" disabled>Copy report</button>
-    <button id="save" disabled>Save report JSON</button>
+  <div class="note homeNotes">
+    Browse the full amiibo database and mark what you own, or keep a local
+    folder and your device in sync — entirely in the browser, over Web
+    Bluetooth (Chrome/Edge). Nothing is uploaded anywhere; the device tools
+    for probing and write-testing live behind the <strong>Advanced</strong>
+    toggle, in the header's Settings on any app page.
   </div>
 </main>
-<script type="module" src="./js/probe.js"></script>
 <script type="module" src="./js/footer.js"></script>
+<script type="module">
+// No header on the title screen, so draw the mascot (in the stored colourway)
+// ourselves.
+import { pirateMark, FINISHES, DEFAULT_FINISH } from './js/sprite.js';
+let finish = DEFAULT_FINISH;
+try {
+  const i = Number(localStorage.getItem('allmiibo:pirate'));
+  if (Number.isInteger(i) && i >= 0 && i < FINISHES.length) finish = i;
+} catch {}
+for (const el of document.querySelectorAll('[data-pirate-mark]')) {
+  el.innerHTML = pirateMark(Number(el.dataset.pirateMark), finish);
+}
+
+// Title screen: ENTER or SPACE presses start.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.target.closest('a, button, input, select, textarea')) return;
+  e.preventDefault();
+  location.href = './collection.html';
+});
+</script>
 </body>
 </html>

@@ -4,34 +4,50 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>allmiibo-sync — collection</title>
+<meta name="description" content="Every amiibo in the database, and whether you have it.">
+<meta name="theme-color" content="#2b2b2a">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="icon" href="./icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="manifest" href="./manifest.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="allmiibo-sync">
+<meta property="og:title" content="Collection — allmiibo-sync">
+<meta property="og:description" content="Every amiibo in the database, and whether you have it.">
+<meta property="og:url" content="https://allmiibo.mathieu.dev/collection.html">
+<meta property="og:image" content="https://allmiibo.mathieu.dev/icons/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="./css/app.css">
+<script>
+// First paint honours the stored preferences (header.js manages them after).
+try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
+</script>
 <style>
-  .bar { display:flex; flex-wrap:wrap; gap:1.25rem; padding:.75rem 1rem; border:1px solid var(--border);
-         border-radius:6px; background:var(--panel); margin-bottom:1rem; }
+  .bar { display:flex; flex-wrap:wrap; gap:1.25rem; padding:.75rem 1rem; border:2px solid var(--border); background:var(--panel); margin-bottom:1rem; }
   .bar .metric { display:flex; flex-direction:column; }
   .bar .metric b { font-size:1.25rem; font-variant-numeric:tabular-nums; }
   .bar .metric span { color:var(--muted); font-size:.8rem; }
-  input[type=search] { font:inherit; padding:.35rem .5rem; border:1px solid var(--border);
-         border-radius:5px; background:var(--bg); color:var(--fg); min-width:16rem; }
-  details { border:1px solid var(--border); border-radius:6px; margin-bottom:.5rem; background:var(--panel); }
+  input[type=search] { font:inherit; padding:.35rem .5rem; border:2px solid var(--border); background:var(--bg); color:var(--fg); min-width:16rem; }
+  details { border:2px solid var(--border); margin-bottom:.5rem; background:var(--panel); }
   summary { cursor:pointer; padding:.55rem .8rem; font-weight:600; display:flex; justify-content:space-between; gap:.6rem; align-items:center; }
   summary::-webkit-details-marker { display:none; }
   summary .count { font-weight:400; color:var(--muted); font-variant-numeric:tabular-nums; }
-  .items { display:grid; grid-template-columns:repeat(auto-fill,minmax(24rem,1fr)); gap:.3rem .75rem;
+  .items { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(24rem,100%),1fr)); gap:.3rem .75rem;
            padding:.5rem .8rem .8rem; align-items:start; }
   .withVehicles { grid-column:1 / -1; }
   .vehicles { display:flex; flex-wrap:wrap; gap:.3rem; padding:0 0 .35rem 1.55rem; }
-  .chip { font-size:.72rem; padding:.1rem .45rem; border-radius:99px;
+  .chip { font-size:.72rem; padding:.1rem .45rem;
           border:1px dashed var(--border); color:var(--muted); opacity:.6; }
   .chip.have { border-style:solid; border-color:var(--ok); color:var(--ok); opacity:1; }
   .chip.dev { border-style:solid; border-color:var(--accent); color:var(--accent); opacity:1; }
-  .item { display:flex; align-items:center; gap:.5rem; padding:.3rem .4rem; border-radius:4px;
+  .item { display:flex; align-items:center; gap:.5rem; padding:.3rem .4rem;
           font-size:.88rem; border:1px solid transparent; color:inherit; text-decoration:none; }
   .item:hover { border-color:var(--accent); }
   .item.missing { opacity:.55; }
   .item.missing .dot { background:transparent; border:1px solid var(--muted); }
-  .art { width:34px; height:34px; flex:none; display:flex; align-items:center; justify-content:center;
-         border-radius:5px; background:var(--bg); border:1px solid var(--border);
+  .art { width:34px; height:34px; flex:none; display:flex; align-items:center; justify-content:center; background:var(--bg); border:2px solid var(--border);
          position:relative; overflow:hidden; }
   .art::before { content:attr(data-initial); color:var(--muted); font-size:.75rem; font-weight:600;
                  position:absolute; }
@@ -41,8 +57,7 @@
   .seriesHead { display:flex; align-items:center; gap:.6rem; min-width:0; }
   .seriesArt { width:28px; height:28px; object-fit:contain; flex:none; }
   .seriesHead .year { color:var(--muted); font-weight:400; font-size:.78rem; }
-  select { font:inherit; padding:.35rem .5rem; border:1px solid var(--border);
-           border-radius:5px; background:var(--bg); color:var(--fg); }
+  select { font:inherit; padding:.35rem .5rem; border:2px solid var(--border); background:var(--bg); color:var(--fg); }
 
   /* Card view: the artwork is the point; text supports it. */
   .cards .items { grid-template-columns:repeat(auto-fill,minmax(8.5rem,1fr)); gap:.6rem; }
@@ -56,14 +71,14 @@
   .cards .item .tag { font-size:.62rem; }
   .cards .withVehicles { grid-column:1 / -1; }
   .cards .vehicles { justify-content:center; padding-left:0; }
-  .dot { width:.6rem; height:.6rem; border-radius:50%; background:var(--ok); flex:none; }
+  .dot { width:.6rem; height:.6rem; background:var(--ok); flex:none; }
   .item .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tag { font-size:.7rem; padding:.05rem .3rem; border-radius:3px; border:1px solid var(--border); color:var(--muted); }
+  .tag { font-size:.7rem; padding:.05rem .3rem; border:2px solid var(--border); color:var(--muted); }
   .tag.dev { border-color:var(--accent); color:var(--accent); }
   .tag.new { border-color:var(--warn); color:var(--warn); }
   .tag.guess { border-style:dashed; font-style:italic; }
   progress { width:100%; height:.5rem; margin-bottom:1rem; }
-  summary .count { padding:.1rem .5rem; border-radius:99px; border:1px solid transparent; }
+  summary .count { padding:.1rem .5rem; border:1px solid transparent; }
   summary .count.done { border-color:var(--ok); color:var(--ok); }
   summary .count.part { border-color:var(--warn); color:var(--warn); }
   summary .count.dev { border-color:var(--accent); color:var(--accent); margin-left:auto; }
@@ -71,14 +86,8 @@
 </head>
 <body>
 <main>
-  <h1>allmiibo-sync — collection</h1>
+  <h1>Collection</h1>
   <p class="sub">Every amiibo in the database, and whether you have it.</p>
-
-  <nav>
-    <a href="./sync.html">sync</a>
-    <a href="./index.html">read-only probe</a>
-    <a href="./write-test.html">write test</a>
-  </nav>
 
   <div class="note">
     Identity comes from the amiibo ID inside each dump (bytes 84–91), not from
@@ -134,6 +143,7 @@
 
   <section id="series"></section>
 </main>
+<script type="module" src="./js/header.js"></script>
 <script type="module" src="./js/collectionui.js"></script>
 <script type="module" src="./js/footer.js"></script>
 </body>

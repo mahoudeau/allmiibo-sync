@@ -64,7 +64,11 @@ opening it as a `file://` URL will not work.
 npm run serve          # or: node serve.mjs [port]
 ```
 
-Then open <http://localhost:8080/> and press **Connect**.
+Then open <http://localhost:8080/> — an 8-bit title screen leads into the
+collection and sync pages. The device tools (read-only probe, write test) and
+the expert sync options are tucked behind the **Advanced** toggle in the
+header; theme and mascot colours live under the gear icon, and both survive
+reloads via `localStorage`.
 
 Close any other tab connected to the device first — it accepts one BLE
 connection at a time.
@@ -302,12 +306,19 @@ PROTOCOL.md               reverse-engineered wire protocol
 COMMANDS.md               every command in one place
 serve.mjs                 zero-dependency static server (Node built-ins only)
 
+web/index.html            8-bit title screen (home)
 web/collection.html       collection UI
 web/amiibo.html           per-amiibo detail page
 web/sync.html             sync UI
-web/index.html            read-only probe UI
-web/write-test.html       write-test UI
-web/css/app.css           shared styles
+web/probe.html            read-only probe UI (Advanced)
+web/write-test.html       write-test UI (Advanced)
+web/design-lab.html       the design moodboard the NES skin was picked from —
+                          kept in the repo for fun, never deployed
+web/css/app.css           shared styles: three NES themes, pixel components
+web/fonts/press-start-2p/ vendored Press Start 2P (SIL OFL) + its licence
+web/favicon.svg           the pirate mascot, generated from js/sprite.js
+web/icons/                PNG icons + OG share image, all rendered from the mascot
+web/manifest.webmanifest  pinned-to-home-screen metadata (Android/iOS)
 
 web/data/amiibo-db.js     946 amiibo IDs -> name/series/type/date (generated)
 web/data/images/          artwork tiers, all gitignored, fetched + deployed
@@ -322,7 +333,10 @@ web/js/sync.js            device walk and plan executor
 web/js/syncui.js          sync page logic
 web/js/collectionui.js    collection page logic
 web/js/amiibodetail.js    detail page logic
+web/js/header.js          shared header: nav, Advanced toggle, Settings
 web/js/footer.js          shared footer
+web/js/icons.js           8-bit UI icons (Pixelarticons, inlined)
+web/js/sprite.js          the pirate mascot as pixel-map -> SVG
 web/js/probe.js           read-only probe logic
 web/js/writetest.js       write-test logic
 
@@ -334,6 +348,8 @@ test/protocol.test.mjs    protocol tests against a simulated device
 test/planner.test.mjs     reconciliation and safety tests
 test/amiibo.test.mjs      amiibo ID parsing and collection tests
 test/ui-modules.test.mjs  static checks over the browser-only modules
+test/sprite.test.mjs      mascot pixel-map and colourway tests
+test/pages.test.mjs       head-kit, OG and asset integrity checks per page
 ```
 
 ## Keep dumps and keys out of git
@@ -387,6 +403,8 @@ gitignored, at every resolution.
 |---|---|---|
 | [8bitDream/AmiiboAPI](https://github.com/8bitDream/AmiiboAPI) (fork of [N3evin/AmiiboAPI](https://github.com/N3evin/AmiiboAPI)) | amiibo series/type labels, release dates, artwork URLs | MIT |
 | [solosky/pixl.js](https://github.com/solosky/pixl.js) | wire protocol reference; amiibo name table | GPL-2.0 |
+| [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P) (vendored in `web/fonts/`) | pixel display font | SIL OFL 1.1 |
+| [Pixelarticons](https://pixelarticons.com) by Gerrit Halfmann (inlined in `web/js/icons.js`) | 8-bit UI icons | MIT |
 | amiibo artwork (fetched locally, never committed) | collection images | © Nintendo |
 
 ### Licences in this repository
@@ -400,3 +418,11 @@ gitignored, at every resolution.
 
 Attribution to every source is retained in the generator, the generated file's
 header, and the site footer.
+
+The pirate mascot and logo are original pixel art made for this project — they
+depict no Nintendo character or mark. If you are curious how they were chosen,
+[`web/design-lab.html`](web/design-lab.html) is the actual moodboard used to
+pick the theme, the font pairing, and the pirate (from a line-up that at
+various points included a snail, a viking that was supposed to be a pirate,
+and a rice farmer that was also supposed to be a pirate). It ships in
+the repo, works offline, and is best enjoyed by clicking every pirate.

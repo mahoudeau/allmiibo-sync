@@ -4,19 +4,37 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>allmiibo-sync</title>
+<meta name="description" content="Keep a local folder in sync with your device, in the direction you choose.">
+<meta name="theme-color" content="#2b2b2a">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="icon" href="./icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="manifest" href="./manifest.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="allmiibo-sync">
+<meta property="og:title" content="Sync — allmiibo-sync">
+<meta property="og:description" content="Keep a local folder in sync with your device, in the direction you choose.">
+<meta property="og:url" content="https://allmiibo.mathieu.dev/sync.html">
+<meta property="og:image" content="https://allmiibo.mathieu.dev/icons/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="./css/app.css">
+<script>
+// First paint honours the stored preferences (header.js manages them after).
+try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
+</script>
 <style>
   .grid { display: grid; grid-template-columns: auto 1fr; gap: .6rem 1rem; align-items: center; margin-bottom: 1rem; }
   .grid > label:not(.inline) { justify-self: end; color: var(--muted); }
   input[type=text], select {
-    font: inherit; padding: .35rem .5rem; border: 1px solid var(--border);
-    border-radius: 5px; background: var(--bg); color: var(--fg); min-width: 14rem;
+    font: inherit; padding: .35rem .5rem; border: 2px solid var(--border); background: var(--bg); color: var(--fg); min-width: 14rem;
   }
   progress { width: 100%; height: .5rem; margin-bottom: 1rem; }
   h2 { margin-top: 1.5rem; }
   .ops { display: grid; gap: .5rem; margin-bottom: 1.25rem; }
   .op { display: grid; grid-template-columns: auto 1fr; gap: .1rem .6rem; align-items: start;
-        padding: .6rem .8rem; border: 1px solid var(--border); border-radius: 6px;
+        padding: .6rem .8rem; border: 2px solid var(--border);
         background: var(--panel); cursor: pointer; color: var(--fg); }
   .op:hover { border-color: var(--accent); }
   .op:has(input:checked) { border-color: var(--accent); }
@@ -30,14 +48,8 @@
 </head>
 <body>
 <main>
-  <h1>allmiibo-sync</h1>
+  <h1>Sync</h1>
   <p class="sub">Keep a local folder in sync with the device, in the direction you choose.</p>
-
-  <nav>
-    <a href="./collection.html">collection</a>
-    <a href="./index.html">read-only probe</a>
-    <a href="./write-test.html">write test</a>
-  </nav>
 
   <div class="note">
     Nothing is written until you review the plan and press <strong>Apply</strong>.
@@ -63,7 +75,7 @@
       <span class="opDesc">Copy the whole device into your local folder, keeping the device's
         layout. Writes nothing to the device and deletes nothing.</span>
     </label>
-    <label class="op">
+    <label class="op advanced-only">
       <input type="radio" name="op" value="replace">
       <span class="opName danger">Replace device with local</span>
       <span class="opDesc">Erase everything under the device folder, then write your whole
@@ -78,7 +90,7 @@
       <span class="opDesc">Send each side the other's changes, using the record of the last
         sync. Matches on path, so it works best when both sides are laid out the same.</span>
     </label>
-    <label class="op">
+    <label class="op advanced-only">
       <input type="radio" name="op" value="identity">
       <span class="opName">Sync by amiibo</span>
       <span class="opDesc">Ignore folders and filenames entirely; ask only whether each amiibo
@@ -86,7 +98,7 @@
     </label>
   </div>
 
-  <div class="grid">
+  <div class="grid advanced-only">
     <label for="deviceRoot">Device folder</label>
     <input id="deviceRoot" type="text" value="E:/amiibo">
 
@@ -106,7 +118,7 @@
   <div class="row">
     <button id="scan" class="primary" disabled>Scan &amp; plan</button>
     <button id="apply" disabled>Apply plan</button>
-    <button id="audit" disabled>Compare by content</button>
+    <button id="audit" disabled class="advanced-only">Compare by content</button>
     <button id="stop" disabled>Stop</button>
   </div>
 
@@ -128,6 +140,7 @@
     <div id="log" class="logbox"></div>
   </section>
 </main>
+<script type="module" src="./js/header.js"></script>
 <script type="module" src="./js/syncui.js"></script>
 <script type="module" src="./js/footer.js"></script>
 </body>
