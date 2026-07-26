@@ -102,7 +102,7 @@ const header = document.createElement('header');
 header.className = 'appHeader';
 header.innerHTML = `
   <div class="appBar">
-    <a class="brand" href="./index.html">
+    <a class="brand" href="./">
       <span data-pirate-mark="30"></span>
       <span class="wm">ALLMIIBO<span class="sfx">-SYNC</span></span>
     </a>
