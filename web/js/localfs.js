@@ -77,6 +77,53 @@ export async function restoreDirectory({ prompt = false } = {}) {
   return null;
 }
 
+// ---- read-only fallback (Firefox, Safari) --------------------------------
+
+// Browsers without the File System Access API still have the old
+// <input webkitdirectory> mechanism: a one-shot, read-only folder pick that
+// hands over every file in the tree. Enough to scan and track a collection;
+// not enough to write files back or remember the folder.
+export function pickDirectoryFiles() {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(Object.assign(new Error('No folder chosen.'), { name: 'AbortError' }));
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.webkitdirectory = true;
+    input.addEventListener('change', () => (input.files.length ? resolve([...input.files]) : abort()));
+    input.addEventListener('cancel', abort);
+    input.click();
+  });
+}
+
+// Build the same index shape walkLocal produces, from a webkitdirectory file
+// list. Paths arrive as "chosen-folder/sub/file.bin"; the leading segment is
+// the chosen folder itself, so it is stripped to match walkLocal's relPaths.
+export async function indexFromFiles(files, { onProgress = () => {}, hash = true } = {}) {
+  const index = new Map();
+  let folderName = '';
+  let count = 0;
+  for (const f of files) {
+    const full = f.webkitRelativePath || f.name;
+    const cut = full.indexOf('/');
+    if (cut !== -1 && !folderName) folderName = full.slice(0, cut);
+    const relPath = cut === -1 ? full : full.slice(cut + 1);
+    if (relPath.split('/').pop() === STATE_FILENAME) continue;
+    const buf = new Uint8Array(await f.arrayBuffer());
+    const amiiboId = parseAmiiboId(buf);
+    index.set(relPath, {
+      size: f.size,
+      hash: hash ? await sha256(buf) : null,
+      amiiboId,
+      vehicle: parseVehicle(buf)?.name ?? parseVehicle(buf)?.code ?? null,
+      uid: amiiboId && isHhdItemCards(amiiboId) ? parseUid(buf) : null,
+      isDir: false,
+      lastModified: f.lastModified,
+    });
+    onProgress(++count, relPath);
+  }
+  return { folderName, index };
+}
+
 // ---- traversal ----------------------------------------------------------
 
 // Walk the tree into the same shape the planner expects:

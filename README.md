@@ -54,9 +54,11 @@ Three hardware findings shape the sync design:
 
 All commands are collected in [COMMANDS.md](COMMANDS.md).
 
-Requires Node (any recent version) and Chrome or Edge. Web Bluetooth needs a
-secure context, so the page must be served over `http://localhost`;
-opening it as a `file://` URL will not work.
+Requires Node (any recent version) and, for syncing, Chrome or Edge. Web
+Bluetooth needs a secure context, so the page must be served over
+`http://localhost`; opening it as a `file://` URL will not work. Firefox and
+Safari can browse the database and scan a folder read-only to track a
+collection; Bluetooth and writable folder access are Chrome/Edge only.
 
 ```sh
 npm run serve          # or: node serve.mjs [port]

@@ -51,7 +51,10 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
     <ul>
       <li><b>Your folder.</b> Pick the folder holding your dump files
           (<span class="kbd">.bin</span>). Owned amiibo light up in colour,
-          missing ones stay grey. Files never leave your computer.</li>
+          missing ones stay grey. Files never leave your computer. In Firefox
+          or Safari the folder opens read-only: tracking works the same, the
+          browser just forgets the folder between visits, so rescanning means
+          picking it again.</li>
       <li><b>Your device.</b> Connect over Bluetooth and pick the folder on
           the device to read. Its contents appear with a
           <span class="muted">bluetooth badge</span>. Reading takes a few
@@ -153,9 +156,10 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
           official-only totals. Every choice you
           make here, and the view, sort and filter settings on the Collection,
           is saved and persists across refreshes and sessions.</li>
-      <li>Syncing needs <b>Chrome or Edge</b>: Bluetooth and folder access are
-          not available in other browsers yet. Any browser can still browse
-          the database.</li>
+      <li>Syncing needs <b>Chrome or Edge</b>: Bluetooth and writable folder
+          access are not available in other browsers yet. Firefox and Safari
+          can still browse the database and scan a folder read-only to track
+          a collection.</li>
       <li>Nothing is uploaded anywhere and there is no server. Your folder,
           your device, your browser.</li>
       <li>The title screen listens for <span class="kbd">Enter</span>, like

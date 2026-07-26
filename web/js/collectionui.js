@@ -40,6 +40,7 @@ const pbar = progressCtl(els.pbar);
 
 let rootHandle = null;
 let lapsedFolderName = null; // remembered folder whose permission expired
+let roName = null; // read-only fallback (Firefox/Safari): folder name, no handle
 let transport = null;
 let client = null;
 let localIds = new Set();
@@ -76,7 +77,7 @@ function say(text, kind = '') {
 function saveScanCache() {
   try {
     sessionStorage.setItem(CACHE_KEY, JSON.stringify({
-      folderName: rootHandle?.name ?? lapsedFolderName ?? '',
+      folderName: rootHandle?.name ?? lapsedFolderName ?? roName ?? '',
       localIds: [...localIds],
       filesById: [...filesById],
       namesById: [...namesById],
@@ -136,16 +137,17 @@ function chipHtml({ label, sub, icons, primary, warnState, asButton, title }) {
 
 function renderFolderChip(state = {}) {
   const c = els.folderChip;
-  if (!localfs.available()) { c.innerHTML = ''; return; }
+  const ro = !localfs.available(); // Firefox/Safari: webkitdirectory fallback
 
   if (state.scanning) {
-    c.innerHTML = chipHtml({ icons: icon('folder'), label: rootHandle?.name ?? 'FOLDER', sub: state.scanning });
+    c.innerHTML = chipHtml({ icons: icon('folder'), label: rootHandle?.name ?? roName ?? 'FOLDER', sub: state.scanning });
     return;
   }
-  if (rootHandle) {
-    c.innerHTML = `<span class="srcChip">${icon('folder')}<span>${rootHandle.name}</span>` +
+  if (rootHandle || (ro && roName)) {
+    const name = rootHandle?.name ?? roName;
+    c.innerHTML = `<span class="srcChip">${icon('folder')}<span>${name}</span>` +
       `<span class="sub">${[...localIds].length ? `${countDumps()} dumps` : ''}</span>` +
-      `<button data-act="rescan" title="Rescan folder">${icon('sync')}</button>` +
+      `<button data-act="rescan" title="${ro ? 'Pick the folder again to rescan' : 'Rescan folder'}">${icon('sync')}</button>` +
       `<button data-act="forget" title="Forget folder">${icon('close')}</button></span>`;
   } else if (lapsedFolderName) {
     c.innerHTML = chipHtml({
@@ -156,10 +158,10 @@ function renderFolderChip(state = {}) {
     return;
   } else {
     c.innerHTML = chipHtml({ icons: icon('folder'), label: 'CHOOSE FOLDER', primary: !localIds.size, asButton: true });
-    c.querySelector('button').addEventListener('click', pickFolder);
+    c.querySelector('button').addEventListener('click', ro ? pickFolderReadOnly : pickFolder);
     return;
   }
-  c.querySelector('[data-act="rescan"]')?.addEventListener('click', scanFolder);
+  c.querySelector('[data-act="rescan"]')?.addEventListener('click', ro ? pickFolderReadOnly : scanFolder);
   c.querySelector('[data-act="forget"]')?.addEventListener('click', forgetFolder);
 }
 
@@ -223,14 +225,41 @@ async function reconnectFolder() {
 
 async function scanFolder() {
   if (!rootHandle) return;
-  const before = new Set(localIds);
   try {
     renderFolderChip({ scanning: 'reading…' });
     const index = await localfs.walkLocal(rootHandle, {
       hash: false,
       onProgress: (n) => { if (n % 100 === 0) renderFolderChip({ scanning: `reading… ${n}` }); },
     });
+    ingestLocalIndex(index, rootHandle.name);
+  } catch (err) {
+    say(err.message, 'err');
+  }
+  renderFolderChip();
+}
 
+// Read-only browsers: the picker hands over the files directly; everything
+// after the walk is the same as a handle-based scan.
+async function pickFolderReadOnly() {
+  try {
+    const files = await localfs.pickDirectoryFiles();
+    renderFolderChip({ scanning: 'reading…' });
+    const { folderName, index } = await localfs.indexFromFiles(files, {
+      hash: false,
+      onProgress: (n) => { if (n % 100 === 0) renderFolderChip({ scanning: `reading… ${n}` }); },
+    });
+    roName = folderName || 'FOLDER';
+    ingestLocalIndex(index, roName);
+  } catch (err) {
+    if (err.name === 'AbortError') say('No folder chosen yet.');
+    else say(err.message, 'err');
+  }
+  renderFolderChip();
+}
+
+function ingestLocalIndex(index, name) {
+  const before = new Set(localIds);
+  {
     localIds = new Set();
     filesById = new Map();
     namesById = new Map();
@@ -263,7 +292,7 @@ async function scanFolder() {
 
     const fresh = [...localIds].filter((id) => !before.has(id));
     if (dumps === 0) {
-      say(`No dumps found in "${rootHandle.name}" — pick the folder that holds your .bin files.`, 'warn');
+      say(`No dumps found in "${name}" — pick the folder that holds your .bin files.`, 'warn');
     } else if (unrecognised.length) {
       say(`${unrecognised.length} files skipped — see Scan report`, 'warn');
     } else {
@@ -274,10 +303,7 @@ async function scanFolder() {
       if (before.size) toast(`${fresh.length} new!`, { iconName: 'party' });
     }
     maybeCelebrateAllSynced();
-  } catch (err) {
-    say(err.message, 'err');
   }
-  renderFolderChip();
 }
 
 async function forgetFolder() {
@@ -293,6 +319,7 @@ async function forgetFolder() {
   // Folder-side state only — the device is its own source and survives.
   rootHandle = null;
   lapsedFolderName = null;
+  roName = null;
   localIds = new Set();
   filesById = new Map();
   namesById = new Map();
@@ -527,7 +554,7 @@ function celebrate(freshIds) {
 // ---- hero (cold / browse-only) ------------------------------------------------
 
 function renderHero() {
-  const step1Done = !!rootHandle || !!lapsedFolderName || localIds.size > 0;
+  const step1Done = !!rootHandle || !!lapsedFolderName || !!roName || localIds.size > 0;
   const step2Done = !!deviceIds;
   const ble = BleTransport.available;
   const cold = !step1Done && !step2Done;
@@ -537,13 +564,6 @@ function renderHero() {
   // to the ALL SYNCED banner.
   els.hero.hidden = false;
 
-  if (!localfs.available()) {
-    els.hero.innerHTML = `<div class="hero">${icon('ship')}<div class="hBody">
-      <div class="hTitle">BROWSE-ONLY MODE</div>
-      <p>This browser can't read folders. Chrome or Edge unlocks tracking and sync.</p>
-    </div></div>`;
-    return;
-  }
 
   // Each source carries its own numbers, right under its chip; one shared
   // line at the bottom says how far apart the two sides are.
@@ -608,6 +628,7 @@ function renderHero() {
     ${syncLine}
     <span class="hActions" id="heroActions"></span>
     ${cold ? '<p class="hNote">Stays on this computer. Nothing uploads.</p>' : ''}
+    ${!localfs.available() ? '<p class="hNote">Read-only in this browser: track your collection here, syncing needs Chrome or Edge.</p>' : ''}
   </div></div>`;
 
   els.hero.querySelector('#heroSlot1').append(els.folderChip);
@@ -1373,21 +1394,19 @@ addEventListener('pagehide', () => {
 
   renderDeviceChip();
 
-  if (!localfs.available()) {
-    render();
-    renderFolderChip();
-    return;
-  }
-
-  const restored = await localfs.restoreDirectory();
+  const restored = localfs.available() ? await localfs.restoreDirectory() : null;
   if (restored) rootHandle = restored;
 
   const hadCache = restoreScanCache();
   if (!restored && hadCache) {
-    // handle still in IndexedDB but permission lapsed — offer one-tap re-grant
     try {
       const cached = JSON.parse(sessionStorage.getItem(CACHE_KEY));
-      lapsedFolderName = cached?.folderName || null;
+      if (localfs.available()) {
+        // handle still in IndexedDB but permission lapsed — offer one-tap re-grant
+        lapsedFolderName = cached?.folderName || null;
+      } else {
+        roName = cached?.folderName || null;
+      }
     } catch {}
   }
 

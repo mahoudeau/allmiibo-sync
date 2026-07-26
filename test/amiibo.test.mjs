@@ -309,3 +309,19 @@ test('hideHhd also suppresses the curated placeholder when nothing is owned', ()
   assert.equal(c.stats.knownTotal, 946);
   assert.ok(!c.series.flatMap((s) => s.items).some((i) => i.special));
 });
+
+test('the read-only folder fallback builds the same index walkLocal would', async () => {
+  const { indexFromFiles, STATE_FILENAME } = await import('../web/js/localfs.js');
+  const files = [
+    new File([dump('0181000100440502')], 'mario.bin'),
+    new File([dump('026a000100000502')], 'hhd-card.bin'),
+    new File([new Uint8Array(10)], 'notes.txt'),
+    new File(['{}'], STATE_FILENAME),
+  ];
+  const { index } = await indexFromFiles(files, { hash: false });
+  assert.equal(index.size, 3, 'the sync-state file is skipped');
+  assert.equal(index.get('mario.bin').amiiboId, '0181000100440502');
+  assert.match(index.get('hhd-card.bin').uid ?? '', /^[0-9a-f]{14}$/);
+  assert.equal(index.get('notes.txt').amiiboId, null);
+  assert.equal(index.get('mario.bin').hash, null, 'hash skipped when not requested');
+});

@@ -1,6 +1,6 @@
 # Commands
 
-Everything runs on Node built-ins — no `npm install`, there are no dependencies.
+Everything runs on Node built-ins: no `npm install`, there are no dependencies.
 Run all commands from the repository root.
 
 ## Day to day
@@ -11,13 +11,13 @@ node serve.mjs 9000          # same, on another port
 ```
 
 Web Bluetooth requires a secure context, so the pages must be opened via
-`http://localhost` — opening the HTML files directly (`file://`) will not work.
+`http://localhost`; opening the HTML files directly (`file://`) will not work.
 Use Chrome or Edge, and close any other tab connected to the device first: it
 accepts one BLE connection at a time.
 
 | Page | What it does |
 |---|---|
-| <http://localhost:8080/> | 8-bit title screen — leads into collection and sync |
+| <http://localhost:8080/> | 8-bit title screen, leads into collection and sync |
 | <http://localhost:8080/collection.html> | the app: collection tracker + everyday sync (scan folder/device, send/download selections, two-way sync) |
 | <http://localhost:8080/sync.html> | Advanced sync: every operation and option (backup, replace, match, check) |
 | <http://localhost:8080/help.html> | how-to: every feature explained |
@@ -36,7 +36,7 @@ node --test test/planner.test.mjs        # one file
 node --test --test-name-pattern="replace"   # tests matching a name
 ```
 
-No hardware needed — protocol tests run against a simulated device.
+No hardware needed: protocol tests run against a simulated device.
 
 ## Updating the amiibo database (dev-time only; the site never fetches)
 
@@ -68,7 +68,7 @@ npm run fetch-images -- <id16> <id16>    # also try extra amiibo IDs
 Images come from the AmiiboAPI repository, keyed by the 16-hex amiibo ID, into
 three tiers: `web/data/images/full/`, 256 px `med/` for Retina-sharp lists and
 96 px thumbnails in `thumb/`. The same run fetches the four Air Riders vehicle
-renders into `web/data/images/vehicles/`. All of it is **gitignored** — it is
+renders into `web/data/images/vehicles/`. All of it is **gitignored**: it is
 Nintendo's artwork, cached locally, never committed. Already-downloaded files
 are skipped, so re-runs are cheap. A 404 for a new amiibo just means no
 artwork upstream yet; the page shows a placeholder.
@@ -119,7 +119,7 @@ console.log(JSON.stringify({...describeAmiibo(id), vehicle:parseVehicle(b)},null
 
 | Path | Contents | Committed? |
 |---|---|---|
-| `web/data/amiibo-db.js` | generated ID→name/series/type database | yes — review diffs |
+| `web/data/amiibo-db.js` | generated ID→name/series/type database | yes, review diffs |
 | `web/data/images/` | artwork cache + thumbnails | no (gitignored) |
 | `tools/.cache/` | downloaded upstream sources | no (gitignored) |
 | `.allmiibo-sync.json` | per-folder sync state, written next to your dumps | no (gitignored) |
@@ -127,14 +127,14 @@ console.log(JSON.stringify({...describeAmiibo(id), vehicle:parseVehicle(b)},null
 
 ## Troubleshooting
 
-- **"Web Bluetooth unavailable"** — use Chrome or Edge via `http://localhost`,
+- **"Web Bluetooth unavailable"**: use Chrome or Edge via `http://localhost`,
   not Safari and not `file://`.
-- **Device won't connect** — close every other tab or app holding a connection
+- **Device won't connect**: close every other tab or app holding a connection
   (including the official web tools); the device accepts exactly one.
-- **A run failed midway** — use **RUN LOG drawer (SAVE JSON)** on the sync page and read the
+- **A run failed midway**: use **RUN LOG drawer (SAVE JSON)** on the sync page and read the
   JSON: every operation is recorded with timing, outcome, and the command and
   status behind any device refusal.
-- **Everything shows as an upload after choosing a folder** — the device root
+- **Everything shows as an upload after choosing a folder**: the device root
   and local folder are probably offset by one level (e.g. local folder
   *contains* `amiibo/` while the device root is already `E:/amiibo`); the plan
   header warns when the two sides share no paths.
