@@ -58,13 +58,17 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
 </head>
 <body>
 <main>
-  <nav><a href="./collection.html">← collection</a></nav>
+  <nav><a href="./collection.html" class="backLink"><span class="ico" id="backIco"></span><span class="lbl">COLLECTION</span></a></nav>
 
   <div id="content" class="detail">
     <div class="status">Loading…</div>
   </div>
 </main>
 <script type="module" src="./js/header.js"></script>
+<script type="module">
+import { ICONS } from './js/icons.js';
+document.getElementById('backIco').innerHTML = ICONS.back;
+</script>
 <script type="module" src="./js/amiibodetail.js"></script>
 <script type="module" src="./js/footer.js"></script>
 </body>

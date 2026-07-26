@@ -60,7 +60,9 @@ p.sub { color: var(--muted); margin: 0 0 1.5rem; }
 h2 { font-family: var(--pixel); font-size: .6rem; letter-spacing: .04em; color: var(--muted); margin: 0 0 .6rem; }
 section { margin-bottom: 1.5rem; }
 main > nav { margin-bottom: 1rem; }
-main > nav a { font-family: var(--pixel); font-size: .55rem; color: var(--muted); text-decoration: none; }
+main > nav a { font-family: var(--pixel); font-size: .55rem; color: var(--muted); text-decoration: none;
+  display: inline-flex; align-items: center; gap: .4rem; }
+main > nav a .ico { margin: -.4rem 0; } /* same icon overhang as the menu */
 main > nav a:hover { color: var(--fg); }
 code { font-family: var(--mono); }
 
