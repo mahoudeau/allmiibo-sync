@@ -408,6 +408,8 @@ web/js/ui.js              shared UI kit: toasts, status, progress, dialogs,
                           debounce, counters, formatters
 web/js/dialog.js          themed confirm on native <dialog>
 web/js/footer.js          shared footer
+web/js/version.js         build id shown in the footer ('dev' in the repo,
+                          stamped with the commit at deploy time)
 web/js/icons.js           8-bit UI icons (Pixelarticons, inlined)
 web/js/sprite.js          the pirate mascot as pixel-map -> SVG
 web/js/probe.js           read-only probe logic
