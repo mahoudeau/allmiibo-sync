@@ -525,14 +525,15 @@ function renderProgress() {
   if (!show) { els.collProg.innerHTML = ''; return; }
 
   const pct = stats.knownTotal ? Math.round((stats.ownedKnown / stats.knownTotal) * 100) : 0;
-  const split = stats.ownedDeviceOnly > 0
+  const showSplit = stats.ownedDeviceOnly > 0 && localIds.size > 0;
+  const split = showSplit
     ? `title="${stats.ownedLocalKnown} in your folder · ${stats.ownedDeviceOnly} only on the device"`
     : '';
   els.collProg.innerHTML = `<div class="heroProg">
     <div class="hpTop">
       <button class="hpOwned" data-filter="owned" ${split}><b>${stats.ownedKnown}</b><span class="of"> / ${stats.knownTotal}</span></button>
       <span class="hpLbl">OWNED</span>
-      ${stats.ownedDeviceOnly > 0 ? `<span class="hStat dev" title="On the device but not in your folder — SYNC or DOWNLOAD brings them over">${icon('bluetooth')}<b>${stats.ownedDeviceOnly}</b> ONLY ON DEVICE</span>` : ''}
+      ${showSplit ? `<span class="hStat dev" title="On the device but not in your folder — SYNC or DOWNLOAD brings them over">${icon('bluetooth')}<b>${stats.ownedDeviceOnly}</b> ONLY ON DEVICE</span>` : ''}
       <b class="hpPct">${pct}%</b>
     </div>
     <div class="hpBar"><span class="fill" style="width:${pct}%"></span></div>
