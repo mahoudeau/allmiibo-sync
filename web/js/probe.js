@@ -111,7 +111,7 @@ els.probe.addEventListener('click', async () => {
     const drives = report.drives?.drives ?? [];
     if (drives.length === 0) throw new Error('no drive reported; cannot walk filesystem');
 
-    const maxDepth = Math.max(1, Number(els.maxDepth.value) || 4);
+    const maxDepth = Math.max(1, Number(els.maxDepth.value) || 8);
     report.tree = [];
 
     for (const drive of drives) {

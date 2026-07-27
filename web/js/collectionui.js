@@ -28,7 +28,7 @@ for (const id of [
   'srcStrip',
   'pageMeta', 'folderChip', 'deviceChip', 'stop', 'hero', 'collProg', 'status', 'pbar',
   'search', 'searchClear', 'searchIco', 'filters', 'sortMode', 'segView',
-  'moreMenu', 'moreIco', 'copyMissing', 'showReport', 'expandAll', 'collapseAll',
+  'moreMenu', 'moreIco', 'copyMissing', 'showReport', 'exportLog', 'expandAll', 'collapseAll',
   'skipped', 'series', 'emptyState',
   'syncBtn', 'syncPanel', 'spReview', 'spWarn', 'spCards', 'spCap', 'spCapName',
   'spCapText', 'spApply', 'spCancel', 'spRun', 'spPbar', 'spErrs', 'spStop',
@@ -55,7 +55,8 @@ let hhdDeviceUids = new Set();
 let devRoot = prefs.get(prefs.KEYS.deviceRoot, 'E:/amiibo');
 let collection = null;
 let stopRequested = false;
-let skippedReport = { ignored: [], unrecognised: [] };
+let skippedReport = { ignored: [], unrecognised: [], deviceUnrecognised: [], deviceErrors: [] };
+let localFileLog = []; // every file of the last folder scan, for the export
 
 // Built by buildDom, consumed by applyFilter.
 let rowIndex = [];   // { el, groupEl, item, text }
@@ -114,7 +115,7 @@ function restoreScanCache() {
     hhdLocalUids = new Set(c.hhdLocalUids ?? []);
     hhdDeviceUids = new Set(c.hhdDeviceUids ?? []);
     deviceIndex = c.deviceIndex ? new Map(c.deviceIndex) : null;
-    skippedReport = c.skipped ?? { ignored: [], unrecognised: [] };
+    skippedReport = { ignored: [], unrecognised: [], deviceUnrecognised: [], deviceErrors: [], ...(c.skipped ?? {}) };
     return localIds.size > 0 || !!deviceIds;
   } catch {
     return false;
@@ -175,8 +176,10 @@ function renderDeviceChip(state = {}) {
     return;
   }
   if (deviceIds) {
+    const devFiles = deviceIndex ? [...deviceIndex.values()].filter((e) => !e.isDir).length : 0;
+    const filesNote = devFiles > deviceIds.size ? ` (${devFiles} files)` : '';
     c.innerHTML = `<span class="srcChip">${icon('bluetooth')}<span>${deviceName ?? 'DEVICE'}</span>` +
-      `<span class="sub">${devRoot} · ${deviceIds.size} amiibo</span>` +
+      `<span class="sub">${devRoot} · ${deviceIds.size} amiibo${filesNote}</span>` +
       `<button data-act="dir" title="Choose device folder">${icon('folder')}</button>` +
       `<button data-act="rescan" title="Rescan device">${icon('sync')}</button>` +
       `<button data-act="clear" title="Clear device data">${icon('close')}</button></span>`;
@@ -269,8 +272,10 @@ function ingestLocalIndex(index, name) {
     const ignored = [];
     const unrecognised = [];
 
+    localFileLog = [];
     for (const [relPath, e] of index) {
       if (e.isDir) continue;
+      localFileLog.push({ relPath, size: e.size, amiiboId: e.amiiboId, vehicle: e.vehicle ?? null, uid: e.uid ?? null });
       if (e.amiiboId) {
         dumps++;
         localIds.add(e.amiiboId);
@@ -285,7 +290,7 @@ function ingestLocalIndex(index, name) {
         unrecognised.push({ relPath, size: e.size });
       }
     }
-    skippedReport = { ignored, unrecognised };
+    skippedReport = { ...skippedReport, ignored, unrecognised };
 
     render();
     saveScanCache();
@@ -325,7 +330,7 @@ async function forgetFolder() {
   namesById = new Map();
   hhdLocalUids = new Set();
   for (const v of vehiclesById.values()) for (const e of v.values()) e.local = false;
-  skippedReport = { ignored: [], unrecognised: [] };
+  skippedReport = { ...skippedReport, ignored: [], unrecognised: [] };
   els.skipped.hidden = true;
   saveScanCache();
   render();
@@ -371,8 +376,10 @@ async function scanDevice() {
     els.stop.hidden = false;
     renderDeviceChip({ scanning: 'listing…' });
     pbar.busy(`Listing ${devRoot}…`);
+    const deepFolders = [];
     let index = await walkDevice(client, devRoot, {
       shouldStop: () => stopRequested,
+      onDeep: (relPath) => deepFolders.push(relPath),
       onProgress: (n) => {
         if (n % 50 === 0) {
           renderDeviceChip({ scanning: `listing ${n}` });
@@ -397,19 +404,40 @@ async function scanDevice() {
     deviceIndex = index;
     deviceIds = new Set();
     hhdDeviceUids = new Set();
+    const devUnrecognised = [];
+    const devErrors = [];
+    const devIgnored = [];
     for (const v of vehiclesById.values()) for (const e of v.values()) e.device = false;
-    for (const e of index.values()) {
-      if (e.isDir || !e.amiiboId) continue;
-      deviceIds.add(e.amiiboId);
-      if (e.vehicle) markVehicle(e.amiiboId, e.vehicle, 'device');
-      if (e.uid) hhdDeviceUids.add(e.uid);
+    for (const [relPath, e] of index) {
+      if (e.isDir) continue;
+      if (e.amiiboId) {
+        deviceIds.add(e.amiiboId);
+        if (e.vehicle) markVehicle(e.amiiboId, e.vehicle, 'device');
+        if (e.uid) hhdDeviceUids.add(e.uid);
+      } else if (e.hashError) {
+        devErrors.push({ relPath, size: e.size, error: e.hashError });
+      } else if (isExcluded(relPath)) {
+        devIgnored.push({ relPath, size: e.size });
+      } else {
+        devUnrecognised.push({ relPath, size: e.size });
+      }
     }
+    skippedReport = {
+      ...skippedReport,
+      deviceUnrecognised: devUnrecognised,
+      deviceErrors: devErrors,
+      deviceDeep: deepFolders,
+      deviceIgnored: devIgnored,
+    };
 
     render();
     saveScanCache();
+    const skipped = devUnrecognised.length + devErrors.length + deepFolders.length;
     say(stopRequested
       ? `Stopped — ${deviceIds.size} read so far. Results partial.`
-      : '', stopRequested ? 'warn' : '');
+      : skipped
+        ? `${skipped} device files not identified — see SCAN REPORT`
+        : '', stopRequested || skipped ? 'warn' : '');
     if (!stopRequested) maybeCelebrateAllSynced();
   } catch (err) {
     pbar.hide();
@@ -1345,6 +1373,50 @@ els.showReport.addEventListener('click', () => {
   if (!els.skipped.hidden) els.skipped.scrollIntoView({ block: 'nearest' });
 });
 
+els.exportLog.addEventListener('click', () => {
+  els.moreMenu.open = false;
+  const { up, down, matched } = syncDeltas();
+  const log = {
+    generatedAt: new Date().toISOString(),
+    page: location.href,
+    userAgent: navigator.userAgent,
+    prefs: {
+      mode: localStorage.getItem('allmiibo:mode'),
+      showHhd: prefs.get(prefs.KEYS.showHhd, true),
+    },
+    stats: collection?.stats ?? null,
+    deltas: { up, down, matched },
+    folder: {
+      name: rootHandle?.name ?? lapsedFolderName ?? roName ?? null,
+      files: localFileLog,
+      skipped: { ignored: skippedReport.ignored, unrecognised: skippedReport.unrecognised },
+    },
+    device: {
+      name: deviceName,
+      root: devRoot,
+      files: deviceIndex
+        ? [...deviceIndex].filter(([, e]) => !e.isDir).map(([relPath, e]) => ({
+            relPath, size: e.size, amiiboId: e.amiiboId ?? null,
+            vehicle: e.vehicle ?? null, uid: e.uid ?? null, error: e.hashError ?? null,
+          }))
+        : null,
+      skipped: {
+        unrecognised: skippedReport.deviceUnrecognised,
+        errors: skippedReport.deviceErrors,
+        tooDeep: skippedReport.deviceDeep ?? [],
+        system: skippedReport.deviceIgnored ?? [],
+      },
+    },
+  };
+  const blob = new Blob([JSON.stringify(log, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `allmiibo-scanlog-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('Scan log saved — filenames and sizes only, no file contents.');
+});
+
 els.expandAll.addEventListener('click', () => {
   els.moreMenu.open = false;
   const opened = [];
@@ -1358,9 +1430,28 @@ els.collapseAll.addEventListener('click', () => {
 });
 
 function renderSkipped() {
-  const { ignored, unrecognised } = skippedReport;
+  const { ignored, unrecognised, deviceUnrecognised = [], deviceErrors = [], deviceDeep = [], deviceIgnored = [] } = skippedReport;
   els.skipped.textContent = '';
-  if (!ignored.length && !unrecognised.length) {
+
+  // The arithmetic first: how many files became how many distinct amiibo.
+  // Duplicate dumps of the same amiibo are the usual gap between the two.
+  const sums = [];
+  if (localFileLog.length || localIds.size) {
+    const dumps = countDumps();
+    sums.push(`Folder: ${localFileLog.length || dumps} files → ${dumps} dumps → ${localIds.size} distinct amiibo.`);
+  }
+  if (deviceIndex) {
+    const devFiles = [...deviceIndex.values()].filter((e) => !e.isDir).length;
+    const devDumps = [...deviceIndex.values()].filter((e) => !e.isDir && e.amiiboId).length;
+    sums.push(`Device: ${devFiles} files → ${devDumps} dumps → ${deviceIds?.size ?? 0} distinct amiibo.`);
+  }
+  if (sums.length) {
+    const p = document.createElement('p');
+    p.className = 'sub';
+    p.textContent = sums.join(' ');
+    els.skipped.append(p);
+  }
+  if (!ignored.length && !unrecognised.length && !deviceUnrecognised.length && !deviceErrors.length && !deviceDeep.length) {
     const p = document.createElement('p');
     p.className = 'sub';
     p.textContent = localIds.size ? 'Every file was recognised.' : 'Nothing scanned yet.';
@@ -1380,9 +1471,16 @@ function renderSkipped() {
     d.append(pre);
     els.skipped.append(d);
   };
-  block('Not recognised as amiibo dumps', unrecognised,
-    `Recognised dump sizes: ${Object.entries(DUMP_SIZES).map(([n, l]) => `${n} (${l})`).join(', ')}.`);
+  const sizesNote = `Recognised dump sizes: ${Object.entries(DUMP_SIZES).map(([n, l]) => `${n} (${l})`).join(', ')}.`;
+  block('Not recognised as amiibo dumps', unrecognised, sizesNote);
   block('System files (sync skips these too)', ignored);
+  block('Device files not recognised as amiibo dumps', deviceUnrecognised, sizesNote);
+  block('Device files that could not be read', deviceErrors.map((e) => ({
+    size: e.size, relPath: `${e.relPath}   (${e.error})`,
+  })), 'Read over Bluetooth failed twice for these. Rescan to retry them.');
+  block('Device folders out of reach', deviceDeep.map((relPath) => ({ size: 0, relPath })),
+    'Their full path exceeds the 63 bytes the device itself can address, so nothing inside them is reachable.');
+  block('Device system files (sync skips these too)', deviceIgnored);
 }
 
 // ---- scroll persistence ---------------------------------------------------------------

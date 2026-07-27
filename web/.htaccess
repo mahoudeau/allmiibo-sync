@@ -1,0 +1,5 @@
+# No build step, no hashed filenames: make browsers revalidate every asset
+# so a deploy is picked up on the next load (ETag keeps 304s cheap).
+<IfModule mod_headers.c>
+Header set Cache-Control "no-cache, must-revalidate"
+</IfModule>

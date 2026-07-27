@@ -105,7 +105,9 @@ old-game victory overlay plays once; the counts under each source double as
 filter shortcuts.
 The toolbar has search (press `/`), filter pills with live counts, three
 sorts (release, name, completion), a **CARDS** / **LIST** toggle, and a `⋯`
-menu (**COPY MISSING LIST**, **SCAN REPORT**, expand/collapse all). Every
+menu (**COPY MISSING LIST**, **SCAN REPORT**, **EXPORT SCAN LOG** for bug
+reports (filenames, sizes and IDs as JSON, never file contents), and
+expand/collapse all). Every
 series row carries one tally pill: owned/total, a check when complete, a
 bluetooth mark once a device is scanned, ▲/▼ deltas for what still needs to
 move, and a sparkle count for dumps newer than the database. Each

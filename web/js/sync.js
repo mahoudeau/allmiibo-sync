@@ -4,7 +4,7 @@
 // through a long push does not restart from zero — at ~2 KB/s a full library
 // push is around seven minutes.
 
-import { joinPath } from './protocol.js';
+import { joinPath, MAX_PATH_BYTES } from './protocol.js';
 import { parseAmiiboId, parseVehicle, parseUid, isHhdItemCards } from './amiibo.js';
 import { devicePath, isExcluded, DEFAULT_EXCLUDES } from './planner.js';
 import {
@@ -19,11 +19,17 @@ import {
 // Walk the device below `deviceRoot` into the planner's index shape:
 //   Map<relPath, {size, isDir}>
 // Sizes only — hashing would cost a full read per file.
-export async function walkDevice(client, deviceRoot, { onProgress = () => {}, maxDepth = 8, shouldStop = () => false } = {}) {
+//
+// The only descent limit is the device's own: VFS_MAX_PATH_LEN caps every
+// addressable path at MAX_PATH_BYTES, so a subtree whose path cannot fit is
+// unreachable for the firmware too — it is reported via onDeep rather than
+// silently skipped. (FAT has no symlinks, so cycles cannot occur.)
+export async function walkDevice(client, deviceRoot, { onProgress = () => {}, shouldStop = () => false, onDeep = () => {} } = {}) {
   const index = new Map();
+  const encoder = new TextEncoder();
   let files = 0;
 
-  async function walk(relDir, depth) {
+  async function walk(relDir) {
     if (shouldStop()) return;
     const full = devicePath(deviceRoot, relDir);
     const entries = await client.readDir(full);
@@ -33,7 +39,10 @@ export async function walkDevice(client, deviceRoot, { onProgress = () => {}, ma
       const relPath = relDir ? `${relDir}/${e.name}` : e.name;
       if (e.isDir) {
         index.set(relPath, { size: 0, isDir: true, meta: e.meta });
-        if (depth + 1 < maxDepth) await walk(relPath, depth + 1);
+        // Entering the folder means addressing children at path + "/x" at
+        // minimum; if even that cannot fit, the subtree is out of reach.
+        if (encoder.encode(devicePath(deviceRoot, relPath)).length + 2 <= MAX_PATH_BYTES) await walk(relPath);
+        else onDeep(relPath);
       } else {
         index.set(relPath, { size: e.size, isDir: false, meta: e.meta });
         onProgress(++files, relPath);
@@ -41,7 +50,7 @@ export async function walkDevice(client, deviceRoot, { onProgress = () => {}, ma
     }
   }
 
-  await walk('', 0);
+  await walk('');
   return index;
 }
 
@@ -57,7 +66,10 @@ export async function hashDeviceIndex(client, deviceRoot, index, { onProgress = 
   for (const [relPath, entry] of pending) {
     if (shouldStop()) break;
     try {
-      const bytes = await client.readFile(devicePath(deviceRoot, relPath));
+      // One retry: a 15-minute BLE session hits transient errors, and a
+      // file skipped here silently vanishes from the collection count.
+      const bytes = await client.readFile(devicePath(deviceRoot, relPath))
+        .catch(() => client.readFile(devicePath(deviceRoot, relPath)));
       const v = parseVehicle(bytes);
       const amiiboId = parseAmiiboId(bytes);
       out.set(relPath, {
