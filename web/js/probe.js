@@ -125,7 +125,8 @@ els.probe.addEventListener('click', async () => {
         continue;
       }
 
-      log('info', `walking ${root} ("${drive.name}", ${drive.usedSize} of ${drive.totalSize} bytes used)`);
+      log('info', `walking ${root} ("${drive.name}", ${drive.usedSize} of ${drive.totalSize} ` +
+        `bytes used, ${drive.freeSize} free)`);
       const children = await walk(root, 0, maxDepth);
       report.tree.push({ root, name: drive.name, children });
     }

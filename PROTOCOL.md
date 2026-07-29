@@ -285,19 +285,28 @@ u8     status       // 0 = available, 1 = unavailable
 u8     label        // 'I' or 'E'
 string name         // human-readable, e.g. "External Flash"
 u32    total_size
-u32    used_size
+u32    free_size    // remaining, NOT used — see below
 ```
 
 `count` is `vfs_drive_enabled(INT) + vfs_drive_enabled(EXT)`, so it can be 2.
 The official client reads only the first entry; parse all of them.
 
 Observed on hardware (Pixl.js 2.11.2): `count = 1`, `status = 0`,
-`label = 'E'`, `name = "External Flash"`, 966,601 of 1,920,401 bytes used.
+`label = 'E'`, `name = "External Flash"`, `total_size = 1,920,401`,
+`free_size = 966,601` — i.e. 953,800 bytes used.
+
+> **The second u32 is free space, not used space.** The official Pixl.js client
+> renders the drive row as `free/total`, truncated to two decimals. An empty
+> device reported `total_size = 1,920,401` and `free_size = 1,918,644`, which
+> that client showed as "1.82 MB/1.83 MB" (1,918,644 ÷ 1024² = 1.8298, floored)
+> — leaving 1,757 bytes actually used, about what littlefs spends on its
+> superblock. Reading the field as "used" inverts the drive and makes a nearly
+> empty device look full.
 
 > **Firmware quirk.** In the internal-drive branch, `df_proto_vfs.c` calls
 > `vfs_get_driver(VFS_DRIVE_EXT)` where it plainly means `VFS_DRIVE_INT`, so a
 > device with internal flash enabled reports the *external* drive's stats under
-> label `'I'`. Do not trust `total_size`/`used_size` for the `I` drive.
+> label `'I'`. Do not trust `total_size`/`free_size` for the `I` drive.
 
 ### 5.2 Open modes
 

@@ -318,7 +318,8 @@ function renderReview(p, op) {
   if (p.capacity && !p.capacity.fits) {
     const w = document.createElement('div');
     w.className = 'warnCard err';
-    w.textContent = `Won't fit — needs ${fmtBytes(p.capacity.uploadBytes)}, only ${fmtBytes(p.capacity.freeAfterDeletes ?? p.capacity.freeNow)} possible. Free space on the device first.`;
+    const possible = p.capacity.usableBytes ?? p.capacity.freeAfterDeletes ?? p.capacity.freeNow;
+    w.textContent = `Won't fit — needs ${fmtBytes(p.capacity.uploadBytes)}, only ${fmtBytes(possible)} possible. Free space on the device first.`;
     els.warnBox.append(w);
   }
 

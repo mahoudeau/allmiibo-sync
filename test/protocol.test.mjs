@@ -122,8 +122,26 @@ test('drive list parses a single drive entry', async () => {
     label: 'E',
     name: 'External Flash',
     totalSize: 1_920_401,
-    usedSize: 966_601,
+    freeSize: 966_601,
+    usedSize: 953_800,
   });
+});
+
+test('the second drive figure is free space, not used space', async () => {
+  const t = new FakeTransport();
+  const c = client(t);
+
+  // A nearly empty device: the official client shows this as 1.82 MB free of
+  // 1.83 MB. Read as "used" it would leave 1,757 bytes free and refuse to sync.
+  const payload = new ByteWriter(64)
+    .u8(1).u8(0).u8('E'.charCodeAt(0)).string('External Flash')
+    .u32(1_920_401).u32(1_918_644)
+    .toUint8Array();
+  t.onWrite = () => t.respond(CMD.DRIVE_LIST, 0, payload);
+
+  const { drives } = await c.getDriveList();
+  assert.equal(drives[0].freeSize, 1_918_644);
+  assert.equal(drives[0].usedSize, 1_757);
 });
 
 test('the drive root comes from the label, not the human-readable name', () => {

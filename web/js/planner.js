@@ -97,10 +97,14 @@ export function sanitizeLocalRelPath(relPath) {
 // died 320 uploads into a 48-minute run.
 //
 // Two measurements, and they disagree:
-//   - the drive reports 966,601 bytes used for 862 files holding 464,979 bytes
-//     of content, which averages 1,121 bytes per file
+//   - the drive holds 862 files with 464,979 bytes of content in 953,800 bytes
+//     of used space, which averages 1,106 bytes per file
 //   - a real push filled 963,589 bytes of free space after 729 uploads of
 //     540-byte dumps, i.e. 1,322 bytes each
+//
+// (The first figure came out of the drive list, whose second u32 is free space
+// rather than used — the difference of the two totals, so the average moved
+// once that was corrected. The second is a delta and was never affected.)
 //
 // The second is the one that counts: it measures what an upload actually
 // consumes rather than averaging over a drive whose history is unknown. The
@@ -111,6 +115,19 @@ export const STORAGE_OVERHEAD_PER_FILE = 800;
 /** What a file of this size actually costs on the device. */
 export function storedSize(size) {
   return size + STORAGE_OVERHEAD_PER_FILE;
+}
+
+// The drive list reports total and *free* bytes; usedSize is derived from them
+// in protocol.js. Free is what the capacity check needs, so take it directly
+// where it is available and fall back to the subtraction for callers — tests,
+// saved runs — that only carry the derived figure.
+export function driveFreeBytes(drive) {
+  if (!drive) return NaN;
+  if (Number.isFinite(drive.freeSize)) return drive.freeSize;
+  if (Number.isFinite(drive.totalSize) && Number.isFinite(drive.usedSize)) {
+    return drive.totalSize - drive.usedSize;
+  }
+  return NaN;
 }
 
 function parentDirs(relPath) {
@@ -437,31 +454,46 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
   // Costed as the device stores them, not as raw content.
   const uploadBytes = plan.upload.reduce((n, u) => n + storedSize(u.size), 0);
   const freeingBytes = plan.deleteDevice.reduce((n, d) => n + storedSize(d.size ?? 0), 0);
+
+  // An upload onto a path the device already holds needs no room for a second
+  // copy: vfs_open_file opens with TRUNC, so the old contents go before the new
+  // ones arrive, and the space is reclaimed as each file is written rather than
+  // all at once at the end. Charging those uploads full price made a refresh of
+  // files already on the device look like it needed the whole library again.
+  const replacingBytes = plan.upload.reduce(
+    (n, u) => n + (deviceFiles.has(u.relPath) ? storedSize(deviceFiles.get(u.relPath).size ?? 0) : 0),
+    0
+  );
   const drive = options.drive ?? null;
 
-  if (drive && Number.isFinite(drive.totalSize) && Number.isFinite(drive.usedSize)) {
-    const freeNow = drive.totalSize - drive.usedSize;
+  if (drive && Number.isFinite(drive.totalSize) && Number.isFinite(driveFreeBytes(drive))) {
+    const freeNow = driveFreeBytes(drive);
+    const roomForUploads = freeNow + replacingBytes;
     // A replacement deletes first by default. Local is the source of truth, so
     // nothing unique is lost, and it avoids needing room for both copies at
     // once — which is what actually broke a full replace on this hardware.
     plan.deleteFirst = options.preferDeleteFirst
       ? freeingBytes > 0
-      : uploadBytes > freeNow && freeingBytes > 0;
+      : uploadBytes > roomForUploads && freeingBytes > 0;
+    const usableBytes = roomForUploads + freeingBytes;
     plan.capacity = {
       totalSize: drive.totalSize,
-      usedSize: drive.usedSize,
+      usedSize: drive.totalSize - freeNow,
       freeNow,
       uploadBytes,
       freeingBytes,
+      replacingBytes,
       freeAfterDeletes: freeNow + freeingBytes,
-      fits: uploadBytes <= freeNow + freeingBytes,
+      usableBytes,
+      fits: uploadBytes <= usableBytes,
     };
 
     if (!plan.capacity.fits) {
       plan.warnings.push(
         `Not enough room: the uploads need about ${uploadBytes} bytes once filesystem overhead ` +
           `is counted (~${STORAGE_OVERHEAD_PER_FILE} bytes per file on top of its contents), and ` +
-          `only ${freeNow + freeingBytes} bytes are free even after the planned deletions. ` +
+          `only ${usableBytes} bytes are available even after the planned deletions` +
+          (replacingBytes ? ` and the files being overwritten` : '') + `. ` +
           `Sync a smaller folder, or remove something from the device first.`
       );
     } else if (plan.deleteFirst) {
@@ -1032,11 +1064,14 @@ export function planReplace({ local, device, deviceRoot, options = {} }) {
     // what has to hold them.
     plan.capacity = {
       totalSize: drive.totalSize,
-      usedSize: drive.usedSize,
-      freeNow: drive.totalSize - drive.usedSize,
+      usedSize: drive.totalSize - driveFreeBytes(drive),
+      freeNow: driveFreeBytes(drive),
       uploadBytes,
       freeingBytes: plan.deleteDevice.reduce((n, d) => n + storedSize(d.size ?? 0), 0),
+      // Nothing is overwritten in place: the root is emptied first.
+      replacingBytes: 0,
       freeAfterDeletes: drive.totalSize,
+      usableBytes: drive.totalSize,
       fits: uploadBytes <= drive.totalSize,
     };
     if (!plan.capacity.fits) {

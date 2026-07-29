@@ -240,12 +240,23 @@ export class AllmiiboClient {
       // The official client only ever reads one entry; keep going while the
       // buffer allows, so a multi-drive device is not silently truncated.
       for (let i = 0; i < count && r.remaining > 0; i++) {
+        const status = r.u8();
+        const label = String.fromCharCode(r.u8());
+        const name = r.string();
+        const totalSize = r.u32();
+        // The second figure is what is *free*, not what is used — the official
+        // Pixl.js client shows it as the drive's remaining space. Reading it as
+        // "used" inverts the drive: an empty device reported 1,918,644 here
+        // against a 1,920,401-byte total, which we turned into 1,757 bytes free
+        // and refused every sync. See PROTOCOL.md §5.1.
+        const freeSize = r.u32();
         drives.push({
-          status: r.u8(),
-          label: String.fromCharCode(r.u8()),
-          name: r.string(),
-          totalSize: r.u32(),
-          usedSize: r.u32(),
+          status,
+          label,
+          name,
+          totalSize,
+          freeSize,
+          usedSize: Math.max(0, totalSize - freeSize),
         });
       }
       return { count, drives };

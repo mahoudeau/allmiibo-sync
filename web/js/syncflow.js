@@ -2,7 +2,7 @@
 // Advanced sync page. Scanning, planning and applying live here; the pages
 // only render. No DOM in this module.
 
-import { planSync, planDump, planReplace, planIdentitySync, flattenPlan } from './planner.js';
+import { planSync, planDump, planReplace, planIdentitySync, flattenPlan, driveFreeBytes } from './planner.js';
 import { walkDevice, verifyDeviceHashes, hashDeviceIndex, applyPlan, ambiguousPaths } from './sync.js';
 import * as localfs from './localfs.js';
 
@@ -108,7 +108,10 @@ export async function scanAndPlan({
   const drives = await client.getDriveList();
   const drive = drives.drives.find((d) => `${d.label}:/` === (deviceRoot.match(/^[IE]:\//)?.[0] ?? 'E:/'))
     ?? drives.drives[0] ?? null;
-  if (drive) log('info', `drive ${drive.label}:/ — ${drive.usedSize} of ${drive.totalSize} bytes used`);
+  if (drive) {
+    log('info', `drive ${drive.label}:/ — ${drive.usedSize} of ${drive.totalSize} bytes used, ` +
+      `${driveFreeBytes(drive)} free`);
+  }
 
   status('Reading the device…');
   let device = await walkDevice(client, deviceRoot, {

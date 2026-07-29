@@ -883,7 +883,8 @@ test('skipping is explained, including what it cannot notice', () => {
 
 // ---- capacity and ordering ----------------------------------------------
 
-const DRIVE = { totalSize: 1_920_401, usedSize: 966_601 }; // as reported by real hardware
+// Real hardware: 1,920,401 bytes total with 966,601 free, so 953,800 used.
+const DRIVE = { totalSize: 1_920_401, freeSize: 966_601, usedSize: 953_800 };
 
 test('uploads precede deletions when there is room for both', () => {
   const p = plan(
@@ -964,10 +965,74 @@ test('a replace that only fits on paper is refused', () => {
   const local = {};
   for (let i = 0; i < 1049; i++) local[`f${i}.bin`] = file(540, `h${i}`);
 
-  const p = plan(local, {}, {}, { delete: true, drive: { totalSize: 1_920_401, usedSize: 956_812 } });
+  const p = plan(local, {}, {}, {
+    delete: true,
+    drive: { totalSize: 1_920_401, freeSize: 963_589, usedSize: 956_812 },
+  });
 
   assert.equal(p.capacity.fits, false, 'raw content bytes would have said this fits');
   assert.match(p.warnings.join(' '), /Not enough room/);
+});
+
+test('an empty device has room for a full library', () => {
+  // Reported by users: a freshly formatted drive refused every sync. The drive
+  // list gives free space, not used space, and reading it as "used" left
+  // 1,757 bytes free — the amount littlefs actually occupies when empty.
+  const drive = { totalSize: 1_920_401, freeSize: 1_918_644, usedSize: 1_757 };
+  const local = {};
+  for (let i = 0; i < 668; i++) local[`f${i}.bin`] = file(540, `h${i}`);
+
+  const p = plan(local, {}, {}, { delete: true, drive });
+
+  assert.equal(p.capacity.freeNow, 1_918_644);
+  assert.equal(p.capacity.usedSize, 1_757);
+  assert.equal(p.capacity.fits, true, '668 dumps fit on an empty 1.8 MB drive');
+  assert.equal(p.warnings.join(' ').includes('Not enough room'), false);
+});
+
+test('overwriting a file already on the device needs no room for a second copy', () => {
+  // A near-full device refreshing what it already holds. vfs_open_file opens
+  // with TRUNC, so each old copy goes before its replacement is written.
+  const drive = { totalSize: 1_920_401, freeSize: 20_000, usedSize: 1_900_401 };
+  const local = {}, device = {}, state = {};
+  for (let i = 0; i < 800; i++) {
+    local[`f${i}.bin`] = file(540, `new${i}`);
+    device[`f${i}.bin`] = file(540);
+    state[`f${i}.bin`] = { size: 540, hash: `old${i}` };
+  }
+
+  const p = plan(local, device, state, { delete: true, drive });
+
+  assert.equal(p.upload.length, 800);
+  assert.equal(p.capacity.replacingBytes, 800 * storedSize(540));
+  assert.equal(p.capacity.fits, true, 'replacing 800 files in place frees as much as it needs');
+  assert.equal(p.deleteFirst, false);
+});
+
+test('an overwrite is only credited the copy it actually replaces', () => {
+  // 300 fresh files on top of 100 replacements, with room for neither.
+  const drive = { totalSize: 200_000, freeSize: 5_000, usedSize: 195_000 };
+  const local = {}, device = {}, state = {};
+  for (let i = 0; i < 100; i++) {
+    local[`old${i}.bin`] = file(540, `new${i}`);
+    device[`old${i}.bin`] = file(540);
+    state[`old${i}.bin`] = { size: 540, hash: `o${i}` };
+  }
+  for (let i = 0; i < 300; i++) local[`fresh${i}.bin`] = file(540, `f${i}`);
+
+  const p = plan(local, device, state, { delete: true, drive });
+
+  assert.equal(p.capacity.replacingBytes, 100 * storedSize(540));
+  assert.equal(p.capacity.fits, false);
+  assert.match(p.warnings.join(' '), /files being overwritten/);
+});
+
+test('a drive carrying only the derived used figure still works', () => {
+  // Saved runs and older exports have no freeSize field.
+  const p = plan({ 'a.bin': file(540, 'h') }, {}, {},
+    { delete: true, drive: { totalSize: 10_000, usedSize: 9_000 } });
+  assert.equal(p.capacity.freeNow, 1_000);
+  assert.equal(p.capacity.fits, false);
 });
 
 test('a replace deletes first even when uploads would fit', () => {
