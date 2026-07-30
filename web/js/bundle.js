@@ -26,7 +26,7 @@
 // byte 979, well past the end of a record, so all four vehicles for a character
 // collapse into one vehicle-less entry. See VEHICLE_CODE_OFFSET in amiibo.js.
 
-import { parseAmiiboId, parseUid, DUMP_SIZES } from './amiibo.js';
+import { parseAmiiboId, parseUid, isHhdItemCards, DUMP_SIZES } from './amiibo.js';
 import { AMIIBO_NAMES } from '../data/amiibo-db.js';
 
 export const BUNDLE_RECORD_SIZE = 572;
@@ -47,8 +47,19 @@ const MIN_KNOWN_RATIO = 0.9;
 
 const u8 = (bytes) => (bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
 
-// The NTAG215 header fields a genuine dump always has. Cheap, and enough to
-// reject a file whose length happens to divide evenly.
+// The header fields a genuine dump always has. Cheap, and enough to reject a
+// file whose length happens to divide evenly.
+//
+// The UID check bytes are deliberately NOT tested. They hold for NTAG215, but a
+// Kirby Air Riders tag is NTAG I2C 2K with a different serial layout, and its
+// first nine bytes do not satisfy the NTAG21x formula. Packing one into a bundle
+// keeps that header, so testing it made the app unable to read back a file it
+// had just written: four real Air Riders dumps in a library were enough to
+// reject a 1037-record bundle, because one bad record fails the whole file.
+//
+// Nothing is lost by dropping it. The magic byte, the capability container and
+// the requirement that most records name a database amiibo are together a far
+// stronger signal than a checksum over a UID.
 function looksLikeTag(rec) {
   if (rec.length < BUNDLE_DUMP_SIZE) return false;
   // Amiibo magic, and the capability container every amiibo carries.
@@ -56,9 +67,6 @@ function looksLikeTag(rec) {
   if (rec[0x0c] !== 0xf1 || rec[0x0d] !== 0x10 || rec[0x0e] !== 0xff || rec[0x0f] !== 0xee) {
     return false;
   }
-  // Both UID check bytes, per NXP's NTAG21x datasheet.
-  if ((0x88 ^ rec[0] ^ rec[1] ^ rec[2]) !== rec[3]) return false;
-  if ((rec[4] ^ rec[5] ^ rec[6] ^ rec[7]) !== rec[8]) return false;
   return true;
 }
 
@@ -94,7 +102,11 @@ export function detectBundle(bytes) {
         ok = false;
         break;
       }
-      if (AMIIBO_NAMES[id]) known++;
+      // The Happy Home Designer cards carry a fabricated ID that is not in the
+      // database, but the app knows exactly what they are. Counting all 91 as
+      // strangers put a real library at 91.2% against a 90% threshold, which is
+      // far too close for a set someone could own more of.
+      if (AMIIBO_NAMES[id] || isHhdItemCards(id)) known++;
     }
     if (!ok || known / count < MIN_KNOWN_RATIO) continue;
 
@@ -138,12 +150,37 @@ export function splitBundle(bytes, { recordSize } = {}) {
 export function normalizeDump(bytes) {
   const u = u8(bytes);
   if (!DUMP_SIZES[u.length]) return null;
-  if (u.length === BUNDLE_DUMP_SIZE) return u.slice();
-  // 532-byte dumps stop before the password and PACK; zero-extending is exactly
-  // what the real bundles did with theirs.
-  const out = new Uint8Array(BUNDLE_DUMP_SIZE);
-  out.set(u.subarray(0, Math.min(u.length, BUNDLE_DUMP_SIZE)));
+  const out = u.length === BUNDLE_DUMP_SIZE
+    ? u.slice()
+    // 532-byte dumps stop before the password and PACK; zero-extending is
+    // exactly what the real bundles did with theirs.
+    : (() => {
+      const padded = new Uint8Array(BUNDLE_DUMP_SIZE);
+      padded.set(u.subarray(0, Math.min(u.length, BUNDLE_DUMP_SIZE)));
+      return padded;
+    })();
+  fixUidCheckBytes(out);
   return out;
+}
+
+/**
+ * Recompute the two UID check bytes in place, per NXP's NTAG21x datasheet.
+ *
+ * A record is a 540-byte NTAG215 image, and everything that reads one is
+ * entitled to assume the header is well formed. Truncating a Kirby Air Riders
+ * tag brings an NTAG I2C 2K serial layout along with it, which does not satisfy
+ * the NTAG215 formula, so the record would be a malformed tag. Observed: 4 such
+ * records in a 1037-record file, enough for a strict reader to reject the lot.
+ *
+ * The bundles produced by the app this format came from never contain one —
+ * their Air Riders entries are re-generated NTAG215 tags — so matching that is
+ * what keeps the output readable elsewhere. The dump loses its vehicle on the
+ * way into a record regardless, so nothing further is given up by making the
+ * header consistent with the 540 bytes around it.
+ */
+function fixUidCheckBytes(dump) {
+  dump[3] = 0x88 ^ dump[0] ^ dump[1] ^ dump[2];
+  dump[8] = dump[4] ^ dump[5] ^ dump[6] ^ dump[7];
 }
 
 /** Whether packing a dump of this size into a bundle throws information away. */

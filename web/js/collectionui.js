@@ -42,6 +42,12 @@ const pbar = progressCtl(els.pbar);
 let rootHandle = null;
 let lapsedFolderName = null; // remembered folder whose permission expired
 let roName = null; // read-only fallback (Firefox/Safari): folder name, no handle
+// Loose .bin files picked instead of a folder. A read-only source: there is
+// nowhere for a download or the sync state file to go, so it replaces the
+// folder rather than sitting alongside one.
+let pickedFiles = null; // Map<relPath, File>
+let pickedLabel = null;
+let pickedIndex = null; // the walkLocal-shaped index built from those files
 let transport = null;
 let client = null;
 let localIds = new Set();
@@ -142,7 +148,20 @@ function renderFolderChip(state = {}) {
   const ro = !localfs.available(); // Firefox/Safari: webkitdirectory fallback
 
   if (state.scanning) {
-    c.innerHTML = chipHtml({ icons: icon('folder'), label: rootHandle?.name ?? roName ?? 'FOLDER', sub: state.scanning });
+    c.innerHTML = chipHtml({
+      icons: icon(pickedFiles ? 'copy' : 'folder'),
+      label: pickedLabel ?? rootHandle?.name ?? roName ?? 'FOLDER',
+      sub: state.scanning,
+    });
+    return;
+  }
+  if (pickedFiles) {
+    c.innerHTML = `<span class="srcChip">${icon('copy')}<span>${pickedLabel}</span>` +
+      `<span class="sub">${countDumps()} dumps · read-only</span>` +
+      `<button data-act="repick" title="Pick files again">${icon('sync')}</button>` +
+      `<button data-act="forget" title="Forget these files">${icon('close')}</button></span>`;
+    c.querySelector('[data-act="repick"]').addEventListener('click', pickFilesSource);
+    c.querySelector('[data-act="forget"]').addEventListener('click', forgetFolder);
     return;
   }
   if (rootHandle || (ro && roName)) {
@@ -159,8 +178,12 @@ function renderFolderChip(state = {}) {
     c.querySelector('button').addEventListener('click', reconnectFolder);
     return;
   } else {
-    c.innerHTML = chipHtml({ icons: icon('folder'), label: 'CHOOSE FOLDER', primary: !localIds.size, asButton: true });
-    c.querySelector('button').addEventListener('click', ro ? pickFolderReadOnly : pickFolder);
+    c.innerHTML = chipHtml({ icons: icon('folder'), label: 'CHOOSE FOLDER', primary: !localIds.size, asButton: true })
+      + chipHtml({ icons: icon('copy'), label: '.BIN FILE', asButton: true,
+                   title: 'Pick loose dumps or an all-in-one file instead of a folder' });
+    const [folderBtn, filesBtn] = c.querySelectorAll('button');
+    folderBtn.addEventListener('click', ro ? pickFolderReadOnly : pickFolder);
+    filesBtn.addEventListener('click', pickFilesSource);
     return;
   }
   c.querySelector('[data-act="rescan"]')?.addEventListener('click', ro ? pickFolderReadOnly : scanFolder);
@@ -210,6 +233,45 @@ async function pickFolder() {
   } catch (err) {
     if (err.name === 'AbortError') say('No folder chosen yet.');
     else say(err.message, 'err');
+  }
+}
+
+// Picking files replaces the folder: a read-only source and a writable one
+// cannot both be "the local side", and silently keeping a stale folder around
+// would make the sync panel offer operations the visible source cannot do.
+async function pickFilesSource() {
+  let files;
+  try {
+    files = await localfs.pickFiles();
+  } catch (err) {
+    say(err.message, 'err');
+    return;
+  }
+  if (!files.length) { say('No files chosen.'); return; }
+
+  renderFolderChip({ scanning: 'reading…' });
+  const { index, byPath, skipped } = await localfs.indexFromPickedFiles(files, {
+    deviceRoot: devRoot,
+    onProgress: (n) => { if (n % 50 === 0) renderFolderChip({ scanning: `reading… ${n}` }); },
+  });
+
+  await localfs.forgetDirectory();
+  rootHandle = null;
+  lapsedFolderName = null;
+  roName = null;
+  pickedFiles = byPath;
+  pickedIndex = index;
+  pickedLabel = files.length === 1 ? files[0].name : `${files.length} FILES`;
+
+  await unpackBundles(index, async (relPath) => {
+    const f = byPath.get(relPath);
+    return f ? new Uint8Array(await f.arrayBuffer()) : null;
+  });
+  ingestLocalIndex(index, pickedLabel);
+  renderFolderChip();
+
+  if (skipped.length) {
+    say(`${skipped.length} file${skipped.length === 1 ? '' : 's'} skipped: ${skipped[0].reason}`, 'warn');
   }
 }
 
@@ -334,11 +396,11 @@ function ingestLocalIndex(index, name) {
 
 async function forgetFolder() {
   const ok = await confirmDialog({
-    title: 'FORGET THIS FOLDER?',
+    title: pickedFiles ? 'FORGET THESE FILES?' : 'FORGET THIS FOLDER?',
     body: 'Your files are untouched. The device scan is kept.',
     confirmLabel: 'FORGET',
     cancelLabel: 'KEEP',
-    icon: 'folder',
+    icon: pickedFiles ? 'copy' : 'folder',
   });
   if (!ok) return;
   await localfs.forgetDirectory();
@@ -346,6 +408,9 @@ async function forgetFolder() {
   rootHandle = null;
   lapsedFolderName = null;
   roName = null;
+  pickedFiles = null;
+  pickedIndex = null;
+  pickedLabel = null;
   localIds = new Set();
   filesById = new Map();
   namesById = new Map();
@@ -687,7 +752,7 @@ function renderHero() {
     ${cold ? '<p class="hNote">One is enough to browse. Add both to sync them.</p>' : ''}
     <div class="hStep${step1Done ? ' done' : ''}">
       <span class="hStepN">${step1Done ? icon('check') : icon('folder')}</span>
-      <span class="hStepLbl">YOUR FOLDER</span>
+      <span class="hStepLbl">YOUR FILES</span>
       <span class="hSlot" id="heroSlot1"></span>
     </div>
     ${folderDetail}
@@ -1159,6 +1224,7 @@ let spState = null;
 // Bytes for anything unpacked from an all-in-one file: those entries have no
 // file on disk for the executor to read.
 let spSources = null;
+let spReadFile = null;
 let spStop = false;
 
 function refreshSyncButton() {
@@ -1238,6 +1304,7 @@ els.syncBtn.addEventListener('click', async () => {
     spPlan = res.plan;
     spState = res.state;
     spSources = res.bundle?.sources ?? null;
+    spReadFile = null;
     say('');
     renderPanelReview(spPlan);
   } catch (err) {
@@ -1258,6 +1325,7 @@ async function runPanelApply() {
   const result = await applyThePlan({
     client, rootHandle, deviceRoot: spPlan.deviceRoot, state: spState, plan: spPlan,
     sources: spSources,
+    readFile: spReadFile,
     shouldStop: () => spStop,
     on: {
       op: (label, i, total, t0) => {
@@ -1337,6 +1405,13 @@ els.series.addEventListener('click', (e) => {
   updateSelBar();
 });
 
+// Bytes for a picked file, straight from the File the picker handed over.
+async function readPickedFile(relPath) {
+  const f = pickedFiles?.get(relPath);
+  if (!f) throw new Error(`${relPath} is not one of the picked files`);
+  return new Uint8Array(await f.arrayBuffer());
+}
+
 async function runSelection(direction) {
   const eligible = [...selected].filter((id) => direction === 'push'
     ? localIds.has(id) && !deviceIds?.has(id)
@@ -1349,11 +1424,16 @@ async function runSelection(direction) {
     return;
   }
   try {
-    const { plan: selPlan, state: selState, sources: selSources } = await planSelection({
-      client, rootHandle, deviceRoot: devRoot, direction, ids: eligible,
-      deviceIndex,
-      on: { status: (t) => say(t), log: () => {} },
-    });
+    const { plan: selPlan, state: selState, sources: selSources, readFile: selRead } =
+      await planSelection({
+        client, rootHandle, deviceRoot: devRoot, direction, ids: eligible,
+        deviceIndex,
+        // Picked files have no folder to walk: hand over the index already built
+        // for them, and a reader that goes back to the File objects.
+        localIndex: pickedIndex,
+        readFile: pickedFiles ? readPickedFile : null,
+        on: { status: (t) => say(t), log: () => {} },
+      });
     say('');
     if (!hasWork(selPlan)) {
       toast('Nothing to transfer — already on both sides.', { kind: 'warn' });
@@ -1362,6 +1442,7 @@ async function runSelection(direction) {
     spPlan = selPlan;
     spState = selState;
     spSources = selSources ?? null;
+    spReadFile = selRead ?? null;
     setSelecting(false);
     renderPanelReview(selPlan);
   } catch (err) {

@@ -17,7 +17,7 @@
 //     validated up front and reported rather than failing mid-transfer.
 
 import { MAX_PATH_BYTES, MAX_NAME_BYTES } from './protocol.js';
-import { seriesFolder, amiiboFileName, isHhdItemCards } from './amiibo.js';
+import { seriesFolder, amiiboFileName, isHhdItemCards, vehicleTag } from './amiibo.js';
 
 const encoder = new TextEncoder();
 
@@ -96,13 +96,18 @@ export function sanitizeLocalRelPath(relPath) {
 // ---- choosing a path for an amiibo that has no home yet ------------------
 //
 // Everything else here reconciles paths the user already chose. This picks one,
-// which is what an all-in-one bundle needs: its members arrive as bare dumps
-// with no filenames at all.
+// which two things need: a bundle's members, which arrive as bare dumps with no
+// filenames at all, and a loose .bin picked on its own, which has a name but no
+// folder around it.
+//
+// Those two are not treated the same. A bundle member has no name to keep, so
+// one is built from the database. A file you picked has a name you chose, so it
+// keeps it and only gains a folder.
 //
 // How much room there is depends on the device root, so the fit is measured
 // rather than assumed, and the name is shortened in steps until it passes
 // checkDestination. Measured over all 946 database entries, the series
-// initialism alone is enough — at "E:/amiibo" only 9 of them need even that,
+// initialism alone is enough: at "E:/amiibo" only 9 of them need even that,
 // and the last two rungs are never reached. They stay in because a future
 // series label could be long enough to need them.
 
@@ -114,9 +119,30 @@ export function sanitizeLocalRelPath(relPath) {
  * @param {string} deviceRoot  e.g. "E:/amiibo"
  * @param {string} [uid]       NFC UID, needed only for the Happy Home Designer
  *   cards, which all carry one fabricated ID and would otherwise collide
+ * @param {string} [vehicle]   decoded Air Riders vehicle. All four vehicles of a
+ *   character share one ID, so without this four real dumps land on one path
+ * @param {string} [keepName]  an existing filename to preserve, with or without
+ *   its extension. Used for a file picked on its own: it gains a series folder
+ *   but is not renamed
  */
-export function amiiboRelPath(id, { deviceRoot, uid = null }) {
+export function amiiboRelPath(id, { deviceRoot, uid = null, vehicle = null, keepName = null }) {
   const series = parseInt(id.slice(12, 14), 16);
+  const long = seriesFolder(series);
+  const short = seriesFolder(series, { short: true });
+
+  // A name the user chose is kept as-is; only the folder is added. Trying the
+  // full series label first and the initialism second is the same ladder the
+  // generated names use, so a long filename still has a chance of fitting.
+  if (keepName) {
+    const base = sanitizeLocalName(keepName.replace(/\.bin$/i, ''));
+    if (base) {
+      for (const folder of [long, short]) {
+        const relPath = fits(deviceRoot, `${sanitizeLocalName(folder)}/${base}.bin`);
+        if (relPath) return relPath;
+      }
+      // Too long with any folder. Fall through and build a name instead.
+    }
+  }
 
   // All 91 HHD item cards share one amiibo ID, so the ID cannot name them —
   // asking it to would file 91 cards at one path and keep the last. The UID is
@@ -134,13 +160,17 @@ export function amiiboRelPath(id, { deviceRoot, uid = null }) {
   if (!full) return fits(deviceRoot, `Unknown/${id}.bin`);
 
   const abbreviated = amiiboFileName(id, { short: true });
-  const long = seriesFolder(series);
-  const short = seriesFolder(series, { short: true });
+
+  // Every vehicle of a character carries the same ID, so the name has to say
+  // which one or four dumps collapse onto one path. The short tag is what fits:
+  // the full vehicle name pushes the longest Air Riders path to 72 bytes.
+  const tag = vehicleTag(vehicle);
+  const tagged = (name) => (tag ? `${name} (${tag})` : name);
 
   for (const [folder, name] of [
-    [long, full],
-    [short, full],
-    [short, abbreviated],
+    [long, tagged(full)],
+    [short, tagged(full)],
+    [short, tagged(abbreviated)],
   ]) {
     const relPath = fits(deviceRoot, `${sanitizeLocalName(folder)}/${sanitizeLocalName(name)}.bin`);
     if (relPath) return relPath;
@@ -151,7 +181,9 @@ export function amiiboRelPath(id, { deviceRoot, uid = null }) {
   // the device, and a silent collision is far worse than an ugly filename. The
   // collection list labels dumps from the database anyway, so this shows up as
   // the right name in the UI regardless.
-  return fits(deviceRoot, `${sanitizeLocalName(short)}/${id}.bin`) ?? fits(deviceRoot, `${id}.bin`);
+  // The ID alone is not unique across vehicles either, so it carries the tag too.
+  const last = tag ? `${id} (${tag})` : id;
+  return fits(deviceRoot, `${sanitizeLocalName(short)}/${last}.bin`) ?? fits(deviceRoot, `${last}.bin`);
 }
 
 const fits = (deviceRoot, relPath) => (checkDestination(deviceRoot, relPath) ? null : relPath);

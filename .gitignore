@@ -7,6 +7,9 @@ dist/
 # Never commit amiibo dumps or signing keys — a device drive holds
 # key_retail.bin alongside your library.
 *.bin
+# All-in-one containers hold whole libraries, so they matter more than a single
+# dump, not less. .fca is not caught by the *.bin rule above.
+*.fca
 allmiibo-probe*.json
 allmiibo-writetest*.json
 

@@ -72,6 +72,14 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
           or Safari the folder opens read-only: tracking works the same, the
           browser just forgets the folder between visits, so rescanning means
           picking it again.</li>
+      <li><b>Loose .bin files.</b> Instead of a folder, press
+          <b>.BIN FILE</b> and pick dumps directly, or a single all-in-one
+          file. Handy when one arrived in Downloads and you do not want to build
+          a folder around it just to look at it. This is a <b>read-only</b>
+          source: it fills in your collection and can be sent to the device with
+          <b>SELECT</b>, but downloads and two-way sync need a real folder,
+          because that is where files and the sync record have to be written.
+          Picking files replaces a connected folder rather than adding to it.</li>
       <li><b>Your device.</b> Connect over Bluetooth and pick the folder on
           the device to read. Its contents appear with a
           <span class="muted">bluetooth badge</span> and count as owned,
@@ -169,7 +177,19 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
        <span class="kbd">Terry 04e8</span>. The 91 Happy Home Designer cards all
        carry one ID, so they are filed by tag UID instead, as
        <span class="kbd">AC/HHD 04ab17fc2e4080.bin</span>.</p>
-    <p>Nothing here renames files you already have. Your existing layout is
+    <p>A loose <span class="kbd">.bin</span> you pick on its own is treated
+       differently again: it already has a name you chose, so it keeps it and
+       only gains a series folder. <span class="kbd">K+WarpStar.bin</span>
+       becomes <span class="kbd">Kirby Air Riders/K+WarpStar.bin</span>. Only a
+       name too long for the device is replaced by a built one.</p>
+    <p>Kirby Air Riders dumps need one extra thing. All four vehicles of a
+       character share a single amiibo ID, so a name built from the database
+       would put four real dumps on one path and keep the last. When the app has
+       to name one, it adds the vehicle:
+       <span class="kbd">KAR/Kirby (Warp).bin</span>. The short form is what
+       fits, since the full name pushes the longest Air Riders path to 72 bytes,
+       nine over the limit.</p>
+    <p>Nothing here renames files inside a folder you connected. That layout is
        left exactly as it is.</p>
   </section>
 
@@ -194,13 +214,23 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
        scan says which of the two it did.</p>
     <p>Going the other way, advanced mode adds <b>PACK FOLDER</b> and
        <b>PACK DEVICE</b>, which write your library out as one all-in-one file
-       you can save or pass on.</p>
+       you can save or pass on. Files written here are meant to be readable by
+       the other apps that use this format, so each dump is tidied into a
+       well-formed standard tag on the way in.</p>
     <p><b>One thing these files cannot carry.</b> Each slot holds 540 bytes,
        which is a standard tag. Kirby Air Riders amiibo are larger, and the
        vehicle is stored past the end of a slot, so all four vehicle pairings for
        a character collapse into one entry with no vehicle at all. If you already
        have proper Air Riders dumps, keep them: they are strictly better than any
        all-in-one copy, and that is why yours are never replaced by one.</p>
+    <p><b>.fca files are read too.</b> FCA is a second all-in-one format, and a
+       better one: it stores each dump whole, so Kirby Air Riders vehicles do
+       survive in it. Pick or drop one exactly like a <span class="kbd">.bin</span>
+       and its amiibo are unpacked the same way, vehicles and all. Anything in the
+       archive that is not an amiibo, such as Skylanders or Lego Dimensions
+       dumps, is listed and left alone. Writing FCA is not supported; the two
+       PACK operations always produce the <span class="kbd">.bin</span>
+       format.</p>
   </section>
 
   <section class="helpSec">

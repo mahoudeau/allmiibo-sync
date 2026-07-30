@@ -21,17 +21,22 @@
 // 943 x 540 bytes, about 509 kB, so there is nothing to gain by streaming and
 // a great deal to lose by writing 943 files the user did not ask for.
 
-import { parseAmiiboId, parseUid, parseVehicle, isHhdItemCards } from './amiibo.js';
+import { parseAmiiboId, parseUid, isHhdItemCards } from './amiibo.js';
 import { detectBundle, splitBundle } from './bundle.js';
+import { detectFca, splitFca } from './fca.js';
 import { amiiboRelPath } from './planner.js';
 
 // What counts as "the same amiibo I already have". Normally the ID: one dump
-// per amiibo is all a bundle can usefully give you. The Happy Home Designer
-// item cards are the exception — all 91 share one fabricated ID — so for those
-// the UID is the discriminator, exactly as localfs and hashDeviceIndex already
-// treat it.
-export function ownedKey(amiiboId, uid) {
+// per amiibo is all a container can usefully give you.
+//
+// Two exceptions, both of which collapse into one entry if ignored. The 91
+// Happy Home Designer item cards all share a fabricated ID, so the UID tells
+// them apart. And the four vehicle pairings of a Kirby Air Riders character
+// share an ID too, so the vehicle does — which matters for an FCA archive,
+// where a v3 entry keeps the whole 2048-byte dump and its vehicle with it.
+export function ownedKey(amiiboId, uid, vehicle = null) {
   if (!amiiboId) return null;
+  if (vehicle) return `${amiiboId}:${vehicle}`;
   return isHhdItemCards(amiiboId) && uid ? `${amiiboId}:${uid}` : amiiboId;
 }
 
@@ -40,7 +45,7 @@ function ownedKeysOf(index) {
   if (!index) return keys;
   for (const [, e] of index) {
     if (e.isDir || !e.amiiboId) continue;
-    const key = ownedKey(e.amiiboId, e.uid);
+    const key = ownedKey(e.amiiboId, e.uid, e.vehicle);
     if (key) keys.add(key);
   }
   return keys;
@@ -84,9 +89,11 @@ export async function expandBundles({ index, read, deviceRoot, device = null, ha
 
   for (const [relPath, entry] of bundleEntries) {
     excludes.push(relPath);
+    const kind = entry.bundle.kind ?? 'flat';
     const summary = {
       relPath,
-      recordSize: entry.bundle.recordSize,
+      kind,
+      recordSize: entry.bundle.recordSize ?? null,
       count: entry.bundle.count,
       unique: 0,
       added: 0,
@@ -98,9 +105,19 @@ export async function expandBundles({ index, read, deviceRoot, device = null, ha
     };
     bundles.push(summary);
 
+    // Two containers, one shape of record afterwards. FCA is an archive with a
+    // header and length-prefixed entries; the flat format is a bare run of tag
+    // images. Only the reading differs.
     let records;
     try {
-      records = splitBundle(await read(relPath), { recordSize: entry.bundle.recordSize });
+      const bytes = await read(relPath);
+      if (kind === 'fca') {
+        const parsed = splitFca(bytes);
+        records = parsed.records;
+        for (const s of parsed.skipped) summary.blocked.push({ amiiboId: null, reason: s.reason });
+      } else {
+        records = splitBundle(bytes, { recordSize: entry.bundle.recordSize });
+      }
     } catch (err) {
       summary.error = err.message;
       continue;
@@ -118,7 +135,10 @@ export async function expandBundles({ index, read, deviceRoot, device = null, ha
         summary.unknown++;
         continue;
       }
-      const key = ownedKey(amiiboId, uid);
+      // A flat record never has one; an FCA v3 entry keeps the whole 2048-byte
+      // dump, so it does, and four vehicles of a character must stay four items.
+      const vehicle = rec.vehicle ?? null;
+      const key = ownedKey(amiiboId, uid, vehicle);
       if (seen.has(key)) {
         summary.duplicates++;
         continue;
@@ -141,7 +161,7 @@ export async function expandBundles({ index, read, deviceRoot, device = null, ha
         continue;
       }
 
-      const relPathFor = amiiboRelPath(amiiboId, { deviceRoot, uid });
+      const relPathFor = amiiboRelPath(amiiboId, { deviceRoot, uid, vehicle });
       if (!relPathFor) {
         summary.blocked.push({ amiiboId, reason: `no filename fits under ${deviceRoot}` });
         continue;
@@ -154,12 +174,11 @@ export async function expandBundles({ index, read, deviceRoot, device = null, ha
       }
       taken.add(relPathFor);
 
-      const vehicle = parseVehicle(dump);
       virtual.set(relPathFor, {
         size: dump.length,
         hash: hash ? await hash(dump) : null,
         amiiboId,
-        vehicle: vehicle?.name ?? vehicle?.code ?? null,
+        vehicle,
         uid: isHhdItemCards(amiiboId) ? uid : null,
         isDir: false,
         lastModified: entry.lastModified ?? null,

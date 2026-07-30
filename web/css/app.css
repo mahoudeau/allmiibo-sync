@@ -468,6 +468,11 @@ button.loading .ico svg { animation: spin8 .8s steps(8) infinite; }
 }
 
 /* Chip buttons (source strip: folder/device state machines) */
+/* The chip holders. Each can carry more than one chip — the folder slot offers
+   both a folder and a loose-file picker — so they space and wrap their own
+   contents rather than leaving the buttons flush against each other. */
+#folderChip, #deviceChip { display: inline-flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+
 .srcChip { display: inline-flex; align-items: center; gap: .5rem;
   border: 2px solid var(--border); background: var(--panel2); color: var(--fg);
   box-shadow: 3px 3px 0 var(--shadow); padding: .45rem .7rem;

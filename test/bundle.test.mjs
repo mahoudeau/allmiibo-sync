@@ -22,7 +22,7 @@ import {
 } from '../web/js/bundle.js';
 import { expandBundles, ownedKey } from '../web/js/bundlesource.js';
 import { amiiboRelPath } from '../web/js/planner.js';
-import { AMIIBO_ID_OFFSET, HHD_ID } from '../web/js/amiibo.js';
+import { AMIIBO_ID_OFFSET, HHD_ID, vehicleTag, VEHICLE_CODE_OFFSET, VEHICLE_FLAG_OFFSET } from '../web/js/amiibo.js';
 import { AMIIBO_NAMES } from '../web/data/amiibo-db.js';
 
 const ROOT = 'E:/amiibo';
@@ -108,6 +108,31 @@ test('records naming no known amiibo are rejected', () => {
   assert.equal(detectBundle(b), null);
 });
 
+test('a tag whose UID check bytes do not follow NTAG215 is still a record', () => {
+  // Regression. Kirby Air Riders tags are NTAG I2C 2K and their serial layout
+  // does not satisfy the NTAG21x BCC formula. Testing those bytes made the app
+  // unable to read back a bundle it had just written: four such dumps in a
+  // library rejected a 1037-record file, since one bad record fails them all.
+  const b = bundle([{ id: MARIO }, { id: KIRBY_AR, n: 2 }, { id: LINK, n: 3 }]);
+  const second = BUNDLE_RECORD_SIZE;
+  b[second + 3] ^= 0xff; // BCC0, as an NTAG I2C 2K header would have it
+  b[second + 8] ^= 0xff; // BCC1
+  assert.deepEqual(detectBundle(b), { recordSize: 572, count: 3, known: 3 });
+});
+
+test('the fan-made HHD cards count as recognised, not as strangers', () => {
+  // They carry a fabricated ID that is not in the database, but the app knows
+  // what they are. Counting all 91 as unknown put a real library at 91.2%
+  // against a 90% threshold.
+  const b = packBundle([
+    dump(MARIO, { uid: uidFor(1) }),
+    ...[2, 3, 4, 5].map((n) => dump(HHD_ID, { uid: uidFor(n) })),
+  ]);
+  const found = detectBundle(b);
+  assert.ok(found, '4 of 5 records being HHD cards must not sink detection');
+  assert.equal(found.known, 5);
+});
+
 // ---- splitting and packing ---------------------------------------------
 
 test('splitting yields plain 540-byte dumps with their IDs', () => {
@@ -137,6 +162,33 @@ test('a 532-byte dump is zero-extended, exactly as the real bundles did', () => 
   const norm = normalizeDump(short);
   assert.equal(norm.length, BUNDLE_DUMP_SIZE);
   assert.deepEqual([...norm.subarray(532)], [0, 0, 0, 0, 0, 0, 0, 0]);
+});
+
+test('packing repairs a header that is not NTAG215-shaped', () => {
+  // A Kirby Air Riders tag is NTAG I2C 2K and its serial layout does not satisfy
+  // the NTAG21x check-byte formula. Copying that into a record verbatim produced
+  // a malformed tag, which is what the app that defined this format never does.
+  const i2c = dump(KIRBY_AR, { size: 2048 });
+  i2c[3] ^= 0xff;
+  i2c[8] ^= 0xff;
+  const norm = normalizeDump(i2c);
+  assert.equal(norm[3], 0x88 ^ norm[0] ^ norm[1] ^ norm[2], 'BCC0 recomputed');
+  assert.equal(norm[8], norm[4] ^ norm[5] ^ norm[6] ^ norm[7], 'BCC1 recomputed');
+});
+
+test('packing leaves a well-formed header untouched', () => {
+  const good = dump(MARIO);
+  assert.deepEqual([...normalizeDump(good)], [...good]);
+});
+
+test('a packed file reads back, check bytes and all', () => {
+  // The round trip that broke: a library holding real Air Riders dumps packed
+  // into a file the app could not then open.
+  const i2c = dump(KIRBY_AR, { size: 2048 });
+  i2c[3] ^= 0xff;
+  i2c[8] ^= 0xff;
+  const packed = packBundle([dump(MARIO, { uid: uidFor(1) }), i2c, dump(LINK, { uid: uidFor(3) })]);
+  assert.deepEqual(detectBundle(packed), { recordSize: 572, count: 3, known: 3 });
 });
 
 test('a 2048-byte dump is truncated, and says so', () => {
@@ -386,4 +438,135 @@ test('the air-riders sample holds six records for four amiibos', { skip: !exists
   assert.equal(new Set(recs.map((r) => r.amiiboId)).size, 4);
   assert.equal(new Set(recs.map((r) => r.uid)).size, 5);
   assert.deepEqual([...recs[0].dump], [...recs[1].dump], 'records 0 and 1 are identical');
+});
+
+// ---- loose files picked without a folder --------------------------------
+
+// A 2048-byte Air Riders dump: the vehicle lives past the end of a bundle
+// record, which is why those four variants need naming apart.
+function airRider(idHex, code, flag, n) {
+  const u = dump(idHex, { uid: uidFor(n), size: 2048 });
+  for (const [i, ch] of [...code].entries()) u[VEHICLE_CODE_OFFSET + i] = ch.charCodeAt(0);
+  u[VEHICLE_CODE_OFFSET + code.length] = 0x3a; // ':'
+  u[VEHICLE_FLAG_OFFSET] = flag;
+  return u;
+}
+
+const VEHICLES = [
+  ['PB4W17', 0x02, 'Warp Star'],
+  ['PB4W17', 0x04, 'Winged Star'],
+  ['PB5T42', 0x04, 'Shadow Star'],
+  ['PC6V28', 0x04, 'Tank Star'],
+];
+
+test('a vehicle tag is the distinguishing word, not the whole name', () => {
+  assert.equal(vehicleTag('Warp Star'), 'Warp');
+  assert.equal(vehicleTag('Winged Star'), 'Winged');
+  assert.equal(vehicleTag(null), null);
+  assert.equal(vehicleTag(''), null);
+});
+
+test('the four vehicles of one character get four distinct paths', () => {
+  // All four share an amiibo ID. Without the vehicle they collapse onto one
+  // path and four real dumps overwrite each other.
+  for (const root of [ROOT, 'E:/amiibo/library']) {
+    const paths = VEHICLES.map(([, , name]) =>
+      amiiboRelPath(KIRBY_AR, { deviceRoot: root, vehicle: name }));
+    assert.equal(new Set(paths).size, 4, `four distinct paths under ${root}`);
+    for (const p of paths) {
+      assert.ok(p, 'every vehicle resolves');
+      assert.ok(Buffer.byteLength(`${root}/${p}`) <= 63, `${p} fits under ${root}`);
+    }
+  }
+  assert.equal(amiiboRelPath(KIRBY_AR, { deviceRoot: ROOT, vehicle: 'Warp Star' }),
+    'Kirby Air Riders/Kirby (Warp).bin');
+});
+
+test('a bundle member, which has no vehicle, is named exactly as before', () => {
+  assert.equal(amiiboRelPath(KIRBY_AR, { deviceRoot: ROOT }), 'Kirby Air Riders/Kirby.bin');
+});
+
+test('a picked file keeps the name you gave it and gains a series folder', () => {
+  assert.equal(
+    amiiboRelPath(KIRBY_AR, { deviceRoot: ROOT, keepName: 'K+WarpStar.bin' }),
+    'Kirby Air Riders/K+WarpStar.bin'
+  );
+  // The extension is optional, and the name is sanitised for the filesystem.
+  assert.equal(
+    amiiboRelPath(MARIO, { deviceRoot: ROOT, keepName: 'my mario' }),
+    'Super Smash Bros/my mario.bin'
+  );
+  assert.equal(
+    amiiboRelPath(MARIO, { deviceRoot: ROOT, keepName: 'bad:name?.bin' }),
+    'Super Smash Bros/bad_name_.bin'
+  );
+});
+
+test('a kept name too long for the device falls back to a built one', () => {
+  const long = `${'x'.repeat(60)}.bin`;
+  const p = amiiboRelPath(MARIO, { deviceRoot: ROOT, keepName: long });
+  assert.ok(p, 'still resolves');
+  assert.ok(!p.includes('xxxx'), 'the over-long name was not used');
+  assert.ok(Buffer.byteLength(`${ROOT}/${p}`) <= 63);
+});
+
+// A stand-in for the File objects a picker hands over.
+const fakeFile = (name, bytes) => ({
+  name, size: bytes.length, lastModified: 0,
+  arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length),
+});
+
+test('picked files are indexed under Series/their own name', async () => {
+  const { indexFromPickedFiles } = await import('../web/js/localfs.js');
+  const { index, byPath, skipped } = await indexFromPickedFiles([
+    fakeFile('K+WarpStar.bin', airRider(KIRBY_AR, ...VEHICLES[0].slice(0, 2), 1)),
+    fakeFile('mario.bin', dump(MARIO, { uid: uidFor(2) })),
+  ], { deviceRoot: ROOT });
+
+  assert.deepEqual([...index.keys()].sort(), [
+    'Kirby Air Riders/K+WarpStar.bin',
+    'Super Smash Bros/mario.bin',
+  ]);
+  assert.deepEqual(skipped, []);
+  assert.equal(byPath.size, 2, 'every entry can be read back');
+  assert.equal(index.get('Super Smash Bros/mario.bin').amiiboId, MARIO);
+});
+
+test('four Air Riders dumps picked together do not overwrite each other', async () => {
+  const { indexFromPickedFiles } = await import('../web/js/localfs.js');
+  const files = VEHICLES.map(([code, flag, name], i) =>
+    fakeFile(`${name.replace(' ', '')}.bin`, airRider(KIRBY_AR, code, flag, 10 + i)));
+  const { index, skipped } = await indexFromPickedFiles(files, { deviceRoot: ROOT });
+  assert.equal(index.size, 4, 'four files, four paths');
+  assert.deepEqual(skipped, []);
+});
+
+test('a picked file that is not a dump is reported, not indexed', async () => {
+  const { indexFromPickedFiles } = await import('../web/js/localfs.js');
+  const { index, skipped } = await indexFromPickedFiles([
+    fakeFile('notes.bin', new Uint8Array(120)),
+    fakeFile('mario.bin', dump(MARIO, { uid: uidFor(3) })),
+  ], { deviceRoot: ROOT });
+  assert.equal(index.size, 1);
+  assert.equal(skipped.length, 1);
+  assert.match(skipped[0].reason, /not an amiibo dump/);
+});
+
+test('a picked all-in-one file is kept whole for unpacking', async () => {
+  const { indexFromPickedFiles } = await import('../web/js/localfs.js');
+  const bytes = bundle([{ id: MARIO, n: 1 }, { id: LINK, n: 2 }]);
+  const { index } = await indexFromPickedFiles([fakeFile('all.bin', bytes)], { deviceRoot: ROOT });
+  assert.deepEqual([...index.keys()], ['all.bin'], 'the container keeps its own name');
+  assert.deepEqual(index.get('all.bin').bundle,
+    { kind: 'flat', recordSize: 572, count: 2, known: 2 });
+});
+
+test('two picked files of the same amiibo keep the first', async () => {
+  const { indexFromPickedFiles } = await import('../web/js/localfs.js');
+  const { index, skipped } = await indexFromPickedFiles([
+    fakeFile('mario.bin', dump(MARIO, { uid: uidFor(4) })),
+    fakeFile('mario.bin', dump(MARIO, { uid: uidFor(5) })),
+  ], { deviceRoot: ROOT });
+  assert.equal(index.size, 1);
+  assert.match(skipped[0].reason, /already taken/);
 });

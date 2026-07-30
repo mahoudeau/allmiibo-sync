@@ -41,14 +41,19 @@ export const TOURS = {
     {
       target: 'hero',
       title: 'YOUR COLLECTION',
-      body: 'Every amiibo in the database, grouped by series. None of it needs a device. '
-        + 'Point the page at a folder of dumps and it fills in.',
+      body: 'Every amiibo in the database is listed here, grouped by series. You can browse '
+        + 'all of it without connecting anything. Once you add your own dumps, the ones you '
+        + 'own light up in colour and the rest stay grey.',
     },
     {
       target: 'folderChip',
-      title: 'START WITH A FOLDER',
-      body: 'Choose the folder your dumps live in. It is read where it sits. Nothing is '
-        + 'copied, moved or changed until you ask for a sync.',
+      title: 'A FOLDER, OR JUST FILES',
+      body: 'CHOOSE FOLDER points at the folder your dumps live in, and is the one to use '
+        + 'for syncing: a folder is also where downloads land. .BIN FILE picks loose dumps '
+        + 'instead, or a single all-in-one file, which is handy when one has just landed in '
+        + 'Downloads. Files are read-only, so they fill in your collection and can be sent '
+        + 'to a device, but cannot receive anything back. Either way nothing is copied, '
+        + 'moved or changed until you ask for a sync.',
     },
     {
       target: 'deviceChip',

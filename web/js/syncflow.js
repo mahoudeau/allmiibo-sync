@@ -240,16 +240,21 @@ export async function scanAndPlan({
 // caller's job — it owns localIds/deviceIds.
 export async function planSelection({
   client, rootHandle, deviceRoot, direction, ids,
-  deviceIndex, on = {}, shouldStop = () => false,
+  deviceIndex, localIndex = null, readFile = null,
+  on = {}, shouldStop = () => false,
 }) {
   const status = on.status ?? (() => {});
   const log = on.log ?? (() => {});
   const wanted = new Set(ids);
 
+  // `localIndex` is a source with no folder behind it: loose .bin files picked
+  // on their own. Already indexed and hashed by the caller, so there is nothing
+  // to walk.
+  const read = readFile ?? ((relPath) => localfs.readLocalFile(rootHandle, relPath));
   status('Reading your folder…');
   const state = await localfs.loadState(rootHandle);
   // Identity keys need hashes on both sides.
-  const local = await localfs.walkLocal(rootHandle, {
+  const local = localIndex ?? await localfs.walkLocal(rootHandle, {
     hash: true,
     onProgress: (n) => { if (n % 100 === 0) status(`Reading your folder… ${n}`); },
   });
@@ -259,7 +264,7 @@ export async function planSelection({
   // its own, so unpack before matching by identity.
   const bundle = await expandBundles({
     index: local,
-    read: (relPath) => localfs.readLocalFile(rootHandle, relPath),
+    read,
     deviceRoot,
     device: deviceIndex,
     hash: localfs.sha256,
@@ -296,24 +301,28 @@ export async function planSelection({
   plan.mkdirDevice = full.mkdirDevice.filter((m) => upDirs.has(m.relPath));
   plan.mkdirLocal = full.mkdirLocal.filter((m) => downDirs.has(m.relPath));
 
-  return { plan, state, sources: bundle.sources };
+  // `read` is what the caller should hand to applyThePlan: it already routes a
+  // picked file to its File object and everything else to the folder.
+  return { plan, state, sources: bundle.sources, readFile: readFile ? read : null };
 }
 
 // Apply with humanised callbacks. on.op(text, i, total), on.bytes(written,
 // total), on.error(message).
 export async function applyThePlan({
   client, rootHandle, deviceRoot, state, plan,
-  sources = null,
+  sources = null, readFile = null,
   on = {}, shouldStop = () => false,
 }) {
   const ops = flattenPlan(plan);
   const t0 = Date.now();
   const result = await applyPlan({
     client, rootHandle, deviceRoot, state, ops,
-    // Anything unpacked from an all-in-one bundle has no file behind it, so its
-    // bytes come from memory; everything else is read from the folder as usual.
-    readFile: sources
-      ? (relPath) => sources.get(relPath) ?? localfs.readLocalFile(rootHandle, relPath)
+    // Three places bytes can come from, in order: memory, for anything unpacked
+    // from an all-in-one file; a caller-supplied reader, for loose files picked
+    // without a folder; and the folder itself for everything else.
+    readFile: sources || readFile
+      ? (relPath) => sources?.get(relPath)
+          ?? (readFile ? readFile(relPath) : localfs.readLocalFile(rootHandle, relPath))
       : undefined,
     callbacks: {
       onOp: (o, i, total) => {

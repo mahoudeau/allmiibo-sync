@@ -3,6 +3,17 @@
 
 import { parseAmiiboId, parseVehicle, parseUid, isHhdItemCards } from './amiibo.js';
 import { detectBundle } from './bundle.js';
+import { detectFca } from './fca.js';
+import { amiiboRelPath } from './planner.js';
+
+// Which all-in-one container this is, if any. `kind` is what bundlesource.js
+// dispatches on when it comes to read the thing.
+function detectContainer(buf) {
+  const fca = detectFca(buf);
+  if (fca) return { kind: 'fca', count: fca.count, amiibos: fca.amiibos, version: fca.version };
+  const flat = detectBundle(buf);
+  return flat ? { kind: 'flat', ...flat } : null;
+}
 
 const DB_NAME = 'allmiibo-sync';
 const STORE = 'handles';
@@ -29,7 +40,11 @@ async function describeFile(buf, { size, lastModified, hash = true }) {
     // bytes are open anyway; bundlesource.js decides what to do about it.
     // Without this the planner would happily send the container itself to a
     // device that cannot read it — half a megabyte over a 2 kB/s link.
-    bundle: amiiboId ? null : detectBundle(buf),
+    //
+    // Two containers are recognised. FCA is checked first because it is the
+    // cheaper and stricter test: it either starts with its magic bytes and its
+    // entries tile the file exactly, or it is not one.
+    bundle: amiiboId ? null : detectContainer(buf),
     isDir: false,
     lastModified,
   };
@@ -43,6 +58,118 @@ export async function pickDirectory() {
   const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
   await rememberHandle(handle);
   return handle;
+}
+
+// ---- picking loose .bin files -------------------------------------------
+//
+// A folder is the normal source, but it is not always what you have: a single
+// dump, or an all-in-one file, often arrives on its own in Downloads. Making
+// somewhere to put it just to look at it is busywork.
+//
+// Files picked this way are a READ-ONLY source. A folder is not only where
+// dumps are read from, it is also where downloads land and where the sync state
+// file is written, and neither has anywhere to go here. So these can be browsed
+// and pushed to a device, and the operations that write locally are turned off
+// rather than left to fail part way through a run.
+
+// .fca as well as .bin: both are all-in-one containers this can unpack, and a
+// picker that hid one of them would be quietly wrong.
+const BIN_PICKER = {
+  multiple: true,
+  types: [{
+    description: 'amiibo dumps and all-in-one files',
+    accept: { 'application/octet-stream': ['.bin', '.fca'] },
+  }],
+};
+
+/** True when the browser can open a file picker at all (everything modern). */
+export function filesAvailable() {
+  return typeof window !== 'undefined';
+}
+
+/**
+ * Pick one or more .bin files. Returns [] if the user cancels, which is not an
+ * error worth surfacing.
+ */
+export async function pickFiles() {
+  if (typeof window.showOpenFilePicker === 'function') {
+    try {
+      const handles = await window.showOpenFilePicker(BIN_PICKER);
+      return await Promise.all(handles.map((h) => h.getFile()));
+    } catch (err) {
+      if (err.name === 'AbortError') return [];
+      throw err;
+    }
+  }
+  // Firefox and Safari have no showOpenFilePicker. <input type=file> is read-only
+  // anyway, which is exactly what this source is.
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.bin,.fca,application/octet-stream';
+    input.multiple = true;
+    input.addEventListener('change', () => resolve([...(input.files ?? [])]), { once: true });
+    // A cancelled picker fires nothing in older browsers, so the promise simply
+    // never settles; 'cancel' covers the ones that do report it.
+    input.addEventListener('cancel', () => resolve([]), { once: true });
+    input.click();
+  });
+}
+
+/**
+ * Index loose files the way `walkLocal` indexes a folder, giving each one a
+ * device-relative path built from its amiibo ID.
+ *
+ * The file keeps the name you gave it and gains a series folder. Only a file
+ * whose name will not fit, or which is not a dump at all, gets a generated one.
+ *
+ * @returns {Promise<{index: Map, byPath: Map, skipped: Array}>}
+ */
+export async function indexFromPickedFiles(files, { deviceRoot = 'E:/amiibo', onProgress = () => {} } = {}) {
+  const index = new Map();
+  const byPath = new Map();
+  const skipped = [];
+  let count = 0;
+
+  for (const f of files) {
+    const buf = new Uint8Array(await f.arrayBuffer());
+    const entry = await describeFile(buf, { size: f.size, lastModified: f.lastModified });
+
+    // An all-in-one file is left as-is here: bundlesource.js unpacks it, and it
+    // needs the container entry to find it by.
+    if (entry.bundle) {
+      index.set(f.name, entry);
+      byPath.set(f.name, f);
+      onProgress(++count, f.name);
+      continue;
+    }
+    if (!entry.amiiboId) {
+      skipped.push({ name: f.name, reason: `not an amiibo dump (${f.size} bytes)` });
+      continue;
+    }
+
+    const relPath = amiiboRelPath(entry.amiiboId, {
+      deviceRoot,
+      uid: entry.uid,
+      vehicle: entry.vehicle,
+      keepName: f.name,
+    });
+    if (!relPath) {
+      skipped.push({ name: f.name, reason: `no filename fits under ${deviceRoot}` });
+      continue;
+    }
+    // Two files can carry the same amiibo. Keeping the first is consistent with
+    // how a folder behaves when it holds duplicates.
+    if (index.has(relPath)) {
+      skipped.push({ name: f.name, reason: `${relPath} already taken by another file` });
+      continue;
+    }
+    index.set(relPath, entry);
+    byPath.set(relPath, f);
+    onProgress(++count, relPath);
+  }
+
+  return { index, byPath, skipped };
 }
 
 // ---- handle persistence (so the folder survives a reload) ---------------
@@ -236,6 +363,7 @@ export async function removeLocalFile(rootHandle, relPath) {
 // ---- sync state ---------------------------------------------------------
 
 export async function loadState(rootHandle) {
+  if (!rootHandle) return { version: 1, entries: {} };
   try {
     const fh = await rootHandle.getFileHandle(STATE_FILENAME);
     const f = await fh.getFile();
@@ -248,6 +376,10 @@ export async function loadState(rootHandle) {
 }
 
 export async function saveState(rootHandle, state) {
+  // A read-only source (loose picked files) has nowhere to keep the record of
+  // the last sync. Nothing to write is not a failure worth reporting on every
+  // tenth operation of a run.
+  if (!rootHandle) return;
   const fh = await rootHandle.getFileHandle(STATE_FILENAME, { create: true });
   const w = await fh.createWritable();
   await w.write(JSON.stringify(state, null, 2));

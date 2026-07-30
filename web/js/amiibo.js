@@ -113,6 +113,21 @@ export const KNOWN_VEHICLES = Object.freeze([
   ...new Set(Object.values(VEHICLE_SIGNATURES)),
 ].sort());
 
+/**
+ * Short form of a vehicle name, for use in a filename: "Warp Star" -> "Warp".
+ *
+ * All four vehicles of a character share one amiibo ID, so the ID alone cannot
+ * name their dumps: four real files would land on one path and overwrite each
+ * other. The full name does not fit — "Meta Knight (& Shadow Star) (Winged
+ * Star).bin" is 72 bytes under E:/amiibo, over the device's 63-byte path limit
+ * — so the distinguishing word is what goes in.
+ */
+export function vehicleTag(vehicle) {
+  if (!vehicle) return null;
+  const first = String(vehicle).trim().split(/\s+/)[0];
+  return first || null;
+}
+
 /** Amiibo format version — byte 7 of the ID. 2 is standard, 3 is Air Riders. */
 export function amiiboVersion(id) {
   if (!id || id.length !== 16) return null;

@@ -203,6 +203,11 @@ operation:
   filed completely differently: zero shared paths, yet every amiibo matched,
   and the only genuine differences surfaced as variants.
 
+- **Loose `.bin` files** can stand in for a folder: pick dumps directly, or a
+  single all-in-one file. They are a read-only source, since a folder is also
+  where downloads land and where `.allmiibo-sync.json` is written, so they can be
+  browsed and pushed but not pulled into. Picking files replaces a connected
+  folder.
 - **PACK FOLDER** and **PACK DEVICE** write a library out as a single
   all-in-one `.bin` (see below). They read one side and hand back a file, so
   neither has a plan to apply. `PACK FOLDER` needs no device and `PACK DEVICE`
@@ -307,8 +312,21 @@ into a commit unreviewed, and fetches artwork for anything new.
 ### Naming a file for an amiibo
 
 Sync normally moves files whose names you chose, and folder names are never
-used for identity. But an amiibo can arrive with no file of its own, as a
-member of an all-in-one bundle, and then a path has to be invented. Where it
+used for identity. But an amiibo can arrive without a home: as a member of an
+all-in-one bundle, which has no filename at all, or as a loose `.bin` picked on
+its own, which has a name but no folder. Then a path has to be worked out.
+
+The two are not treated alike. A bundle member gets a name built from the
+database. A picked file keeps the name you gave it and gains only a series
+folder, so `K+WarpStar.bin` becomes `Kirby Air Riders/K+WarpStar.bin`; a name
+too long for the device is the only case that falls back to a built one.
+
+Air Riders needs one more thing. All four vehicles of a character share a single
+amiibo ID, so a database-built name puts four real dumps on one path and keeps
+the last. Where the app names one itself it adds the vehicle, shortened:
+`KAR/Kirby (Warp).bin`. The full name does not fit, pushing the longest Air
+Riders path to 72 bytes against a 63-byte limit. Bundles never hit this, since a
+572-byte record cannot carry a vehicle at all. Where it
 goes is decided at generation time rather than at sync time, in three extra
 tables the generator emits:
 
@@ -368,9 +386,25 @@ other, and an ugly filename is much better than a silent loss.
 
 ## All-in-one bundles
 
-Some tools distribute a whole amiibo library as a **single `.bin`**. The
-container is as simple as it gets: a flat run of fixed-size records, no header,
-no index, no name table, no checksum, no version field.
+Some tools distribute a whole amiibo library as a **single file**. Two such
+containers are read; both are specified in full in
+[`FORMATS.md`](FORMATS.md).
+
+- **Flat 572** — the one written as well as read, produced by `PACK FOLDER` and
+  `PACK DEVICE`. Reverse engineered, described below.
+- **FCA** — read only, to the [published specification](https://github.com/fishybow/fca/blob/main/SPEC.md)
+  by fishybow (MIT). A real archive with a header and length-prefixed typed
+  entries, and the better of the two where there is a choice: its type-2 entries
+  carry whole 2048-byte v3 dumps, so **Kirby Air Riders vehicles survive**, which
+  the flat format cannot manage. Detection needs the `FCA` magic bytes, entries
+  that tile the file exactly, and at least one amiibo among them; a Skylanders
+  archive is recognised as none of this app's business rather than torn apart.
+  Verified against four real Flashiibo exports: 525, 417, 942 and 16 entries,
+  the last being 4 characters × 4 vehicles as whole 2048-byte dumps. Those
+  numbers are pinned in `test/fca.test.mjs`.
+
+The flat container is as simple as it gets: a run of fixed-size records, no
+header, no index, no name table, no checksum, no version field.
 
 ```
 record[0x000 .. 0x21B]   540 bytes  NTAG215 image (pages 0..134)
@@ -517,6 +551,7 @@ npm test
 
 ```
 PROTOCOL.md               reverse-engineered wire protocol
+FORMATS.md                the two all-in-one container formats, in full
 COMMANDS.md               every command in one place
 serve.mjs                 zero-dependency static server (Node built-ins only)
 package.json              scripts only, no dependencies to install
@@ -549,8 +584,9 @@ web/js/bytes.js           little-endian codecs, string and metadata TLV
 web/js/ble.js             Web Bluetooth transport (Nordic UART Service)
 web/js/protocol.js        framing, reassembly, command queue, VFS commands
 web/js/planner.js         reconciliation logic + path assignment (pure, no I/O)
-web/js/bundle.js          all-in-one bundle format: detect, split, pack
-web/js/bundlesource.js    unpack a bundle into the local index, gap-fill dedupe
+web/js/bundle.js          flat 572 all-in-one format: detect, split, pack
+web/js/fca.js             FCA all-in-one archive: detect, split (read only)
+web/js/bundlesource.js    unpack either into the local index, gap-fill dedupe
 web/js/localfs.js         local folder access, hashing, sync state
 web/js/syncflow.js        the sync engine both surfaces share (scan/plan/apply)
 web/js/devicepicker.js    folder browser for the device side
@@ -641,6 +677,7 @@ They depict no Nintendo character or mark.
 | [solosky/pixl.js](https://github.com/solosky/pixl.js) | wire protocol reference; amiibo name table | GPL-2.0 |
 | [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P) (vendored in `web/fonts/`) | pixel display font | SIL OFL 1.1 |
 | [Pixelarticons](https://pixelarticons.com) by Gerrit Halfmann (inlined in `web/js/icons.js`) | 8-bit UI icons | MIT |
+| [fishybow/fca](https://github.com/fishybow/fca) ([SPEC.md](https://github.com/fishybow/fca/blob/main/SPEC.md)) | published specification for the FCA all-in-one container, implemented as a reader in `web/js/fca.js` | MIT |
 | amiibo artwork + vehicle renders (fetched locally, never committed) | collection and detail images | © Nintendo |
 | fan-made HHD card pack (community, authors unknown) | factual index only: card number, NFC UID, item count, teaser (`web/data/hhd-cards.js`); no tag data | facts, compiled for this project |
 
