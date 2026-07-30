@@ -2,12 +2,38 @@
 // Browser-only (Chrome/Edge). No dependencies.
 
 import { parseAmiiboId, parseVehicle, parseUid, isHhdItemCards } from './amiibo.js';
+import { detectBundle } from './bundle.js';
 
 const DB_NAME = 'allmiibo-sync';
 const STORE = 'handles';
 const HANDLE_KEY = 'syncRoot';
 
 export const STATE_FILENAME = '.allmiibo-sync.json';
+
+// One index entry, from bytes already in hand. Shared by both readers so the
+// directory walk and the file-input fallback can never describe a file
+// differently.
+async function describeFile(buf, { size, lastModified, hash = true }) {
+  // The bytes are already here — and this is the only reliable way to tell
+  // which amiibo a dump actually is.
+  const amiiboId = parseAmiiboId(buf);
+  const vehicle = parseVehicle(buf);
+  return {
+    size,
+    hash: hash ? await sha256(buf) : null,
+    amiiboId,
+    vehicle: vehicle?.name ?? vehicle?.code ?? null,
+    // The HHD pack shares one amiibo ID; the UID tells the cards apart.
+    uid: amiiboId && isHhdItemCards(amiiboId) ? parseUid(buf) : null,
+    // Not a dump, but a whole library in one file. Recorded here because the
+    // bytes are open anyway; bundlesource.js decides what to do about it.
+    // Without this the planner would happily send the container itself to a
+    // device that cannot read it — half a megabyte over a 2 kB/s link.
+    bundle: amiiboId ? null : detectBundle(buf),
+    isDir: false,
+    lastModified,
+  };
+}
 
 export function available() {
   return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
@@ -100,6 +126,10 @@ export function pickDirectoryFiles() {
 // the chosen folder itself, so it is stripped to match walkLocal's relPaths.
 export async function indexFromFiles(files, { onProgress = () => {}, hash = true } = {}) {
   const index = new Map();
+  // Kept so a caller can read a file's bytes again later — unpacking an
+  // all-in-one bundle needs them, and without a directory handle there is no
+  // other way back to them.
+  const byPath = new Map();
   let folderName = '';
   let count = 0;
   for (const f of files) {
@@ -109,19 +139,14 @@ export async function indexFromFiles(files, { onProgress = () => {}, hash = true
     const relPath = cut === -1 ? full : full.slice(cut + 1);
     if (relPath.split('/').pop() === STATE_FILENAME) continue;
     const buf = new Uint8Array(await f.arrayBuffer());
-    const amiiboId = parseAmiiboId(buf);
-    index.set(relPath, {
-      size: f.size,
-      hash: hash ? await sha256(buf) : null,
-      amiiboId,
-      vehicle: parseVehicle(buf)?.name ?? parseVehicle(buf)?.code ?? null,
-      uid: amiiboId && isHhdItemCards(amiiboId) ? parseUid(buf) : null,
-      isDir: false,
-      lastModified: f.lastModified,
-    });
+    index.set(
+      relPath,
+      await describeFile(buf, { size: f.size, lastModified: f.lastModified, hash })
+    );
+    byPath.set(relPath, f);
     onProgress(++count, relPath);
   }
-  return { folderName, index };
+  return { folderName, index, byPath };
 }
 
 // ---- traversal ----------------------------------------------------------
@@ -147,19 +172,10 @@ export async function walkLocal(rootHandle, { onProgress = () => {}, hash = true
         if (name === STATE_FILENAME) continue;
         const f = await handle.getFile();
         const buf = new Uint8Array(await f.arrayBuffer());
-        const amiiboId = parseAmiiboId(buf);
-        index.set(relPath, {
-          size: f.size,
-          hash: hash ? await sha256(buf) : null,
-          // The bytes are already in hand — and this is the only reliable way
-          // to tell which amiibo a dump actually is.
-          amiiboId,
-          vehicle: parseVehicle(buf)?.name ?? parseVehicle(buf)?.code ?? null,
-          // The HHD pack shares one amiibo ID; the UID tells the cards apart.
-          uid: amiiboId && isHhdItemCards(amiiboId) ? parseUid(buf) : null,
-          isDir: false,
-          lastModified: f.lastModified,
-        });
+        index.set(
+          relPath,
+          await describeFile(buf, { size: f.size, lastModified: f.lastModified, hash })
+        );
         onProgress(++count, relPath);
       }
     }

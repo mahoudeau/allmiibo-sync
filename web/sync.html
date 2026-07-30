@@ -29,6 +29,11 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
   .step > h2 { display:flex; align-items:center; gap:.6rem; margin-bottom:.7rem; }
   .step.locked { opacity:.45; pointer-events:none; }
   .stepRow { display:flex; flex-wrap:wrap; gap:.7rem; align-items:center; }
+  /* Pushed to the far end of the connect row, and carrying .advToggle so it
+     reads like SETTINGS rather than competing with the two real buttons. */
+  .stepHelp { margin-left:auto; }
+  .stepHelp .ico { width:1.1rem; height:1.1rem; }
+  .stepHelp:hover { color:var(--fg); }
   .stepRow label { font-size:.85rem; }
   .stepRow input[type=text] { font:inherit; padding:.35rem .5rem; border:2px solid var(--border);
                               background:var(--bg); color:var(--fg); }
@@ -86,6 +91,9 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
     <div class="stepRow">
       <span id="folderChip"></span>
       <span id="deviceChip"></span>
+      <button type="button" class="advToggle stepHelp" id="stepHelp">
+        <span class="ico" data-ico="info"></span>NEED HELP?
+      </button>
     </div>
   </section>
 

@@ -8,7 +8,10 @@ import { compareByContent } from './planner.js';
 import { walkDevice, hashDeviceIndex } from './sync.js';
 import * as localfs from './localfs.js';
 import * as prefs from './prefs.js';
-import { OPS, hasWork, scanAndPlan, applyThePlan } from './syncflow.js';
+import {
+  OPS, PACK_OPS, hasWork, scanAndPlan, applyThePlan,
+  packFolder, packDevice, packFileName,
+} from './syncflow.js';
 import { pickDeviceFolder } from './devicepicker.js';
 import { toast, statusCtl, progressCtl, busy, idle, fmtBytes, fmtDuration } from './ui.js';
 import { icon, ICONS } from './icons.js';
@@ -23,6 +26,7 @@ for (const id of [
   'capBar', 'capName', 'capText', 'drawers', 'rawPlanDrawer', 'planBox',
   'apply', 'back2', 'runPanel', 'runTitle', 'pbar', 'runErrs', 'stopRun',
   'errDrawer', 'errN', 'errList', 'status', 'logDrawer', 'log', 'saveLog', 'copyLog',
+  'stepHelp',
 ]) els[id] = document.getElementById(id);
 
 const status = statusCtl(els.status);
@@ -35,6 +39,10 @@ let lapsedFolderName = null;
 let deviceName = null;
 let plan = null;
 let state = null;
+// Dumps unpacked from an all-in-one file in the folder: they have no file
+// behind them, so the executor reads their bytes from here.
+let bundleSources = null;
+let bundleReport = null;
 let stopRequested = false;
 let lastRun = null;
 let firmwareVersion = null;
@@ -118,13 +126,22 @@ new MutationObserver(() => {
 // ---- gating --------------------------------------------------------------------
 
 function refresh() {
-  const ready = !!rootHandle && !!transport?.connected;
+  // Most operations need both sides. Packing needs only the side it reads, and
+  // greying the button out for a device that is irrelevant just looks broken.
+  const op = currentOp();
+  const haveFolder = !!rootHandle;
+  const haveDevice = !!transport?.connected;
+  const ready = op === 'bundle-local' ? haveFolder
+    : op === 'bundle-device' ? haveDevice
+    : haveFolder && haveDevice;
   els.step2.classList.toggle('locked', !ready);
   els.scan.disabled = !ready;
 }
 
 function resetPlan() {
   plan = null;
+  bundleSources = null;
+  bundleReport = null;
   els.step3.hidden = true;
   els.review.hidden = false;
   els.runPanel.hidden = true;
@@ -245,6 +262,7 @@ async function connectDevice() {
 els.scan.addEventListener('click', async () => {
   const op = currentOp();
   if (op === 'check') return runAudit();
+  if (PACK_OPS.includes(op)) return runPack(op);
 
   busy(els.scan, 'SCANNING');
   els.stop.hidden = false;
@@ -266,6 +284,8 @@ els.scan.addEventListener('click', async () => {
     plan = res.plan;
     state = res.state;
     lastRun = res.lastRun;
+    bundleSources = res.bundle?.sources ?? null;
+    bundleReport = res.bundle?.report ?? null;
     els.saveLog.disabled = false;
     renderReview(plan, op);
     say('');
@@ -297,6 +317,52 @@ const SECTIONS = [
   { key: 'renamedLocally', label: 'RENAMED FOR YOUR DISK', ico: 'move', fmt: (r) => [`${r.from} → ${r.to}`, ''] },
 ];
 
+// What an all-in-one file in the folder contributed. Written to read as a
+// result rather than a problem: "0 new" is the correct outcome for a library
+// you already have in full, not a failure.
+function renderBundleNotes() {
+  for (const b of bundleReport?.bundles ?? []) {
+    const card = document.createElement('div');
+    card.className = b.error ? 'warnCard err' : 'warnCard';
+
+    if (b.error) {
+      card.textContent = `${b.relPath} could not be read: ${b.error}`;
+      els.warnBox.append(card);
+      continue;
+    }
+
+    const held = b.haveLocally + b.onDevice;
+    const parts = [
+      `${b.relPath} is an all-in-one file: ${b.count} records, ${b.unique} amiibo${b.unique === 1 ? '' : 's'}.`,
+      b.added
+        ? `${b.added} will transfer.`
+        : 'Nothing to transfer. You already have all of them.',
+    ];
+    if (b.haveLocally) parts.push(`${b.haveLocally} already in your folder.`);
+    if (b.onDevice) parts.push(`${b.onDevice} already on the device.`);
+    if (b.duplicates) parts.push(`${b.duplicates} duplicate records skipped.`);
+    if (b.unknown) parts.push(`${b.unknown} records carried no readable amiibo ID.`);
+    if (held && b.added === 0) parts.push('The file itself is never sent, because the device cannot read it.');
+    card.textContent = parts.join(' ');
+    els.warnBox.append(card);
+
+    for (const x of b.blocked) {
+      const w = document.createElement('div');
+      w.className = 'warnCard err';
+      w.textContent = `Skipped ${x.amiiboId} from ${b.relPath}: ${x.reason}.`;
+      els.warnBox.append(w);
+    }
+    if (b.added && bundleReport && !bundleReport.deviceIdentified) {
+      const w = document.createElement('div');
+      w.className = 'warnCard';
+      w.textContent =
+        'The device was matched by path, not by amiibo. MATCH reads every device file, so it ' +
+        'would also spot a copy filed under a different name.';
+      els.warnBox.append(w);
+    }
+  }
+}
+
 function renderReview(p, op) {
   els.step3.hidden = false;
   els.review.hidden = false;
@@ -315,6 +381,7 @@ function renderReview(p, op) {
     w.textContent = text;
     els.warnBox.append(w);
   }
+  renderBundleNotes();
   if (p.capacity && !p.capacity.fits) {
     const w = document.createElement('div');
     w.className = 'warnCard err';
@@ -443,6 +510,7 @@ els.apply.addEventListener('click', async () => {
 
   const result = await applyThePlan({
     client, rootHandle, deviceRoot: plan.deviceRoot, state, plan,
+    sources: bundleSources,
     shouldStop: () => stopRequested,
     on: {
       op: (label, i, total, t0) => {
@@ -511,6 +579,75 @@ els.stopRun.addEventListener('click', () => {
 });
 
 // ---- CHECK (compare by content, read-only) --------------------------------------------------
+
+// ---- packing a library into one all-in-one file ---------------------------
+//
+// Not a plan, so it does not go through the review/apply path: it reads one side
+// and hands back a file.
+
+function saveBytes(bytes, filename) {
+  const blob = new Blob([bytes], { type: 'application/octet-stream' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function runPack(op) {
+  const fromDevice = op === 'bundle-device';
+  busy(els.scan, 'PACKING');
+  els.stop.hidden = false;
+  stopRequested = false;
+  resetPlan();
+
+  try {
+    const on = {
+      status: (t) => say(t),
+      progress: (done, total, label, detail) => pbar.set(done, total, label, detail),
+      log,
+    };
+    const { bytes, report } = fromDevice
+      ? await packDevice({ client, deviceRoot: deviceRoot(), on, shouldStop: () => stopRequested })
+      : await packFolder({ rootHandle, deviceRoot: deviceRoot(), on, shouldStop: () => stopRequested });
+    pbar.done();
+
+    if (!report.records) {
+      say('Nothing to pack. No amiibo dumps found.', 'warn');
+    } else {
+      const name = packFileName(report.records);
+      saveBytes(bytes, name);
+      const summary = `${report.records} amiibos · ${fmtBytes(bytes.length)}`;
+      say(
+        stopRequested
+          ? `Stopped early. Packed what was read so far: ${summary}.`
+          : `Packed ${summary} into ${name}.`,
+        stopRequested ? 'warn' : 'ok'
+      );
+      log('ok', `packed ${report.records} records from ${report.read} files into ${name}`);
+      // Worth saying plainly: this is the one thing a bundle cannot carry.
+      if (report.lossy.length) {
+        const w = document.createElement('div');
+        w.className = 'warnCard';
+        w.textContent =
+          `${report.lossy.length} Kirby Air Riders dumps lost their vehicle. An all-in-one ` +
+          'record holds 540 bytes and the vehicle sits past the end, so all four vehicles for ' +
+          'a character become one entry. Keep your original dumps.';
+        els.step3.hidden = false;
+        els.review.hidden = false;
+        els.warnBox.append(w);
+      }
+      toast(`Packed ${summary}`, { iconName: 'download' });
+    }
+  } catch (err) {
+    pbar.hide();
+    say(err.stopped ? 'Packing stopped.' : `Packing failed: ${err.message}`, err.stopped ? 'warn' : 'err');
+    if (!err.stopped) log('err', err.message);
+  }
+  els.stop.hidden = true;
+  idle(els.scan);
+  refresh();
+}
 
 async function runAudit() {
   busy(els.scan, 'CHECKING');
@@ -632,10 +769,27 @@ els.copyLog.addEventListener('click', async () => {
   }
 });
 
+// Replays the tour on demand, whether or not it has been seen before.
+els.stepHelp.addEventListener('click', async () => {
+  const tour = await import('./tutorial.js');
+  tour.start('sync');
+});
+
 els.stop.addEventListener('click', () => {
   stopRequested = true;
   log('warn', 'stopping…');
 });
+
+// The tour is a separate module loaded on demand, so a returning visitor never
+// pays for it.
+async function offerTour(page) {
+  try {
+    const tour = await import('./tutorial.js');
+    tour.offer(page);
+  } catch {
+    // A tour that will not load is not worth a visible error.
+  }
+}
 
 // ---- boot -------------------------------------------------------------------------------------
 
@@ -674,4 +828,9 @@ els.stop.addEventListener('click', () => {
   }
   renderFolderChip();
   refresh();
+
+  // First visit only, and only once the page is usable — a spotlight over
+  // controls behind an unsupported-browser notice would be worse than nothing,
+  // which is why the blocked path above returns before reaching this.
+  offerTour('sync');
 })();

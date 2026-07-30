@@ -20,7 +20,14 @@
 // and 476 when *generating* a tag. In retail dumps 476 falls inside encrypted
 // data and reads as noise, so 84 is the one to use.
 
-import { AMIIBO_NAMES, AMIIBO_SERIES, AMIIBO_TYPES } from '../data/amiibo-db.js';
+import {
+  AMIIBO_NAMES,
+  AMIIBO_SERIES,
+  AMIIBO_TYPES,
+  AMIIBO_SERIES_SHORT,
+  AMIIBO_FILE_NAMES,
+  AMIIBO_SHORT_NAMES,
+} from '../data/amiibo-db.js';
 
 export const AMIIBO_ID_OFFSET = 84;
 export const AMIIBO_ID_SIZE = 8;
@@ -165,6 +172,36 @@ export function decodeAmiiboId(id) {
 /** Name from the vendored database, or null if it predates/postdates the table. */
 export function amiiboName(id) {
   return AMIIBO_NAMES[id] ?? null;
+}
+
+// ---- naming a file for an amiibo ----------------------------------------
+//
+// Sync normally moves files whose names the user chose. Choosing one from
+// scratch is a different job, needed when an amiibo arrives without a home —
+// a member of an all-in-one bundle, say. The awkward parts (two amiibos with
+// the same display name; a 63-byte device path limit) are settled once in
+// tools/build-amiibo-db.mjs, which fails the build rather than emit a
+// collision, so the lookups here are plain reads of a table that is already
+// known to be unique. The path assembly itself lives in planner.js next to
+// checkDestination.
+
+/** Folder name for a series byte. `short` picks the initialism, e.g. "MSS". */
+export function seriesFolder(series, { short = false } = {}) {
+  const table = short ? AMIIBO_SERIES_SHORT : SERIES_NAMES;
+  return table[series] ?? SERIES_NAMES[series] ?? `Series 0x${series.toString(16).padStart(2, '0')}`;
+}
+
+/**
+ * Filename base for an amiibo, without the extension. Unique within its series
+ * folder. `short` prefers the abbreviated form where one exists.
+ *
+ * Returns null for an ID the database has never seen — a caller that must
+ * produce a path anyway should fall back to the ID itself, which is the one
+ * name guaranteed to be unique.
+ */
+export function amiiboFileName(id, { short = false } = {}) {
+  if (short && AMIIBO_SHORT_NAMES[id]) return AMIIBO_SHORT_NAMES[id];
+  return AMIIBO_FILE_NAMES[id] ?? AMIIBO_NAMES[id] ?? null;
 }
 
 // The first four bytes of an amiibo ID identify the character, independent of

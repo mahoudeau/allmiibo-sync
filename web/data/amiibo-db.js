@@ -1954,3 +1954,125 @@ export const AMIIBO_RELEASE = Object.freeze({
   '3dc1000004230002': '2022-09-09',
   '3f000000042e0002': '2024-02-16',
 });
+
+// Byte 6 of the ID -> short folder token, for when the full series label will
+// not fit the device's 63-byte path limit. Initials of the label's words, or the
+// label itself where initials would be useless or already taken.
+//
+// These are STABLE: a token here is never re-derived once committed, because
+// changing one renames a folder on the device and the next sync then moves
+// every file inside it. tools/build-amiibo-db.mjs preserves what it finds and
+// only mints tokens for new series.
+export const AMIIBO_SERIES_SHORT = Object.freeze({
+  0: "SSB",
+  1: "SMB",
+  2: "CR",
+  3: "YSWW",
+  4: "Splatoon",
+  5: "AC",
+  6: "8BM",
+  7: "Skylanders",
+  9: "LOZ",
+  10: "SK",
+  12: "Kirby",
+  13: "Pokemon",
+  14: "MSS",
+  15: "MH",
+  16: "BoxBoy!",
+  17: "Pikmin",
+  18: "FE",
+  19: "Metroid",
+  20: "Others",
+  21: "MM",
+  22: "Diablo",
+  23: "PP",
+  24: "MHR",
+  25: "YGO",
+  26: "DK",
+  27: "XC3",
+  28: "MMWB",
+  29: "SF6",
+  30: "KAR",
+  33: "Pragmata",
+  255: "SNW",
+});
+
+// amiibo ID -> filename base, where the display name is not unique within its
+// series folder. Only the 21 ambiguous IDs appear; for every other ID the
+// filename is AMIIBO_NAMES[id]. Generation fails rather than emit a collision.
+export const AMIIBO_FILE_NAMES = Object.freeze({
+  '34c2000104cd1d02': "Luke (Card)",
+  '34c3000104ce1d02': "Jamie (Card)",
+  '34c4000104cf1d02': "Kimberly (Card)",
+  '34d6000104e11d02': "M. Bison 04e1",
+  '34d6000104eb1d02': "M. Bison 04eb",
+  '34d8000104e31d02': "Elena 04e3",
+  '34d8000104ec1d02': "Elena 04ec",
+  '34d9000104e41d02': "Sagat 04e4",
+  '34d9000104ed1d02': "Sagat 04ed",
+  '34da000104e51d02': "C. Viper 04e5",
+  '34da000104ee1d02': "C. Viper 04ee",
+  '34db000104e61d02': "Alex 04e6",
+  '34db000104ef1d02': "Alex 04ef",
+  '34dc000104e71d02': "Ingrid 04e7",
+  '34dc000104f01d02': "Ingrid 04f0",
+  '35090100042b1802': "Palico v2",
+  '350a0100042c1802': "Palamute v2",
+  '3c80000104e81d02': "Terry 04e8",
+  '3c80000104f11d02': "Terry 04f1",
+  '3c81000104f21d02': "Mai 04f2",
+  '3c81000104f31d02': "Mai 04f3",
+});
+
+// amiibo ID -> abbreviated filename base, for paths that will not otherwise
+// fit. Abbreviates the segment after the last " - ": "Pink Gold Peach - Horse
+// Racing" -> "Pink Gold Peach - HR". Only the 46 names long enough to matter
+// appear.
+export const AMIIBO_SHORT_NAMES = Object.freeze({
+  '00000000003d0102': "Mario - SE",
+  '00000003039bff02': "Mario - PUB",
+  '000000030430ff02': "Golden - PUB",
+  '00000004043f1c02': "Mario - MMWB",
+  '00010003039cff02': "Luigi - PUB",
+  '0001000404401c02': "Luigi - MMWB",
+  '00020003039dff02': "Peach - PUB",
+  '0002000404411c02': "Peach - MMWB",
+  '00030003039fff02': "Yoshi - PUB",
+  '0003000404421c02': "Yoshi - MMWB",
+  '000800030431ff02': "Donkey Kong - PUB",
+  '000900030432ff02': "Diddy Kong - PUB",
+  '00130003039eff02': "Daisy - PUB",
+  '01000000034b0902': "Link - OOT",
+  '01000000034d0902': "Link - TP",
+  '0100000003990902': "Link - LSA",
+  '0100000004180902': "Link - TOTK",
+  '0100010003500902': "Toon Link - TWW",
+  '0101000003520902': "Toon Zelda - TWW",
+  '0101000004190902': "Zelda - TOTK",
+  '01020100041a0902': "Ganondorf - TOTK",
+  '0181050103bf0502': "424 - IS",
+  '0182000100a80502': "[AC] 101 - KKS",
+  '0182000101d80502': "[AC] CP2 - KKS",
+  '0183030103be0502': "423 - TNC",
+  '0184050103a90502': "402 - TAT",
+  '018f000100b30502': "[AC] 112 - DR",
+  '018f010101190502': "[AC] 214 - DR",
+  '047d0001012e0502': "[AC] 235 - SC",
+  '05c0000004121302': "Samus - MD",
+  '08000100025f0402': "Inkling Girl - LG",
+  '0800010003690402': "Inkling Girl - NP",
+  '08000200036a0402': "Inkling Boy - NG",
+  '08000300036b0402': "Inkling Squid - NP",
+  '09c60501028b0e02': "Waluigi - HR",
+  '09c7050102900e02': "Donkey Kong - HR",
+  '09c8050102950e02': "Diddy Kong - HR",
+  '09c90501029a0e02': "Bowser - HR",
+  '09ca0501029f0e02': "Bowser Jr. - HR",
+  '09cc050102a90e02': "Baby Mario - HR",
+  '09cd050102ae0e02': "Baby Luigi - HR",
+  '09cf050102b80e02': "Rosalina - HR",
+  '09d0050102bd0e02': "Metal Mario - HR",
+  '09d1050102c20e02': "Pink Gold Peach - HR",
+  '3480000002580002': "Mega Man - GE",
+  '35c0000003920a02': "Shovel Knight - GE",
+});

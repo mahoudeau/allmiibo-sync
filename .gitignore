@@ -19,6 +19,9 @@ allmiibo-writetest*.json
 /AMIIBO/
 /my-amiibo/
 /My-Amiibo/
+/amiibos/
+/Amiibos/
+/AMIIBOS/
 
 # Second local library folder
 /Allmiibo/

@@ -36,6 +36,10 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
   .helpSec b { color:var(--fg); }
   .kbd { font-family:var(--mono); font-size:.8rem; border:1px solid var(--border);
          background:var(--bg); padding:.05rem .35rem; }
+  /* Example paths. Scrolls inside itself so a long path never widens the page. */
+  .helpTree { font-family:var(--mono); font-size:.8rem; color:var(--muted);
+              border:1px solid var(--border); background:var(--bg);
+              padding:.6rem .7rem; margin:.6rem 0; overflow-x:auto; line-height:1.6; }
   .muted { color:var(--muted); }
 </style>
 </head>
@@ -43,6 +47,19 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
 <main>
   <h1>How to</h1>
   <p class="sub">Everything the app does, in one place.</p>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="info"></span>THE GUIDED TOUR</h2>
+    <p>If you would rather be shown than read, the Collection and the Advanced
+       sync page each have a short tour that spotlights one control at a time.
+       It runs by itself the first time you open either page, and once you close
+       it, whether you reach the end or skip it, it does not come back on its
+       own.</p>
+    <p>To see it again, press <b>NEED HELP?</b>: on the Collection it sits in the
+       bottom-right corner of the sources card, and on Advanced sync at the end of
+       the connect row. Steps for controls you cannot see yet are skipped, so a
+       tour taken before connecting a device is shorter than one taken after.</p>
+  </section>
 
   <section class="helpSec">
     <h2><span class="ico" data-ico="grid"></span>THE COLLECTION</h2>
@@ -111,6 +128,79 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
     <p>To move specific amiibo instead, press <b>SELECT</b>, tap the ones you
        want, then <b>SEND TO DEVICE</b> or <b>DOWNLOAD</b> from the bar at the
        bottom. Only amiibo missing on the other side are transferred.</p>
+  </section>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="folder"></span>HOW YOUR FOLDER IS LAID OUT</h2>
+    <p>Sync does not care how you file your dumps. An amiibo is identified by
+       the ID inside the file, at byte 84, never by its name or folder, so you
+       can arrange your library however you like and rename anything at any
+       time. Two copies of one collection can share zero paths and still match.
+       <b>MATCH</b> exists for exactly that case.</p>
+    <p>Folder names only ever matter in one direction: a plain <b>SYNC</b>
+       mirrors your layout onto the device, so what you choose locally is what
+       you get there.</p>
+    <p>The one case where the app has to invent a name is an amiibo arriving
+       with no file of its own, which happens when it comes out of an
+       all-in-one file. Those are filed as
+       <span class="kbd">Series/Name.bin</span>:</p>
+    <pre class="helpTree">E:/amiibo/
+  Super Smash Bros/Mario.bin
+  Animal Crossing/[AC] 001 - Isabelle.bin
+  Kirby Air Riders/Kirby.bin
+  MSS/Pink Gold Peach - Horse Racing.bin</pre>
+    <p>That last line shows the only wrinkle. The device caps a whole path at
+       <b>63 bytes</b> and a filename at <b>47</b>, and it truncates silently
+       rather than complaining, so names are shortened in steps until they fit:
+       the full series name first, then its initials
+       (<span class="kbd">Mario Sports Superstars</span> becomes
+       <span class="kbd">MSS</span>), then a shortened amiibo name
+       (<span class="kbd">Pink Gold Peach - Horse Racing</span> becomes
+       <span class="kbd">Pink Gold Peach - HR</span>). How much shortening is
+       needed depends on how deep your device folder is. At
+       <span class="kbd">E:/amiibo</span> only nine of the 946 known amiibo
+       need any at all.</p>
+    <p>Two amiibo are never given the same filename. Where the database lists
+       the same display name twice, the difference is spelled out rather than
+       counted: <span class="kbd">Luke (Card)</span> against
+       <span class="kbd">Luke</span>, <span class="kbd">Palico v2</span> against
+       <span class="kbd">Palico</span>, and for two printings of one Street
+       Fighter 6 card that differ in nothing else, the model number, as in
+       <span class="kbd">Terry 04e8</span>. The 91 Happy Home Designer cards all
+       carry one ID, so they are filed by tag UID instead, as
+       <span class="kbd">AC/HHD 04ab17fc2e4080.bin</span>.</p>
+    <p>Nothing here renames files you already have. Your existing layout is
+       left exactly as it is.</p>
+  </section>
+
+  <section class="helpSec">
+    <h2><span class="ico" data-ico="copy"></span>ALL-IN-ONE FILES</h2>
+    <p>Some tools hand out a whole amiibo library as a <b>single .bin</b>, a few
+       hundred kilobytes holding hundreds of dumps end to end. Drop one in your
+       folder and it is recognised on the next scan, unpacked in memory, and its
+       amiibo are transferred individually. The container itself is never sent:
+       the device cannot read it, and pushing half a megabyte over a 2 kB/s link
+       would cost about four and a half minutes for nothing.</p>
+    <p>Only what you are missing goes across. A dump inside the file is skipped
+       when you already hold that amiibo in your folder, when the device already
+       has it, and when another all-in-one file in the same folder already
+       offered it. Duplicates inside one file collapse too, whether they are
+       byte-identical or two different tags of the same character. The scan tells
+       you the split, and <b>nothing to transfer</b> is the correct answer for a
+       library you already have in full.</p>
+    <p>Matching against the device by amiibo rather than by filename needs
+       <b>MATCH</b>, which reads every file on the device. A plain <b>SYNC</b>
+       compares paths only, so it can miss a copy filed under another name. The
+       scan says which of the two it did.</p>
+    <p>Going the other way, advanced mode adds <b>PACK FOLDER</b> and
+       <b>PACK DEVICE</b>, which write your library out as one all-in-one file
+       you can save or pass on.</p>
+    <p><b>One thing these files cannot carry.</b> Each slot holds 540 bytes,
+       which is a standard tag. Kirby Air Riders amiibo are larger, and the
+       vehicle is stored past the end of a slot, so all four vehicle pairings for
+       a character collapse into one entry with no vehicle at all. If you already
+       have proper Air Riders dumps, keep them: they are strictly better than any
+       all-in-one copy, and that is why yours are never replaced by one.</p>
   </section>
 
   <section class="helpSec">

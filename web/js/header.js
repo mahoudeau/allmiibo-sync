@@ -77,8 +77,9 @@ function activePage() {
 
 function navLinks() {
   const active = activePage();
+  // Each link carries a stable id so the guided tour can point at one.
   return PAGES.map((p) =>
-    `<a href="./${p.href}" class="${p.href === active ? 'active' : ''}${p.advanced ? ' advanced-only' : ''}">${icon(p.ico)}<span class="lbl">${p.label}</span></a>`
+    `<a id="nav-${p.href.replace('.html', '')}" href="./${p.href}" class="${p.href === active ? 'active' : ''}${p.advanced ? ' advanced-only' : ''}">${icon(p.ico)}<span class="lbl">${p.label}</span></a>`
   ).join('');
 }
 

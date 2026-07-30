@@ -41,6 +41,17 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
   .hero .hNote { font-size:.75rem; }
   .hero .hBody { flex:1; min-width:14rem; }
   .hero button { margin:0; }
+  /* Tucked into the card's bottom-right corner: findable when wanted, out of
+     the way of the two things this card is actually asking for. Carries
+     .advToggle so it reads exactly like SETTINGS in the header rather than
+     competing with the two real buttons above it. */
+  .hero { position:relative; }
+  .heroHelp { position:absolute; right:.8rem; bottom:.7rem; }
+  .heroHelp svg { width:1.1rem; height:1.1rem; flex:none; }
+  .heroHelp:hover { color:var(--fg); }
+  @media (max-width:34rem) {
+    .heroHelp { position:static; align-self:flex-start; }
+  }
   .hStep { display:flex; align-items:center; gap:.8rem; margin:.7rem 0; flex-wrap:wrap; }
   .hStep .hStepN { font-family:var(--pixel); font-size:.6rem; width:1.6rem; height:1.6rem;
     display:inline-flex; align-items:center; justify-content:center; flex:none;

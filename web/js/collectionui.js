@@ -17,6 +17,7 @@ import { debounce, motionOK, toast, statusCtl, progressCtl, burst, segCtl, fmtBy
 import { icon, ICONS } from './icons.js';
 import { confirmDialog } from './dialog.js';
 import { scanAndPlan, applyThePlan, planSelection, hasWork } from './syncflow.js';
+import { expandBundles, hasBundles } from './bundlesource.js';
 import { hhdMark } from './sprite.js';
 import { HHD_CARDS } from '../data/hhd-cards.js';
 import { pickDeviceFolder } from './devicepicker.js';
@@ -234,6 +235,7 @@ async function scanFolder() {
       hash: false,
       onProgress: (n) => { if (n % 100 === 0) renderFolderChip({ scanning: `reading… ${n}` }); },
     });
+    await unpackBundles(index, (relPath) => localfs.readLocalFile(rootHandle, relPath));
     ingestLocalIndex(index, rootHandle.name);
   } catch (err) {
     say(err.message, 'err');
@@ -247,10 +249,12 @@ async function pickFolderReadOnly() {
   try {
     const files = await localfs.pickDirectoryFiles();
     renderFolderChip({ scanning: 'reading…' });
-    const { folderName, index } = await localfs.indexFromFiles(files, {
+    const { folderName, index, byPath } = await localfs.indexFromFiles(files, {
       hash: false,
       onProgress: (n) => { if (n % 100 === 0) renderFolderChip({ scanning: `reading… ${n}` }); },
     });
+    await unpackBundles(index, async (relPath) =>
+      new Uint8Array(await byPath.get(relPath).arrayBuffer()));
     roName = folderName || 'FOLDER';
     ingestLocalIndex(index, roName);
   } catch (err) {
@@ -258,6 +262,23 @@ async function pickFolderReadOnly() {
     else say(err.message, 'err');
   }
   renderFolderChip();
+}
+
+// An all-in-one file holds a whole library. Counting the container as one
+// unrecognised file — which is what it looked like before — would report a
+// folder holding 943 amiibos as holding none, and disagree with what the sync
+// panel is about to transfer.
+async function unpackBundles(index, read) {
+  if (!hasBundles(index)) return;
+  try {
+    const { virtual, report } = await expandBundles({ index, read, deviceRoot: devRoot });
+    for (const [p, e] of virtual) if (!index.has(p)) index.set(p, e);
+    for (const b of report.bundles) {
+      if (b.error) say(`${b.relPath}: ${b.error}`, 'warn');
+    }
+  } catch (err) {
+    say(`Could not read the all-in-one file: ${err.message}`, 'warn');
+  }
 }
 
 function ingestLocalIndex(index, name) {
@@ -663,7 +684,7 @@ function renderHero() {
 
   els.hero.innerHTML = `<div class="hero"><span data-pirate-mark="72"></span><div class="hBody">
     <div class="hTitle">${cold ? 'ADD A SOURCE' : 'SOURCES'}</div>
-    ${cold ? '<p class="hNote">One is enough to browse — add both to sync them.</p>' : ''}
+    ${cold ? '<p class="hNote">One is enough to browse. Add both to sync them.</p>' : ''}
     <div class="hStep${step1Done ? ' done' : ''}">
       <span class="hStepN">${step1Done ? icon('check') : icon('folder')}</span>
       <span class="hStepLbl">YOUR FOLDER</span>
@@ -680,7 +701,9 @@ function renderHero() {
     <span class="hActions" id="heroActions"></span>
     ${cold ? '<p class="hNote">Stays on this computer. Nothing uploads.</p>' : ''}
     ${!localfs.available() ? '<p class="hNote">Read-only in this browser: track your collection here, syncing needs Chrome or Edge.</p>' : ''}
-  </div></div>`;
+  </div>
+  <button type="button" class="advToggle heroHelp" id="heroHelp">${icon('info')}NEED HELP?</button>
+  </div>`;
 
   els.hero.querySelector('#heroSlot1').append(els.folderChip);
   if (ble) els.hero.querySelector('#heroSlot2').append(els.deviceChip);
@@ -691,6 +714,12 @@ function renderHero() {
   for (const b of els.hero.querySelectorAll('button[data-filter]')) {
     b.addEventListener('click', () => setFilter(b.dataset.filter === currentFilter() ? 'all' : b.dataset.filter));
   }
+
+  // Replays the tour on demand, whether or not it has been seen before.
+  els.hero.querySelector('#heroHelp').addEventListener('click', async () => {
+    const tour = await import('./tutorial.js');
+    tour.start('collection');
+  });
 
   import('./sprite.js').then(({ pirateMark, FINISHES, DEFAULT_FINISH }) => {
     let finish = DEFAULT_FINISH;
@@ -1127,6 +1156,9 @@ document.addEventListener('keydown', (e) => {
 const spPbar = progressCtl(els.spPbar);
 let spPlan = null;
 let spState = null;
+// Bytes for anything unpacked from an all-in-one file: those entries have no
+// file on disk for the executor to read.
+let spSources = null;
 let spStop = false;
 
 function refreshSyncButton() {
@@ -1205,6 +1237,7 @@ els.syncBtn.addEventListener('click', async () => {
     });
     spPlan = res.plan;
     spState = res.state;
+    spSources = res.bundle?.sources ?? null;
     say('');
     renderPanelReview(spPlan);
   } catch (err) {
@@ -1224,6 +1257,7 @@ async function runPanelApply() {
   const uploadedIds = new Set(spPlan.upload.map((u) => u.amiiboId).filter(Boolean));
   const result = await applyThePlan({
     client, rootHandle, deviceRoot: spPlan.deviceRoot, state: spState, plan: spPlan,
+    sources: spSources,
     shouldStop: () => spStop,
     on: {
       op: (label, i, total, t0) => {
@@ -1315,7 +1349,7 @@ async function runSelection(direction) {
     return;
   }
   try {
-    const { plan: selPlan, state: selState } = await planSelection({
+    const { plan: selPlan, state: selState, sources: selSources } = await planSelection({
       client, rootHandle, deviceRoot: devRoot, direction, ids: eligible,
       deviceIndex,
       on: { status: (t) => say(t), log: () => {} },
@@ -1327,6 +1361,7 @@ async function runSelection(direction) {
     }
     spPlan = selPlan;
     spState = selState;
+    spSources = selSources ?? null;
     setSelecting(false);
     renderPanelReview(selPlan);
   } catch (err) {
@@ -1497,6 +1532,16 @@ addEventListener('pagehide', () => {
   try { sessionStorage.setItem(SCROLL_KEY, String(scrollY)); } catch {}
 });
 
+// Loaded on demand — a returning visitor never pays for the tour.
+async function offerTour(page) {
+  try {
+    const tour = await import('./tutorial.js');
+    tour.offer(page);
+  } catch {
+    // A tour that will not load is not worth a visible error.
+  }
+}
+
 // ---- boot ------------------------------------------------------------------------------
 
 (async function boot() {
@@ -1553,6 +1598,10 @@ addEventListener('pagehide', () => {
   } else if (restored) {
     await scanFolder();
   }
+
+  // First visit only. Offered after the folder scan so the tour describes the
+  // page the visitor is actually looking at rather than an empty one.
+  offerTour('collection');
 })();
 
 export { describeAmiibo };

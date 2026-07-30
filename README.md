@@ -163,6 +163,8 @@ three steps (connect, choose, review) and offers all five operations:
 | **MATCH** | both | no | amiibo identity | Advanced |
 | **REPLACE** | local → device | **yes** | path | Advanced |
 | **CHECK** | read-only report | no | file content | Advanced |
+| **PACK FOLDER** | local → one file | no | amiibo identity | Advanced |
+| **PACK DEVICE** | device → one file | no | amiibo identity | Advanced |
 
 Options live inside the operation they belong to and are remembered per
 operation:
@@ -201,6 +203,11 @@ operation:
   filed completely differently: zero shared paths, yet every amiibo matched,
   and the only genuine differences surfaced as variants.
 
+- **PACK FOLDER** and **PACK DEVICE** write a library out as a single
+  all-in-one `.bin` (see below). They read one side and hand back a file, so
+  neither has a plan to apply. `PACK FOLDER` needs no device and `PACK DEVICE`
+  needs no folder, and the button is enabled accordingly.
+
 **Every operation is a dry run until you press APPLY.** The review shows
 summary tiles, warnings in plain language, a capacity meter, and per-action
 file lists; deletions ask again. The **RUN LOG** drawer (Advanced) keeps the
@@ -232,6 +239,16 @@ original pirate mascot in twelve colourways live under Settings; the
 default mode stays lean, Advanced reveals the expert operations and details.
 Settings also holds the **COLLECTION** toggle for the fan-made HHD card set,
 on by default and switched off by official-only collectors.
+
+A **guided tour** runs once on a first visit to the Collection and to Advanced
+sync: a spotlight over one control at a time, ending on the HOW TO page. It is
+remembered as soon as it is closed, however it is closed (finished, skipped,
+Escape, or a click outside), and after that only replays on request from
+**NEED HELP?**, in the corner of the sources card on the Collection and at the
+end of the connect row on Advanced sync. Steps whose target is hidden
+are skipped rather than shown pointing at nothing, which matters because half
+the controls live behind Advanced and the review panels do not exist until a
+scan has run.
 
 If you are curious how the look was chosen,
 [`web/design-lab.html`](web/design-lab.html) is the actual moodboard used to
@@ -287,6 +304,131 @@ and vendored; nothing is fetched at runtime:
 every added, renamed or removed entry, so a bad upstream edit can't slip
 into a commit unreviewed, and fetches artwork for anything new.
 
+### Naming a file for an amiibo
+
+Sync normally moves files whose names you chose, and folder names are never
+used for identity. But an amiibo can arrive with no file of its own, as a
+member of an all-in-one bundle, and then a path has to be invented. Where it
+goes is decided at generation time rather than at sync time, in three extra
+tables the generator emits:
+
+| Table | Holds | Rows |
+|---|---|---|
+| `AMIIBO_SERIES_SHORT` | series byte → short folder token | 31 |
+| `AMIIBO_FILE_NAMES` | ID → filename unique within its series | 21 |
+| `AMIIBO_SHORT_NAMES` | ID → abbreviated filename | 46 |
+
+The last two carry only the rows that differ from `AMIIBO_NAMES`, so 21 and 46
+rather than 946 apiece.
+
+Deciding it at build time is what makes it checkable. **The generator exits
+non-zero and writes nothing if any `(series, filename)` pair is not unique.**
+A silent fallback here would surface much later as two amiibos overwriting each
+other on a device. `test/db.test.mjs` asserts the same invariants against the
+committed file, since the header forbids hand edits but cannot prevent them.
+
+Raw database names collide 13 times, and every clash has something real to name
+it by, so none of them need a bare counter:
+
+| What differs | Rule | Example | Count |
+|---|---|---|---|
+| figure type | append the type | `Luke (Card)` | 3 |
+| character variant | append the variant | `Palico v2` | 2 |
+| model number only | append the model | `Terry 04e8` | 8 |
+
+The eight model-only pairs are two printings of one Street Fighter 6 card that
+differ in nothing else. The 91 Happy Home Designer cards share a single ID, so
+they are filed by UID instead (`AC/HHD 04ab17fc2e4080.bin`).
+
+`AMIIBO_SERIES_SHORT` holds initials (`Mario Sports Superstars` → `MSS`,
+`Street Fighter 6` → `SF6`), falling back to the full label where initials
+would be useless or already taken. **These are stable**: a token already
+committed is never re-derived, because changing one renames a folder on every
+synced device and the next sync then moves everything inside it. The generator
+reads what is already there and mints tokens only for new series, and
+`npm run update-db` reports any change to one as loudly as it reports a removal.
+
+Paths are then assembled by `amiiboRelPath` (in `planner.js`, next to
+`checkDestination`), which shortens in steps until the path fits the device's
+63-byte limit: full series label, then its initials, then the abbreviated name,
+then the ID as a last resort. It measures against the real device root, because
+how much shortening is needed depends on the root's depth. Measured over all 946
+entries:
+
+| Device root | Full label | Initials | Abbreviated | ID | Collisions |
+|---|---|---|---|---|---|
+| `E:/amiibo` | 937 | 9 | 0 | 0 | 0 |
+| `E:/amiibo/library` | 878 | 68 | 0 | 0 | 0 |
+| `E:/a/very/deep/nested/root` | 577 | 357 | 6 | 6 | 0 |
+
+The last two rungs are never reached in normal use and stay as a guard. The ID
+fallback replaced an earlier truncating version, which produced a collision at a
+deep root: two amiibos trimmed to the same prefix would have overwritten each
+other, and an ugly filename is much better than a silent loss.
+
+## All-in-one bundles
+
+Some tools distribute a whole amiibo library as a **single `.bin`**. The
+container is as simple as it gets: a flat run of fixed-size records, no header,
+no index, no name table, no checksum, no version field.
+
+```
+record[0x000 .. 0x21B]   540 bytes  NTAG215 image (pages 0..134)
+record[0x21C .. 0x23B]    32 bytes  0xFF padding
+                         572 bytes  total, repeated to end of file
+```
+
+572 is already a size the firmware recognises (`DUMP_SIZES` calls it Thenaya),
+so every record is an ordinary dump and `parseAmiiboId` reads its ID at byte 84
+unchanged. Reverse engineered from two real bundles, 949 records in total:
+
+- every record passes the NTAG structural checks (`0xA5` magic, capability
+  container `F1 10 FF EE`, both UID check bytes);
+- the padding is 32 × `0xFF` in all 949, with no other variant;
+- a 943-record bundle was sorted ascending by amiibo ID from record 1 on, with
+  one late arrival prepended out of order, so ordering is a convention rather
+  than something to rely on;
+- 942 of those 943 were 532-byte dumps zero-extended to 540 (password and PACK
+  zeroed, dynamic lock `0F BD`). Harmless: 2044 of 2084 dumps in one real
+  library have the same zeroed tail, and the firmware never reads it.
+
+A bundle in your sync folder is detected during the normal scan, unpacked in
+memory (943 × 540 bytes is about 509 kB, so there is nothing to stream) and its
+amiibos planned individually. **The container itself is excluded from every
+plan.** Before this existed the planner treated it as an ordinary foreign file
+and would have pushed half a megabyte to a device that cannot read it, about
+four and a half minutes at 2 kB/s.
+
+Detection is deliberately strict, because mistaking a real dump for a bundle
+would replace one amiibo with a phantom library: the length must divide evenly,
+there must be at least two records, every record must pass the structural
+checks, and at least 90% must name an amiibo in the database. Record sizes are
+not coprime (77,220 bytes divides by both 540 and 572), so when more than one
+reading fits, the one recognising more amiibos wins.
+
+**Only what is missing transfers.** A record is dropped when you already hold
+that amiibo locally, when the device already has it, when an earlier bundle in
+the same folder offered it, or when it duplicates an earlier record, either
+byte-identically or as a second tag of the same character. That check lives in
+`bundlesource.js` rather than in the planner on purpose: `planIdentitySync` keys
+identity on content hash as well as ID, deliberately, so that the 91 item cards
+and the four vehicle pairings stay distinct. Bundle dumps carry freshly
+generated UIDs (not one of 943 records matched any of 2084 local dumps
+byte-for-byte), so left to the planner every member would read as a new item and
+duplicate something already on the device.
+
+Matching against the device by amiibo rather than by path requires **MATCH**,
+which reads every device file. A plain **SYNC** compares paths only, and the
+scan says which of the two it did rather than implying the check was thorough.
+
+**What a bundle cannot carry.** A record holds 540 bytes. Kirby Air Riders
+amiibo are 2048-byte NTAG I2C 2K dumps whose vehicle lives at byte 979, well
+past the end of a record, so all four vehicle pairings for a character collapse
+into one vehicle-less entry. The bundles' Air Riders records are re-generated
+NTAG215 tags with UIDs unrelated to the real figures. **A 2048-byte local dump
+is strictly better than any bundle copy of the same amiibo**, which is why one
+is never dropped in favour of a bundle's version.
+
 **Artwork** (`npm run fetch-images`) downloads official artwork from
 AmiiboAPI into three tiers: 96 px thumbnails, 256 px for Retina-sharp lists,
 and full-size for the detail page, plus the four Air Riders vehicle renders
@@ -336,7 +478,7 @@ real work.
 npm test
 ```
 
-176 tests, no hardware needed:
+225 tests, no hardware needed:
 
 - `protocol.test.mjs`: against a simulated device: framing,
   multi-notification reassembly, command serialisation, chunked writes,
@@ -358,6 +500,18 @@ npm test
   colourways stay sound.
 - `prefs.test.mjs`: preference storage, defaults, and the one-shot legacy
   migration.
+- `bundle.test.mjs`: the all-in-one format. Detection accepts a real bundle and
+  rejects a single dump, a wrong length, and right-length noise; pack and split
+  round-trip byte for byte; path assignment stays unique and inside the device's
+  limits across all 946 entries at several device roots; unpacking drops what you
+  already hold, collapses duplicates, keeps the 91 UID-keyed cards apart, and
+  never steals a path a real file occupies. Everything is asserted against
+  synthetic bundles built to the spec, since `amiibos/` is not committed; the two
+  real samples are checked behind an `existsSync` guard.
+- `db.test.mjs`: invariants of the generated database, enforced on the committed
+  file as well as at generation: every `(series, filename)` pair unique, short
+  tokens present and unique, the delta tables carrying only real deltas, and no
+  filename over the device's 47-byte limit.
 
 ## Layout
 
@@ -394,7 +548,9 @@ web/js/amiibo.js          amiibo ID parsing, series/type/faces, collection model
 web/js/bytes.js           little-endian codecs, string and metadata TLV
 web/js/ble.js             Web Bluetooth transport (Nordic UART Service)
 web/js/protocol.js        framing, reassembly, command queue, VFS commands
-web/js/planner.js         reconciliation logic (pure, no I/O)
+web/js/planner.js         reconciliation logic + path assignment (pure, no I/O)
+web/js/bundle.js          all-in-one bundle format: detect, split, pack
+web/js/bundlesource.js    unpack a bundle into the local index, gap-fill dedupe
 web/js/localfs.js         local folder access, hashing, sync state
 web/js/syncflow.js        the sync engine both surfaces share (scan/plan/apply)
 web/js/devicepicker.js    folder browser for the device side
@@ -412,6 +568,7 @@ web/js/version.js         build id shown in the footer ('dev' in the repo,
                           stamped with the commit at deploy time)
 web/js/icons.js           8-bit UI icons (Pixelarticons, inlined)
 web/js/sprite.js          the pirate mascot as pixel-map -> SVG
+web/js/tutorial.js        the guided tour: spotlight overlay + per-page steps
 web/js/probe.js           read-only probe logic
 web/js/writetest.js       write-test logic
 
@@ -419,7 +576,7 @@ tools/build-amiibo-db.mjs regenerate the database from source files
 tools/update-db.mjs        fetch upstream sources + regenerate + report the diff
 tools/fetch-amiibo-images.mjs  download artwork, build the three tiers
 
-test/                     seven files, see Tests above
+test/                     nine files, see Tests above
 ```
 
 ## Hosting

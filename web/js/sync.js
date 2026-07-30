@@ -110,6 +110,10 @@ export async function verifyDeviceHashes(client, deviceRoot, relPaths, { onProgr
  * @param {object} ctx.state          mutated and persisted as work completes
  * @param {Array}  ctx.ops            from flattenPlan()
  * @param {object} [ctx.callbacks]    {onOp, onProgress, onError, shouldStop}
+ * @param {Function} [ctx.readFile]   async (relPath) => Uint8Array, for uploads.
+ *   Defaults to reading the sync folder. Overridden when some of what is being
+ *   uploaded has no file behind it — the members of an all-in-one bundle live
+ *   in memory, not on disk.
  */
 export async function applyPlan({
   client,
@@ -118,6 +122,7 @@ export async function applyPlan({
   state,
   ops,
   callbacks = {},
+  readFile = (relPath) => readLocalFile(rootHandle, relPath),
 }) {
   const { onOp = () => {}, onProgress = () => {}, onError = () => {}, shouldStop = () => false } = callbacks;
 
@@ -195,7 +200,7 @@ export async function applyPlan({
         return;
 
       case 'upload': {
-        const bytes = await readLocalFile(rootHandle, op.relPath);
+        const bytes = await readFile(op.relPath);
         await client.writeFile(full(op.relPath), bytes, (written, total) =>
           onProgress(op.relPath, written, total)
         );

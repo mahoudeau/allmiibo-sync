@@ -17,6 +17,7 @@
 //     validated up front and reported rather than failing mid-transfer.
 
 import { MAX_PATH_BYTES, MAX_NAME_BYTES } from './protocol.js';
+import { seriesFolder, amiiboFileName, isHhdItemCards } from './amiibo.js';
 
 const encoder = new TextEncoder();
 
@@ -91,6 +92,69 @@ export function sanitizeLocalName(name) {
 export function sanitizeLocalRelPath(relPath) {
   return relPath.split('/').map(sanitizeLocalName).join('/');
 }
+
+// ---- choosing a path for an amiibo that has no home yet ------------------
+//
+// Everything else here reconciles paths the user already chose. This picks one,
+// which is what an all-in-one bundle needs: its members arrive as bare dumps
+// with no filenames at all.
+//
+// How much room there is depends on the device root, so the fit is measured
+// rather than assumed, and the name is shortened in steps until it passes
+// checkDestination. Measured over all 946 database entries, the series
+// initialism alone is enough — at "E:/amiibo" only 9 of them need even that,
+// and the last two rungs are never reached. They stay in because a future
+// series label could be long enough to need them.
+
+/**
+ * A device-relative path for an amiibo ID, or null if no form of the name fits
+ * under `deviceRoot`.
+ *
+ * @param {string} id          16-char amiibo ID
+ * @param {string} deviceRoot  e.g. "E:/amiibo"
+ * @param {string} [uid]       NFC UID, needed only for the Happy Home Designer
+ *   cards, which all carry one fabricated ID and would otherwise collide
+ */
+export function amiiboRelPath(id, { deviceRoot, uid = null }) {
+  const series = parseInt(id.slice(12, 14), 16);
+
+  // All 91 HHD item cards share one amiibo ID, so the ID cannot name them —
+  // asking it to would file 91 cards at one path and keep the last. The UID is
+  // what tells them apart, and it is what the collection page already keys them
+  // by; the pretty card number is a display concern, resolved from
+  // data/hhd-cards.js at render time, so it does not belong in a filename.
+  if (isHhdItemCards(id) && uid) {
+    const folder = sanitizeLocalName(seriesFolder(series, { short: true }));
+    return fits(deviceRoot, `${folder}/HHD ${uid}.bin`) ?? fits(deviceRoot, `HHD ${uid}.bin`);
+  }
+
+  const full = amiiboFileName(id);
+  // An ID the database has never seen still needs somewhere to go, and the ID
+  // is the one name certain to be unique.
+  if (!full) return fits(deviceRoot, `Unknown/${id}.bin`);
+
+  const abbreviated = amiiboFileName(id, { short: true });
+  const long = seriesFolder(series);
+  const short = seriesFolder(series, { short: true });
+
+  for (const [folder, name] of [
+    [long, full],
+    [short, full],
+    [short, abbreviated],
+  ]) {
+    const relPath = fits(deviceRoot, `${sanitizeLocalName(folder)}/${sanitizeLocalName(name)}.bin`);
+    if (relPath) return relPath;
+  }
+
+  // No form of the name fits. Fall back to the ID rather than a truncated
+  // name: two amiibos trimmed to the same prefix would overwrite each other on
+  // the device, and a silent collision is far worse than an ugly filename. The
+  // collection list labels dumps from the database anyway, so this shows up as
+  // the right name in the UI regardless.
+  return fits(deviceRoot, `${sanitizeLocalName(short)}/${id}.bin`) ?? fits(deviceRoot, `${id}.bin`);
+}
+
+const fits = (deviceRoot, relPath) => (checkDestination(deviceRoot, relPath) ? null : relPath);
 
 // A file costs far more than its bytes, and the margin matters: a replace
 // planned on raw content bytes looked like it fit in 963 kB of free space and
@@ -294,6 +358,15 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
     // ---- local only ------------------------------------------------------
     if (l && !d) {
       const deletedOnDevice = !!s; // we synced it before, so the device lost it
+
+      // A virtual entry has no file behind it — it is a dump held in memory,
+      // unpacked from an all-in-one bundle. There is nothing on disk to delete,
+      // and asking would fail the operation, so leave it out of the mirror
+      // entirely: dropping it from the bundle is the user's job, not sync's.
+      if (l.virtual && (mode === 'pull' || (mode === 'two-way' && deletedOnDevice))) {
+        plan.unchanged.push(relPath);
+        continue;
+      }
 
       // pull mirrors in the other direction: the device is master.
       if (mode === 'pull') {

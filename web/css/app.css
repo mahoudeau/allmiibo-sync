@@ -500,6 +500,58 @@ dialog.nesDialog::backdrop { animation: fadeIn .1s steps(2, end); }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
 @keyframes fadeIn { from { opacity: 0; } }
 
+
+/* ---- guided tour ---------------------------------------------------------
+   A spotlight over one control with a bubble beside it. The veil is a single
+   element with a huge spread shadow rather than four panels, which keeps the
+   hole exactly on the target with nothing to keep in sync. */
+.tour { position: fixed; inset: 0; z-index: 60; }
+:root.tourOn { overflow: hidden; }
+
+.tour .tourVeil { position: absolute; inset: 0; cursor: pointer; }
+
+.tour .tourSpot {
+  position: fixed; pointer-events: none;
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, .72);
+  transition: top .12s steps(3, end), left .12s steps(3, end),
+              width .12s steps(3, end), height .12s steps(3, end);
+}
+
+/* Nothing is drawn until the first step has been measured and placed: an
+   absolutely positioned element with no coordinates yet sits at the document
+   origin, which showed up as a flash in the top-left corner. */
+.tour:not(.ready) .tourSpot,
+.tour:not(.ready) .tourBubble { visibility: hidden; }
+.tour:not(.ready) .tourSpot { transition: none; }
+
+.tour .tourBubble {
+  position: fixed; max-width: min(26rem, calc(100vw - 1.5rem));
+  border: 2px solid var(--border); background: var(--panel); color: var(--fg);
+  box-shadow: 4px 4px 0 var(--shadow); padding: .85rem .9rem;
+  animation: rise .14s steps(3, end);
+}
+.tour .tourBubble h2 { font-size: .95rem; margin: .15rem 0 .4rem; }
+.tour .tourBubble p { margin: 0 0 .7rem; font-size: .82rem; line-height: 1.5; color: var(--fg); }
+.tour .tourStep { font-size: .7rem; color: var(--muted); letter-spacing: .06em; }
+
+.tour .tourRow { display: flex; align-items: center; gap: .4rem; }
+.tour .tourRow .tourDots { display: flex; gap: .25rem; margin-right: auto; }
+.tour .tourDot { width: 6px; height: 6px; background: var(--border); }
+.tour .tourDot.on { background: var(--accent); }
+/* An ordinary button like BACK, only muted. Stripping the border while leaving
+   the base rule's drop shadow in place read as a broken edge. */
+.tour .tourSkip { margin-right: auto; color: var(--muted); }
+.tour .tourSkip:hover { color: var(--fg); }
+.tour .tourNext { background: var(--accent); border-color: var(--shadow); color: #fff;
+  display: inline-flex; align-items: center; gap: .3rem; }
+.tour .tourNext svg, .tour .tourSkip svg { width: .9em; height: .9em; }
+
+@media (max-width: 30rem) {
+  .tour .tourBubble { left: .75rem !important; right: .75rem; max-width: none; }
+  .tour .tourRow .tourDots { display: none; }
+}
+
 /* Reduced motion: kill everything */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

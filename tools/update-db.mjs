@@ -36,17 +36,41 @@ const SOURCES = {
 
 const skipImages = process.argv.includes('--no-images');
 
-function parseDb(text) {
-  const names = new Map();
+// One `export const NAME = Object.freeze({...})` block, or '' if absent.
+function block(text, name) {
+  return text.split(`${name} = Object.freeze({`)[1]?.split('});')[0] ?? '';
+}
+
+function parseIds(text) {
+  const out = new Map();
   for (const m of text.matchAll(/'([0-9a-f]{16})': ("(?:[^"\\]|\\.)*")/g)) {
-    names.set(m[1], JSON.parse(m[2]));
+    out.set(m[1], JSON.parse(m[2]));
   }
-  return names;
+  return out;
+}
+
+function parseBytes(text) {
+  const out = new Map();
+  for (const m of text.matchAll(/(\d+): ("(?:[^"\\]|\\.)*")/g)) out.set(m[1], JSON.parse(m[2]));
+  return out;
+}
+
+// Everything that decides where an amiibo lands on a device. Tracked separately
+// from the names because a change here means device-side renames, not just a
+// different label in the UI.
+function parseNaming(text) {
+  return {
+    short: parseBytes(block(text, 'AMIIBO_SERIES_SHORT')),
+    files: parseIds(block(text, 'AMIIBO_FILE_NAMES')),
+    abbrev: parseIds(block(text, 'AMIIBO_SHORT_NAMES')),
+  };
 }
 
 // ---- snapshot what we have, fetch sources, regenerate ---------------------
 
-const before = parseDb(await readFile(DB_FILE, 'utf8'));
+const beforeText = await readFile(DB_FILE, 'utf8');
+const before = parseIds(block(beforeText, 'AMIIBO_NAMES'));
+const beforeNaming = parseNaming(beforeText);
 console.log(`current database: ${before.size} entries`);
 
 await mkdir(CACHE, { recursive: true });
@@ -65,7 +89,9 @@ await run('node', [
 
 // ---- report the difference -------------------------------------------------
 
-const after = parseDb(await readFile(DB_FILE, 'utf8'));
+const afterText = await readFile(DB_FILE, 'utf8');
+const after = parseIds(block(afterText, 'AMIIBO_NAMES'));
+const afterNaming = parseNaming(afterText);
 const added = [...after].filter(([id]) => !before.has(id));
 const removed = [...before].filter(([id]) => !after.has(id));
 const renamed = [...after].filter(([id, name]) => before.has(id) && before.get(id) !== name);
@@ -84,6 +110,42 @@ if (removed.length) {
   for (const [id, name] of removed) console.log(`  ${id}  ${name}`);
 }
 if (!added.length && !removed.length && !renamed.length) console.log('no changes');
+
+// ---- naming: where these amiibos will land on a device ---------------------
+//
+// A new short token or filename is routine. A *changed* one is not: it renames a
+// folder or a file on the device, and the next sync then moves everything inside
+// it. So changes are reported as loudly as a removal.
+
+const naming = [
+  ['series folder', beforeNaming.short, afterNaming.short],
+  ['filename', beforeNaming.files, afterNaming.files],
+  ['abbreviated name', beforeNaming.abbrev, afterNaming.abbrev],
+];
+
+const churn = [];
+for (const [label, was, now] of naming) {
+  const fresh = [...now].filter(([k]) => !was.has(k));
+  const gone = [...was].filter(([k]) => !now.has(k));
+  const changed = [...now].filter(([k, v]) => was.has(k) && was.get(k) !== v);
+
+  if (fresh.length) {
+    console.log(`\nnew ${label}s (${fresh.length}):`);
+    for (const [k, v] of fresh) console.log(`  ${k}  ${v}`);
+  }
+  for (const [k, v] of changed) churn.push(`${label} ${k}: ${was.get(k)} -> ${v}`);
+  for (const [k, v] of gone) churn.push(`${label} ${k}: ${v} -> (dropped, back to the display name)`);
+}
+
+if (churn.length) {
+  console.log(
+    `\nNAMING CHANGED (${churn.length}) — each of these renames a folder or file on every ` +
+      'device already synced, and the next sync will move its contents. Review before committing:'
+  );
+  for (const c of churn) console.log(`  ${c}`);
+} else {
+  console.log('\nnaming: unchanged (no device-side renames)');
+}
 
 // ---- artwork for anything new ----------------------------------------------
 
