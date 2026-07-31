@@ -1,0 +1,128 @@
+/* The collection grid: series groups, item cells, and the cards/list layouts.
+ *
+ * Lifted out of collection.html's inline <style> so the admin can draw the same
+ * grid rather than a second list styled separately. collectiongrid.js builds
+ * this markup for both pages; this is what it looks like.
+ *
+ * The rules are deliberately unqualified by page — .item and .series carry
+ * their own look wherever they appear — so a page only has to link this file
+ * and put a container on screen. Anything genuinely particular to one page
+ * (selection mode, the victory overlay, the sync panel) stays with that page.
+ *
+ * Depends on app.css for the custom properties and the pixel font.
+ */
+
+/* ---- the toolbar above the grid ----------------------------------------- */
+
+/* Search, filter pills, sort and the cards/list toggle in one row. Lived
+   inline in collection.html, which is why the admin rendered a .toolbar that no
+   rule matched: no gap, no bottom margin, and every control at its own height.
+   `--ctl-h` is what equalises them, and it is the whole point of the block. */
+.toolbar { display:flex; flex-wrap:wrap; gap:.6rem .7rem; align-items:center; margin-bottom:1rem;
+           --ctl-h: 2.4rem; }
+/* One height for every control in the row. .moreMenu is a collection-page
+   control and is styled there; naming it here is inert on a page without one. */
+.toolbar .searchBox, .toolbar select, .toolbar .segCtl, .toolbar .pill,
+.toolbar button, .toolbar .moreMenu > summary { height:var(--ctl-h); box-sizing:border-box; }
+.toolbar .searchBox input { padding:0 .1rem; }
+.toolbar .pill { display:inline-flex; align-items:center; }
+.toolbar .segCtl label { padding:0 .8rem; display:inline-flex; align-items:center; }
+.toolbar .moreMenu > summary { display:inline-flex; align-items:center; }
+.toolbar select { font:inherit; padding:0 .5rem; border:2px solid var(--border);
+                  background:var(--bg); color:var(--fg); }
+
+/* ---- series groups ------------------------------------------------------ */
+
+details.series { border:2px solid var(--border); margin-bottom:.5rem; background:var(--panel);
+  content-visibility:auto; contain-intrinsic-size:auto 340px; }
+details.series > summary { cursor:pointer; padding:.55rem .8rem; font-weight:600;
+  display:flex; gap:.6rem; align-items:center; list-style:none; }
+details.series > summary::-webkit-details-marker { display:none; }
+.seriesHead { display:flex; align-items:center; gap:.6rem; min-width:0; }
+.seriesArt { width:28px; height:28px; object-fit:contain; flex:none; }
+.seriesHead .year { color:var(--muted); font-weight:400; font-size:.78rem; }
+
+/* One pill tells the whole series story. On the collection page that is
+   owned/known coloured by completion, a bluetooth glyph when device data
+   exists, and deltas — ▲ to send, ▼ to download; solid green means complete
+   AND fully synced. In the admin it is how much of the series has been
+   curated. The colours mean the same thing either way: grey none, amber some,
+   green all. */
+.sPill { display:inline-flex; align-items:center; gap:.4rem; flex:none;
+  font-variant-numeric:tabular-nums; font-size:.82rem; font-weight:400;
+  padding:.15rem .5rem; border:2px solid var(--border); color:var(--muted); }
+.sPill .ico { width:.95rem; height:.95rem; }
+.sPill.full { border-color:var(--ok); color:var(--ok); }
+.sPill.done { background:var(--ok); border-color:var(--ok); color:#10160e; }
+.sPill.part { border-color:var(--warn); color:var(--warn); }
+.sPill .delta { font-size:.72rem; color:var(--warn); display:inline-flex; gap:.1rem; }
+.sPill.done .delta, .sPill.done .extra { color:inherit; }
+.sPill .extra { font-size:.72rem; color:var(--warn); display:inline-flex;
+  align-items:center; gap:.15rem; }
+summary .grow { margin-left:auto; }
+summary .chev { display:inline-flex; color:var(--muted); flex:none; }
+details[open] > summary .chev { transform:rotate(90deg); }
+
+.items { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(24rem,100%),1fr));
+         gap:.3rem .75rem; padding:.5rem .8rem .8rem; align-items:start;
+         contain:layout paint; }
+.subHead { grid-column:1 / -1; font-family:var(--pixel); font-size:.5rem;
+           color:var(--muted); padding:.5rem 0 .15rem; }
+
+/* ---- item cell, list ---------------------------------------------------- */
+
+.item { display:flex; align-items:center; gap:.5rem; padding:.3rem .4rem;
+        font-size:.88rem; border:2px solid transparent; color:inherit; text-decoration:none; }
+.item:hover { border-color:var(--accent); }
+.item.missing { opacity:.6; }
+.item .fname { font:11px/1.2 var(--mono); color:var(--muted); display:block;
+               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.item .nmWrap { flex:1; min-width:0; }
+.item .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; }
+.item .nm.guessName { font-style:italic; }
+
+/* A cell is an <a> on the collection page and a <button> in the admin, which
+   navigates nowhere and must not lose unsaved edits. The global button rule in
+   app.css would otherwise give every card the pixel font, a 2.4rem floor and a
+   second drop shadow, so it is undone here rather than in the admin's own
+   stylesheet — the grid should look the same wherever it is drawn. */
+button.item { font:inherit; text-align:inherit; min-height:0; padding:.3rem .4rem;
+              box-shadow:none; background:none; cursor:pointer; }
+button.item:active { transform:none; box-shadow:none; }
+
+.art { width:34px; height:34px; flex:none; display:flex; align-items:center; justify-content:center;
+       background:var(--bg); border:2px solid var(--border); position:relative; overflow:hidden; }
+.art::before { content:attr(data-initial); color:var(--muted); font-size:.75rem;
+               font-weight:600; position:absolute; }
+.art img { position:relative; max-width:100%; max-height:100%; object-fit:contain; background:var(--bg); }
+.art svg { width:100%; height:100%; image-rendering:pixelated; }
+.item.missing .art img { filter:grayscale(1); opacity:.5; }
+
+.devIco { color:var(--accent2); flex:none; display:inline-flex; }
+.devIco .ico { width:.95rem; height:.95rem; }
+.tag { font-size:.7rem; padding:.05rem .3rem; border:1px solid var(--border); color:var(--muted); flex:none; }
+.tag.new { border-color:var(--warn); color:var(--warn); }
+.vPill { display:inline-flex; align-items:center; gap:.25rem;
+         font-size:.68rem; padding:.05rem .35rem; border:1px solid var(--border);
+         color:var(--muted); flex:none; font-variant-numeric:tabular-nums; }
+.vPill.some { border-color:var(--ok); color:var(--ok); }
+.vPill .ico { width:.8rem; height:.8rem; }
+
+/* ---- item cell, cards --------------------------------------------------- */
+
+.cards .items { grid-template-columns:repeat(auto-fill,minmax(8.5rem,1fr)); gap:.6rem; }
+.cards .item { flex-direction:column; text-align:center; gap:.35rem; padding:.7rem .4rem .55rem;
+               border-color:var(--border); background:var(--bg); position:relative; }
+.cards .item .art { width:88px; height:88px; }
+.cards .item .art::before { font-size:1.4rem; }
+.cards .item .nmWrap { flex:none; width:100%; }
+.cards .item .nm { white-space:normal; font-size:.8rem; line-height:1.25; }
+.cards .item .fname { display:none; }
+.cards .item .devIco { position:absolute; top:.35rem; right:.35rem; }
+.cards .item .tag, .cards .item .vPill { font-size:.62rem; }
+
+/* Micro-animation, moved with the grid it belongs to. */
+.cards .item { transition: transform .08s steps(2, end), border-color .1s; }
+.cards .item:hover { transform: translate(-3px, -3px);
+  box-shadow: 3px 3px 0 var(--shadow); border-color: var(--accent); }
+details.series[open] > .items { animation: rise .14s steps(3, end); }

@@ -20,6 +20,7 @@
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="./css/app.css">
+<link rel="stylesheet" href="./css/collection.css">
 <script>
 // First paint honours the stored preferences (header.js manages them after).
 try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
@@ -116,18 +117,7 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
   .syncLine.ok .slTitle { color:var(--ok); }
   .syncLine .slSub { color:var(--muted); font-size:.85rem; }
 
-  /* Toolbar */
-  .toolbar { display:flex; flex-wrap:wrap; gap:.6rem .7rem; align-items:center; margin-bottom:1rem;
-             --ctl-h: 2.4rem; }
-  /* One height for every control in the row. */
-  .toolbar .searchBox, .toolbar select, .toolbar .segCtl, .toolbar .pill,
-  .toolbar button, .toolbar .moreMenu > summary { height:var(--ctl-h); box-sizing:border-box; }
-  .toolbar .searchBox input { padding:0 .1rem; }
-  .toolbar .pill { display:inline-flex; align-items:center; }
-  .toolbar .segCtl label { padding:0 .8rem; display:inline-flex; align-items:center; }
-  .toolbar .moreMenu > summary { display:inline-flex; align-items:center; }
-  .toolbar select { font:inherit; padding:0 .5rem; border:2px solid var(--border);
-                    background:var(--bg); color:var(--fg); }
+  /* .toolbar moved to css/collection.css, shared with the admin. */
   .moreMenu { position:relative; margin-left:auto; }
   .moreMenu > summary { list-style:none; cursor:pointer; border:2px solid var(--border);
     background:var(--panel2); box-shadow:2px 2px 0 var(--shadow); padding:.4rem .55rem;
@@ -141,79 +131,8 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
     background:none; min-height:0; padding:.6rem .8rem; font-size:.5rem; }
   .moreMenu .menu button:hover:not(:disabled) { background:var(--panel2); border:none; }
   .moreMenu .menu button:active { transform:none; }
-
-  /* Series groups */
-  details.series { border:2px solid var(--border); margin-bottom:.5rem; background:var(--panel);
-    content-visibility:auto; contain-intrinsic-size:auto 340px; }
-  details.series > summary { cursor:pointer; padding:.55rem .8rem; font-weight:600;
-    display:flex; gap:.6rem; align-items:center; list-style:none; }
-  details.series > summary::-webkit-details-marker { display:none; }
-  .seriesHead { display:flex; align-items:center; gap:.6rem; min-width:0; }
-  .seriesArt { width:28px; height:28px; object-fit:contain; flex:none; }
-  .seriesHead .year { color:var(--muted); font-weight:400; font-size:.78rem; }
-  /* One pill tells the whole series story: owned/known coloured by
-     completion, a bluetooth glyph when device data exists, and deltas —
-     ▲ to send, ▼ to download. Solid green = complete AND fully synced. */
-  .sPill { display:inline-flex; align-items:center; gap:.4rem; flex:none;
-    font-variant-numeric:tabular-nums; font-size:.82rem; font-weight:400;
-    padding:.15rem .5rem; border:2px solid var(--border); color:var(--muted); }
-  .sPill .ico { width:.95rem; height:.95rem; }
-  .sPill.full { border-color:var(--ok); color:var(--ok); }
-  .sPill.done { background:var(--ok); border-color:var(--ok); color:#10160e; }
-  .sPill.part { border-color:var(--warn); color:var(--warn); }
-  .sPill .delta { font-size:.72rem; color:var(--warn); display:inline-flex; gap:.1rem; }
-  .sPill.done .delta, .sPill.done .extra { color:inherit; }
-  .sPill .extra { font-size:.72rem; color:var(--warn); display:inline-flex;
-    align-items:center; gap:.15rem; }
-  summary .grow { margin-left:auto; }
-  summary .chev { display:inline-flex; color:var(--muted); flex:none; }
-  details[open] > summary .chev { transform:rotate(90deg); }
-
-  .items { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(24rem,100%),1fr));
-           gap:.3rem .75rem; padding:.5rem .8rem .8rem; align-items:start;
-           contain:layout paint; }
-  .subHead { grid-column:1 / -1; font-family:var(--pixel); font-size:.5rem;
-             color:var(--muted); padding:.5rem 0 .15rem; }
-
-  /* Item cell — list */
-  .item { display:flex; align-items:center; gap:.5rem; padding:.3rem .4rem;
-          font-size:.88rem; border:2px solid transparent; color:inherit; text-decoration:none; }
-  .item:hover { border-color:var(--accent); }
-  .item.missing { opacity:.6; }
-  .item .fname { font:11px/1.2 var(--mono); color:var(--muted); display:block;
-                 overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .item .nmWrap { flex:1; min-width:0; }
-  .item .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; }
-  .item .nm.guessName { font-style:italic; }
-  .art { width:34px; height:34px; flex:none; display:flex; align-items:center; justify-content:center;
-         background:var(--bg); border:2px solid var(--border); position:relative; overflow:hidden; }
-  .art::before { content:attr(data-initial); color:var(--muted); font-size:.75rem;
-                 font-weight:600; position:absolute; }
-  .art img { position:relative; max-width:100%; max-height:100%; object-fit:contain; background:var(--bg); }
-  .art svg { width:100%; height:100%; image-rendering:pixelated; }
-  .item.missing .art img { filter:grayscale(1); opacity:.5; }
-  .devIco { color:var(--accent2); flex:none; display:inline-flex; }
-  .devIco .ico { width:.95rem; height:.95rem; }
-  .tag { font-size:.7rem; padding:.05rem .3rem; border:1px solid var(--border); color:var(--muted); flex:none; }
-  .tag.new { border-color:var(--warn); color:var(--warn); }
-  .vPill { font-size:.68rem; padding:.05rem .35rem; border:1px solid var(--border);
-           color:var(--muted); flex:none; font-variant-numeric:tabular-nums; }
-  .vPill.some { border-color:var(--ok); color:var(--ok); }
-  .vPill { display:inline-flex; align-items:center; gap:.25rem; }
-  .vPill .ico { width:.8rem; height:.8rem; }
-
-
-  /* Item cell — cards */
-  .cards .items { grid-template-columns:repeat(auto-fill,minmax(8.5rem,1fr)); gap:.6rem; }
-  .cards .item { flex-direction:column; text-align:center; gap:.35rem; padding:.7rem .4rem .55rem;
-                 border-color:var(--border); background:var(--bg); position:relative; }
-  .cards .item .art { width:88px; height:88px; }
-  .cards .item .art::before { font-size:1.4rem; }
-  .cards .item .nmWrap { flex:none; width:100%; }
-  .cards .item .nm { white-space:normal; font-size:.8rem; line-height:1.25; }
-  .cards .item .fname { display:none; }
-  .cards .item .devIco { position:absolute; top:.35rem; right:.35rem; }
-  .cards .item .tag, .cards .item .vPill { font-size:.62rem; }
+  /* The series grid, the item cells and the cards/list layouts now live in
+     css/collection.css, shared with the admin so both draw the same grid. */
   /* Victory overlay — shown once when folder and device fully match */
   .winOverlay { position:fixed; inset:0; z-index:60; display:grid; place-items:center;
     background:rgb(0 0 0 / .75); cursor:pointer; }

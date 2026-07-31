@@ -8,88 +8,204 @@
      publish this URL in a preview card or an app manifest, and the address is
      meant to stay quiet. Nothing links here either. -->
 <meta name="robots" content="noindex, nofollow, noarchive">
-<link rel="stylesheet" href="./css/app.css">
+<link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="/css/collection.css">
+<link rel="stylesheet" href="/css/amiibodetail.css">
 <script>
 // First paint honours the stored preferences, byte-identical to every other page.
 try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
 </script>
 <style>
-  .adminBar { display:flex; align-items:center; gap:.8rem; flex-wrap:wrap;
-              border-bottom:2px solid var(--border); padding-bottom:.7rem; margin-bottom:1rem; }
-  .adminBar h1 { font-size:.8rem; margin:0; }
-  .adminBar .spacer { margin-left:auto; }
-  .badge { font-family:var(--pixel); font-size:.5rem; padding:.25rem .45rem;
-           border:2px solid var(--border); color:var(--muted); }
-  .badge.dirty { border-color:var(--warn); color:var(--warn); }
-  .badge.saved { border-color:var(--ok); color:var(--ok); }
+  /* The admin borrows the site's skin wholesale: same tokens, same 2px borders,
+     same hard offset shadows, same pixel font for chrome and system stacks for
+     data. Only the layout below is particular to this page. */
 
-  .cols { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.1fr); gap:1rem; align-items:start; }
-  @media (max-width:52rem) { .cols { grid-template-columns:1fr; } }
+  /* The admin is wider than the site: it carries the collection grid AND a
+     side panel, and 60rem would crush the cards. One property, so the bar and
+     the main column cannot drift apart. */
+  :root { --admin-w: 72rem; }
+  .adminBar { max-width: var(--admin-w); margin: 0 auto 1.5rem; }
+  main.wide { max-width: var(--admin-w); }
+  .adminBar .spacer { margin-left: auto; }
 
-  .rowList { border:2px solid var(--border); background:var(--panel);
-             max-height:32rem; overflow:auto; }
-  .aRow { display:flex; align-items:center; gap:.6rem; width:100%; text-align:left;
-          padding:.4rem .6rem; border:0; border-bottom:1px solid var(--border);
-          background:none; color:var(--fg); min-height:0; box-shadow:none;
-          content-visibility:auto; contain-intrinsic-size:0 2.1rem; }
-  .aRow:hover { background:var(--panel2); border-color:var(--border); }
-  .aRow.on { background:var(--panel2); box-shadow:inset 3px 0 0 var(--accent); }
-  .aRow .nm { flex:1; font-size:.85rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .aRow .sr { font-size:.7rem; color:var(--muted); flex:none; }
-  .aRow .mk { font-family:var(--pixel); font-size:.45rem; color:var(--accent); flex:none; }
+  /* Title screen treatment for the login, echoing index.html. The wordmark and
+     the mascot are styled by app.css's .brand — this only changes the scale. */
+  .signIn { max-width: 24rem; margin: 3.5rem auto; text-align: center; }
+  .signIn .brand { flex-direction: column; gap: .8rem; }
+  .signIn .brand .wm { font-size: 1rem; }
+  .signIn .tagline { font-family: var(--pixel); font-size: .5rem; color: var(--muted);
+                     margin: .9rem 0 1.6rem; letter-spacing: .04em; }
+  .signIn .field { text-align: left; }
 
-  .editor { border:2px solid var(--border); background:var(--panel); padding:.9rem 1rem; }
-  .fRow { margin:.7rem 0; }
-  .fRow label { display:block; font-family:var(--pixel); font-size:.5rem;
-                color:var(--muted); margin-bottom:.25rem; }
-  .fRow input { width:100%; font:inherit; padding:.4rem .5rem;
-                border:2px solid var(--border); background:var(--bg); color:var(--fg); }
-  .fRow .was { font-size:.75rem; color:var(--muted); margin-top:.2rem; }
-  .fRow.bad input { border-color:var(--err); }
-  .fRow .why { font-size:.75rem; color:var(--err); margin-top:.2rem; }
-  .loginBox { max-width:22rem; margin:4rem auto; }
+  /* The list is the collection page's own grid: .series, .items, .item and the
+     cards/list toggle all come from app.css, so the two stay identical without
+     a second set of rules here. Only the marks a CMS needs are added. */
+
+  /* A curated or authored entry is called out on its card, the way the
+     collection page calls out a dump it does not recognise. */
+  .item .tag.curated { background: var(--accent); color: #000; }
+  .item .tag.authored { background: var(--warn); color: #000; }
+
+  /* The selected cell. Not an outline: that is the focus ring, and a card that
+     was both focused and selected showed only one thing. This is the site's own
+     selection language — an accent border, plus a marker in cards view where the
+     border alone reads as a hover. */
+  .item[aria-pressed="true"] { border-color: var(--accent); }
+  .cards .item[aria-pressed="true"]::after {
+    content: ''; position: absolute; right: .35rem; bottom: .35rem;
+    width: 6px; height: 6px; background: var(--accent);
+  }
+
+  /* The editor sits beside the grid on a wide screen and above it on a narrow
+     one, where a side panel would leave the cards unreadably thin. */
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 24rem);
+          gap: 1rem; align-items: start; }
+  @media (max-width: 60rem) {
+    .cols { grid-template-columns: 1fr; }
+    .cols .editorCol { order: -1; }
+  }
+  .editorCol { position: sticky; top: 1rem; }
+
+  /* The box comes from .panel in app.css; only the size is particular here. */
+  .editor { padding: 1rem 1.1rem; max-height: calc(100vh - 3rem); overflow: auto; }
+
+  /* The read-only preview: the same panel a visitor sees, at side-panel scale.
+     .detail is a two-column grid above 700px, which is wider than this column
+     ever is, so it is forced back to one. */
+  .preview { margin-bottom: 1rem; padding-bottom: .8rem;
+             border-bottom: 2px solid var(--border); }
+  .preview .detail, .preview .facts { display: block; }
+  .preview .portrait { min-height: 0; padding: .8rem; margin-bottom: .8rem;
+                       box-shadow: none; }
+  .preview .portrait img { max-height: 11rem; }
+  .preview .facts h1 { font-size: 1rem; }
+  .preview .idRow { margin-bottom: 0; }
+
+  /* A pencil beside a previewed value, focusing the field that changes it. */
+  .editPart { min-height: 0; padding: .1rem .25rem; margin-left: .4rem;
+              border: 1px solid var(--border); box-shadow: none;
+              background: none; color: var(--muted); vertical-align: middle; }
+  .editPart:hover { color: var(--fg); border-color: var(--accent); }
+  .editPart:active { transform: none; }
+  .editPart svg { width: .8rem; height: .8rem; display: block; }
+  .editor h2 { margin: 0 0 .2rem; }
+  .editor .eName { font-size: 1rem; color: #fff; margin-bottom: .15rem; }
+  .editor .idLine { font: 12.5px/1.7 var(--mono); color: var(--muted); margin: 0 0 .4rem; }
+
+  /* Form rows. Named .field, not .fRow: that one belongs to the site footer.
+     Everything else about an input already comes from app.css, so this is only
+     the stacked-label layout the site has no pattern for yet. */
+  .field { margin: .8rem 0; }
+  .field label { display: block; margin-bottom: .3rem; }
+  .field input { width: 100%; }
+
+  /* The upstream value, and why an edit is refused. Both in the repo's mono
+     figure, not an ad-hoc size. */
+  .field .was { font: 12.5px/1.7 var(--mono); color: var(--muted); margin-top: .25rem; }
+  .field .why { font: 12.5px/1.7 var(--mono); color: var(--err); margin-top: .25rem; }
+  .field.bad input { border-color: var(--err); }
+  .field.bad label { color: var(--err); }
 </style>
 </head>
 <body>
-<main>
-  <!-- Login. Replaced by the editor once a session exists. -->
-  <section id="login" class="loginBox" hidden>
-    <h1>Admin</h1>
-    <p class="sub">Sign in to edit the library.</p>
-    <div class="fRow">
+<main class="wide">
+  <!-- Sign in. Visible by default and hidden once a session is confirmed.
+       Deliberately not the other way round: if adminui.js fails to load at all,
+       a page whose every panel starts hidden renders as a blank white screen
+       with nothing to explain it. This way a broken script still shows a form,
+       and the notice below says what to check. -->
+  <section id="login" class="signIn">
+    <span class="brand">
+      <span id="loginMark"></span>
+      <span class="wm">ALLMIIBO<span class="sfx">-ADMIN</span></span>
+    </span>
+    <div class="tagline">CURATE THE LIBRARY</div>
+    <div class="field">
       <label for="pw">PASSWORD</label>
       <input id="pw" type="password" autocomplete="current-password">
     </div>
     <button id="signIn" class="primary">SIGN IN</button>
     <div id="loginStatus" class="status" hidden></div>
+    <!-- Shown only if the module never runs, which is the one failure the page
+         cannot report for itself. -->
+    <div id="bootFail" class="note caution" hidden>
+      The admin script did not load. If the server was restarted after an
+      update, reload this page; otherwise check the browser console for a failed
+      import.
+    </div>
   </section>
 
   <div id="app" hidden>
-    <div class="adminBar">
-      <h1>ALLMIIBO ADMIN</h1>
-      <span id="count" class="badge"></span>
-      <span id="state" class="badge">NO CHANGES</span>
-      <span class="spacer"></span>
-      <button id="save" class="primary" disabled>SAVE &amp; PUBLISH</button>
-      <button id="export">EXPORT</button>
-      <button id="signOut">SIGN OUT</button>
+    <!-- The bar is mounted by adminui.js through the same builder the site
+         uses, so the admin gets the theme switcher and the mascot colourway
+         without a second header to keep in step. Its actions live here and are
+         handed to the builder. -->
+    <span id="adminActions" hidden>
+      <button id="save" class="primary" disabled>
+        <span class="ico" data-ico="upload"></span>SAVE &amp; PUBLISH</button>
+      <button id="export"><span class="ico" data-ico="download"></span>EXPORT</button>
+      <button id="signOut"><span class="ico" data-ico="power"></span>SIGN OUT</button>
+    </span>
+
+    <div class="statRow">
+      <div class="statTile"><b id="statTotal">0</b><span class="cap">IN THE DATABASE</span></div>
+      <div class="statTile" id="tileEdited"><b id="statEdited">0</b><span class="cap">CURATED</span></div>
+      <div class="statTile" id="tileState"><b id="statState">SAVED</b><span class="cap">STATUS</span></div>
     </div>
 
     <div id="status" class="status" hidden></div>
 
+    <!-- The collection page's toolbar, element for element, styled by
+         css/collection.css so the two cannot drift apart. -->
+    <div class="toolbar">
+      <div class="searchBox">
+        <span class="ico" data-ico="search"></span>
+        <input id="q" type="search" placeholder="Search name, series or ID…" aria-label="Search name, series or ID">
+        <button class="clear" id="qClear" hidden aria-label="Clear search"></button>
+      </div>
+      <div class="pillRow" id="filters" role="group" aria-label="Filter"></div>
+      <select id="sortMode" aria-label="Sort series">
+        <option value="release">By release</option>
+        <option value="name">By name</option>
+        <option value="completion">By curation</option>
+      </select>
+      <div class="segCtl" id="segView" role="group" aria-label="View">
+        <input type="radio" name="view" id="viewCards" value="cards" checked>
+        <label for="viewCards"><span class="ico" data-ico="cards"></span>CARDS</label>
+        <input type="radio" name="view" id="viewList" value="list">
+        <label for="viewList"><span class="ico" data-ico="list"></span>LIST</label>
+        <span class="thumb" aria-hidden="true"></span>
+      </div>
+    </div>
+
     <div class="cols">
       <div>
-        <div class="searchBox">
-          <input id="q" type="search" placeholder="Search name, series or ID…" aria-label="Search">
-        </div>
-        <div id="rows" class="rowList"></div>
+        <section id="series" class="cards"></section>
+        <div id="emptyState" hidden></div>
       </div>
-      <div id="editor" class="editor">
-        <p class="sub">Pick an amiibo to edit.</p>
+      <div class="editorCol">
+        <div id="editor" class="editor panel">
+          <div class="empty">
+            <div class="eTitle">NOTHING SELECTED</div>
+            <p>Pick an amiibo from the list to edit it.</p>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </main>
+<script>
+// A module that fails to parse or whose imports 404 runs nothing at all, so it
+// cannot report its own failure. This marks the page as booted; if the mark is
+// still missing shortly after load, the notice above is revealed.
+addEventListener('load', () => {
+  setTimeout(() => {
+    if (!document.documentElement.dataset.adminBooted) {
+      document.getElementById('bootFail').hidden = false;
+    }
+  }, 1500);
+});
+</script>
 <script type="module" src="./adminui.js"></script>
 </body>
 </html>

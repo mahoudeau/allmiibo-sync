@@ -18,7 +18,12 @@ import { icon, ICONS } from './icons.js';
 import { confirmDialog } from './dialog.js';
 import { scanAndPlan, applyThePlan, planSelection, hasWork } from './syncflow.js';
 import { expandBundles, hasBundles } from './bundlesource.js';
+import {
+  FILTERS, normaliseFilter, filterCounts, matchesFilter, sortSeries, seriesDate,
+} from './collectionview.js';
+import { buildSeriesGrid, applyGridFilter, reorderGroups } from './collectiongrid.js';
 import { hhdMark } from './sprite.js';
+import { makeArt, bestTier, dropBrokenArt } from './artwork.js';
 import { HHD_CARDS } from '../data/hhd-cards.js';
 import { pickDeviceFolder } from './devicepicker.js';
 
@@ -131,7 +136,10 @@ function restoreScanCache() {
 
 // ---- artwork tier ----------------------------------------------------------
 
-let artDir = './data/images/thumb';
+// The grid draws ~950 images at one size, so one HEAD request decides the tier
+// for all of them rather than each one laddering down on its own.
+const artUrl = makeArt('./data/images');
+let tier = 'thumb';
 
 // ---- source chips: folder + device state machines ---------------------------
 
@@ -799,17 +807,8 @@ function renderHero() {
 
 // ---- filters / sort / view -------------------------------------------------------
 
-const FILTERS = [
-  { value: 'all', label: 'ALL' },
-  { value: 'owned', label: 'OWNED' },
-  { value: 'missing', label: 'MISSING' },
-  { value: 'notondevice', label: 'NOT ON DEVICE', needsDevice: true },
-];
-
 function currentFilter() {
-  const stored = prefs.get(prefs.KEYS.filter, 'all');
-  if (stored === 'notondevice' && !deviceIds) return 'all';
-  return FILTERS.some((f) => f.value === stored) ? stored : 'all';
+  return normaliseFilter(prefs.get(prefs.KEYS.filter, 'all'), { hasDevice: !!deviceIds });
 }
 
 function setFilter(value) {
@@ -818,23 +817,9 @@ function setFilter(value) {
   applyFilter();
 }
 
-function filterCounts() {
-  const counts = { all: 0, owned: 0, missing: 0, notondevice: 0 };
-  if (!collection) return counts;
-  for (const g of collection.series) {
-    for (const i of g.items) {
-      counts.all++;
-      if (i.hasLocal || i.hasDevice) counts.owned++;
-      else counts.missing++;
-      if (i.hasDevice === false) counts.notondevice++;
-    }
-  }
-  return counts;
-}
-
 function renderFilters() {
   const active = currentFilter();
-  const counts = filterCounts();
+  const counts = filterCounts(collection);
   els.filters.innerHTML = FILTERS
     .filter((f) => !f.needsDevice || deviceIds)
     .map((f) =>
@@ -849,36 +834,8 @@ function renderFilters() {
 
 // ---- series ordering ---------------------------------------------------------------
 
-function seriesDate(group) {
-  if (group._date === undefined) {
-    const dates = group.items.map((i) => AMIIBO_RELEASE[i.id]).filter(Boolean).sort();
-    group._date = dates[0] ?? null;
-  }
-  return group._date;
-}
-
-function completionRatio(group) {
-  const known = group.items.filter((i) => i.inDatabase || i.special).length;
-  if (!known) return -1;
-  return group.items.filter((i) => (i.hasLocal || i.hasDevice) && (i.inDatabase || i.special)).length / known;
-}
-
 function sortedSeries() {
-  const groups = [...collection.series];
-  const mode = els.sortMode.value;
-  if (mode === 'name') {
-    groups.sort((a, b) => a.seriesName.localeCompare(b.seriesName));
-  } else if (mode === 'completion') {
-    groups.sort((a, b) => completionRatio(b) - completionRatio(a) || a.seriesName.localeCompare(b.seriesName));
-  } else {
-    groups.sort((a, b) => {
-      const da = seriesDate(a), db = seriesDate(b);
-      if (da && db && da !== db) return da.localeCompare(db);
-      if (!da !== !db) return da ? -1 : 1;
-      return a.series - b.series;
-    });
-  }
-  return groups;
+  return sortSeries(collection.series, els.sortMode.value, AMIIBO_RELEASE);
 }
 
 // ---- DOM build (once per data change) ------------------------------------------------
@@ -903,91 +860,27 @@ function render() {
 }
 
 function buildDom() {
-  rowIndex = [];
-  groupEls = new Map();
   // Collapsed by default; openSeries remembers the ones the user opened.
   const opened = new Set(prefs.get(prefs.KEYS.openSeries, []));
-  const frag = document.createDocumentFragment();
-
-  for (const group of sortedSeries()) {
-    const details = document.createElement('details');
-    details.className = 'series';
-    details.dataset.series = String(group.series);
-    details.open = opened.has(group.series);
-    details.addEventListener('toggle', onGroupToggle);
-
-    const summary = document.createElement('summary');
-    const head = document.createElement('span');
-    head.className = 'seriesHead';
-    const headArt = document.createElement('img');
-    headArt.className = 'seriesArt';
-    headArt.loading = 'lazy';
-    headArt.alt = '';
-    headArt.width = 28; headArt.height = 28;
-    headArt.src = `${artDir}/${seriesRepresentative(group.series) ?? (group.items.find((i) => i.hasLocal) ?? group.items[0]).id}.png`;
-    const label = document.createElement('span');
-    label.textContent = group.seriesName;
-    head.append(headArt, label);
-    const year = seriesDate(group)?.slice(0, 4);
-    if (year) {
-      const y = document.createElement('span');
-      y.className = 'year';
-      y.textContent = year;
-      head.append(y);
-    }
-
-    const grow = document.createElement('span');
-    grow.className = 'grow';
-    const chev = document.createElement('span');
-    chev.className = 'chev';
-    chev.innerHTML = ICONS.chevronRight;
-    summary.append(head, grow, makeSeriesPill(group), chev);
-    details.append(summary);
-
-    const box = document.createElement('div');
-    box.className = 'items';
-
-    // A giant mixed series (Animal Crossing) gets type sub-headers so the
-    // card flood is skimmable.
-    const types = [...new Set(group.items.map((i) => i.typeName))];
-    const useSubheads = group.items.length > 100 && types.length > 1;
-
-    let currentType = null;
-    const itemsSorted = useSubheads
-      ? [...group.items].sort((a, b) => a.typeName.localeCompare(b.typeName) || a.name.localeCompare(b.name))
-      : group.items;
-
-    for (const item of itemsSorted) {
-      if (useSubheads && item.typeName !== currentType) {
-        currentType = item.typeName;
-        const n = itemsSorted.filter((i) => i.typeName === currentType).length;
-        const sh = document.createElement('div');
-        sh.className = 'subHead';
-        sh.textContent = `${currentType.toUpperCase()}S · ${n}`;
-        box.append(sh);
-      }
-      const el = makeCell(item);
-      box.append(el);
-      rowIndex.push({
-        el,
-        groupEl: details,
-        item,
-        text: `${item.name} ${group.seriesName} ${item.id}`.toLowerCase(),
-      });
-    }
-    details.append(box);
-    groupEls.set(group.series, { el: details });
-    frag.append(details);
-  }
+  const { frag, rows, groupEls: built } = buildSeriesGrid(sortedSeries(), {
+    cell: makeCell,
+    pill: makeSeriesPill,
+    art: (g) => artUrl(seriesRepresentative(g.series)
+      ?? (g.items.find((i) => i.hasLocal) ?? g.items[0]).id, tier),
+    year: (g) => seriesDate(g, AMIIBO_RELEASE)?.slice(0, 4) ?? null,
+    isOpen: (g) => opened.has(g.series),
+    onToggle: onGroupToggle,
+    chevron: ICONS.chevronRight,
+  });
+  rowIndex = rows;
+  groupEls = built;
 
   els.series.textContent = '';
   els.series.append(frag);
 }
 
 // One capture-phase image-error delegate for all ~950 imgs.
-els.series.addEventListener('error', (e) => {
-  if (e.target.tagName === 'IMG') e.target.remove();
-}, true);
+dropBrokenArt(els.series);
 
 function makeCell(item) {
   const hasLocal = item.hasLocal;
@@ -1010,7 +903,7 @@ function makeCell(item) {
     img.loading = 'lazy';
     img.decoding = 'async';
     img.alt = '';
-    img.src = `${artDir}/${item.id}.png`;
+    img.src = artUrl(item.id, tier);
     art.append(img);
   }
 
@@ -1133,36 +1026,14 @@ function applyFilter() {
   els.searchClear.hidden = !q;
   try { sessionStorage.setItem(Q_KEY, q); } catch {}
 
-  const keep = (item, text) => {
-    if (filter === 'owned' && !item.hasLocal && !item.hasDevice) return false;
-    if (filter === 'missing' && (item.hasLocal || item.hasDevice)) return false;
-    if (filter === 'notondevice' && item.hasDevice !== false) return false;
-    if (q && !text.includes(q)) return false;
-    return true;
-  };
-
-  const visibleByGroup = new Map();
-  const order = [];
-  for (const r of rowIndex) {
-    const show = keep(r.item, r.text);
-    r.el.hidden = !show;
-    if (show) {
-      order.push(r.item.id);
-      visibleByGroup.set(r.groupEl, (visibleByGroup.get(r.groupEl) ?? 0) + 1);
-    }
-  }
-
-  let shown = 0;
-  const filtering = filter !== 'all' || !!q;
-  for (const { el } of groupEls.values()) {
-    const n = visibleByGroup.get(el) ?? 0;
-    el.hidden = n === 0;
-    shown += n;
-    if (filtering && n > 0) el.open = true;
-  }
-
-  // Sub-headers make no sense over a filtered subset.
-  for (const sh of els.series.querySelectorAll('.subHead')) sh.hidden = filtering;
+  const { shown, order } = applyGridFilter({
+    rows: rowIndex,
+    groupEls,
+    root: els.series,
+    keep: matchesFilter,
+    filter,
+    query: q,
+  });
 
   try { sessionStorage.setItem(ORDER_KEY, JSON.stringify(order)); } catch {}
 
@@ -1185,10 +1056,7 @@ const applyFilterDebounced = debounce(applyFilter, 150);
 els.sortMode.addEventListener('change', () => {
   prefs.set(prefs.KEYS.sort, els.sortMode.value);
   // Re-append existing group nodes in the new order — 31 moves, no rebuilds.
-  for (const group of sortedSeries()) {
-    const g = groupEls.get(group.series);
-    if (g) els.series.append(g.el);
-  }
+  reorderGroups(els.series, sortedSeries(), groupEls);
   applyFilter();
 });
 
@@ -1641,10 +1509,7 @@ async function offerTour(page) {
   try { els.search.value = sessionStorage.getItem(Q_KEY) ?? ''; } catch {}
 
   // one request decides the artwork tier for the whole page
-  try {
-    const probe = await fetch('./data/images/med/0000000000000002.png', { method: 'HEAD' });
-    if (probe.ok) artDir = './data/images/med';
-  } catch {}
+  tier = await bestTier(artUrl.base);
 
   renderDeviceChip();
 

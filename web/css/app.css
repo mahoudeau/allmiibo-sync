@@ -237,9 +237,14 @@ img { image-rendering: pixelated; }
 .fInner { max-width: 60rem; margin: 0 auto; padding: 1.25rem 1.25rem 1.5rem;
           display: flex; flex-direction: column; gap: .75rem;
           font-size: .85rem; color: var(--muted); }
-.fRow { display: flex; flex-direction: column; align-items: center;
+/* Scoped to the footer deliberately. This was an unqualified `.fRow` and the
+   admin, reasonably, used the same name for its form rows — so every admin
+   field inherited a horizontal flex row above 560px and put its label, input
+   and error side by side. A single-class name in a stylesheet six pages share
+   is a name nobody owns. */
+.siteFooter .fRow { display: flex; flex-direction: column; align-items: center;
         justify-content: space-between; gap: .75rem; }
-@media (min-width: 560px) { .fRow { flex-direction: row; } }
+@media (min-width: 560px) { .siteFooter .fRow { flex-direction: row; } }
 .siteFooter a { color: inherit; text-decoration: none; transition: color .15s; }
 .siteFooter a:hover { color: var(--fg); }
 .fAuthor { display: inline-flex; align-items: center; gap: .6rem; }
@@ -299,6 +304,18 @@ img { image-rendering: pixelated; }
 .searchBox .clear:hover { color: var(--fg); }
 .searchBox .clear .ico { width: 1rem; height: 1rem; }
 
+/* The panel recipe: a 2px border, the panel fill and a hard offset shadow.
+   Hand-rolled in eight places before this existed. `raised` is the 4px rung of
+   the shadow ladder, for something that sits above the page rather than in it. */
+.panel { border: 2px solid var(--border); background: var(--panel);
+  box-shadow: 3px 3px 0 var(--shadow); }
+.panel.raised { box-shadow: 4px 4px 0 var(--shadow); }
+
+/* A small pixel-font caption over a value. Chrome, so pixel font and CAPS in
+   the markup, per the convention. */
+.cap { font-family: var(--pixel); font-size: .45rem; color: var(--muted);
+  letter-spacing: .05em; }
+
 /* Stat tiles */
 .statRow { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
   gap: .7rem; margin-bottom: 1.25rem; }
@@ -309,8 +326,6 @@ img { image-rendering: pixelated; }
   font-variant-numeric: tabular-nums; font-weight: 400; display: flex;
   align-items: center; gap: .45rem; }
 .statTile b .of { color: var(--muted); font-size: .6rem; }
-.statTile .cap { font-family: var(--pixel); font-size: .45rem; color: var(--muted);
-  letter-spacing: .05em; }
 .statTile.ok b { color: var(--ok); }
 .statTile.dev b { color: var(--accent2); }
 .statTile.warn b { color: var(--warn); }
@@ -494,11 +509,8 @@ button.srcChip:active { transform: translate(3px, 3px); box-shadow: none; }
 .srcChip.scanning { border-color: var(--accent); }
 @keyframes pulse2 { 50% { border-color: var(--warn); } }
 
-/* Micro-animations: enters and lifts, all steps() and 3px-quantized */
-.cards .item { transition: transform .08s steps(2, end), border-color .1s; }
-.cards .item:hover { transform: translate(-3px, -3px);
-  box-shadow: 3px 3px 0 var(--shadow); border-color: var(--accent); }
-details.series[open] > .items { animation: rise .14s steps(3, end); }
+/* Micro-animations: enters and lifts, all steps() and 3px-quantized.
+   The grid's own lifts moved to css/collection.css with the grid. */
 .settingsPanel:not([hidden]) { animation: rise .12s steps(3, end); }
 dialog.nesDialog[open] { animation: rise .14s steps(3, end); }
 dialog.nesDialog::backdrop { animation: fadeIn .1s steps(2, end); }

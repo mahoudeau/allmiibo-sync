@@ -17,10 +17,15 @@ full amiibo database while it is at it.
 
 ## Self-contained by design
 
-No CDNs, no npm dependencies, no build step, no telemetry. Everything the tool
-needs lives in this repository and runs on browser and Node built-ins alone.
-The BLE protocol is documented in [PROTOCOL.md](PROTOCOL.md) rather than being
-pulled from someone else's script at runtime.
+No CDNs, no build step, no telemetry. Everything the tool needs lives in this
+repository and runs on browser and Node built-ins alone. The BLE protocol is
+documented in [PROTOCOL.md](PROTOCOL.md) rather than being pulled from someone
+else's script at runtime.
+
+The one dependency is `linkedom`, and it is a **devDependency**: it gives
+`npm test` a real DOM so the pages can be executed rather than only read. The
+site ships nothing, the admin service ships nothing, and only running the tests
+needs an install.
 
 **The site people visit is static and has no server.** It is a directory of
 files: no API call, no database, no runtime fetch of anything. That is
@@ -49,9 +54,9 @@ and 2.16.0 (January 2026) added on-device emulation for v3 amiibo.
 - **Interface**: an 8-bit skin with three themes, an original pirate mascot
   in twelve colourways, and an Advanced toggle that keeps the expert layer out
   of the way until asked for. ✅
-- **Tests**: 375 across fourteen files; the protocol suite runs against a
+- **Tests**: 484 across twenty-three files; the protocol suite runs against a
   simulated device, the admin suite against a real HTTP server on an ephemeral
-  port, the rest are pure. ✅
+  port, the UI suites against a real DOM, the rest are pure. ✅
 
 Three hardware findings shape the sync design:
 
@@ -656,7 +661,7 @@ real work.
 npm test
 ```
 
-375 tests, no hardware needed:
+484 tests, no hardware needed:
 
 - `protocol.test.mjs`: against a simulated device: framing,
   multi-notification reassembly, command serialisation, chunked writes,
@@ -711,6 +716,50 @@ npm test
   tokens present and unique, the delta tables carrying only real deltas, and no
   filename over the device's 47-byte limit.
 
+The last seven run the interface itself, against a real DOM from `linkedom`.
+They exist because every UI bug in this project's history lived in a gap
+`ui-modules.test.mjs` cannot see: a selector matching nothing, a container
+styled through a child it does not have, a page that renders blank because a
+module failed to load. `npm test` said everything passed each time.
+
+- `collectionview.test.mjs` and `collectiongrid.test.mjs`: the collection, split
+  into what it decides and what it draws. The grid is built for all 31 series
+  and inspected: no amiibo is dropped between the data and the DOM, filtering
+  hides prebuilt cells rather than rebuilding them, a match forces its series
+  open, and changing the sort moves the existing nodes instead of remaking them.
+- `admin-ui.test.mjs`: the admin page read without executing it. Every element
+  the script reaches for exists, every `data-ico` names a real icon, the
+  sign-in form is visible before any script runs, and the grid is styled in one
+  place rather than once per page.
+- `admin-boot.test.mjs`: the admin actually run — `adminui.js` imported against
+  the real page with a stubbed API, then driven: sign in, search, filter, edit,
+  revert, publish. This is the file that would have caught the white screen.
+- `admin-style.test.mjs`: the CSS as text, since there is no layout engine. Its
+  centrepiece is a class-clash detector — every class the admin borrows checked
+  against every class `app.css` styles unqualified. It exists because `.fRow`
+  was such a class, owned by the site footer, and the admin's form rows
+  inherited a flex row that put each label, input and error side by side.
+- `amiibodetail-page.test.mjs`: the detail page rendered for three fixtures — a
+  plain figure, the Kirby Air Riders vehicle set and the 91-card HHD entry —
+  and compared against a committed snapshot. It was written against the page
+  *before* its renderer moved into `amiibopanel.js`, so it is the acceptance
+  test for that extraction: the public page draws byte-for-byte what it drew.
+- `amiibopanel.test.mjs`: the renderer underneath it. Chiefly that every image
+  URL comes from the injected hook — four inline `./data/images/...` literals
+  were the reason the panel could not be shared, since the site is served from
+  `./` and the admin from `/`. Also that "nothing scanned" stays distinct from
+  "scanned, and not owned", which a boolean would collapse.
+
+Each of these files ends with a test whose only job is to prove the file can
+fail: it replays the real regressions against the same assertions and requires
+them to throw. A test that cannot fail is decoration.
+
+Two limits worth knowing: there is no layout engine, so anything about pixels,
+sizes or overflow is still invisible and needs a human; and `linkedom` does not
+reflect every IDL property onto an attribute (`open` and `loading` are
+properties only), so assertions use the property unless the markup carries the
+attribute.
+
 ## Layout
 
 ```
@@ -733,6 +782,9 @@ web/write-test.html       redirect stub -> debug.html
 web/design-lab.html       the design moodboard the NES skin was picked from,
                           kept in the repo for fun, never deployed
 web/css/app.css           shared styles: three NES themes, pixel components
+web/css/collection.css    the collection grid and its toolbar, shared with
+                          the admin so both draw the same list
+web/css/amiibodetail.css  the detail panel, shared with the admin
 web/fonts/press-start-2p/ vendored Press Start 2P (SIL OFL) + its licence
 web/favicon.svg           the pirate mascot, generated from js/sprite.js
 web/icons/                PNG icons + OG share image, all rendered from the mascot
@@ -761,13 +813,19 @@ web/js/devicepicker.js    folder browser for the device side
 web/js/sync.js            device walk and plan executor
 web/js/syncui.js          Advanced sync page logic
 web/js/collectionui.js    collection page logic
-web/js/amiibodetail.js    detail page logic
-web/js/header.js          shared header: nav, Settings (theme/mascot/advanced)
+web/js/collectionview.js  filtering, counting and ordering a collection (pure)
+web/js/collectiongrid.js  the series/cards grid, shared with the admin
+web/js/amiibopanel.js     one amiibo drawn, shared with the admin
+web/js/amiibodetail.js    detail page: the URL, the scan cache, prev/next
+web/js/artwork.js         where the artwork lives: tiers, URLs, error fallback
+web/js/chrome.js          the header bar and footer as builders, seeded by the
+                          page that mounts them
+web/js/header.js          the site's header contents: nav, Settings sections
 web/js/prefs.js           every stored preference behind one tiny surface
 web/js/ui.js              shared UI kit: toasts, status, progress, dialogs,
                           debounce, counters, formatters
 web/js/dialog.js          themed confirm on native <dialog>
-web/js/footer.js          shared footer
+web/js/footer.js          the site's footer contents
 web/js/version.js         build id shown in the footer ('dev' in the repo,
                           stamped with the commit at deploy time)
 web/js/icons.js           8-bit UI icons (Pixelarticons, inlined)
@@ -789,7 +847,7 @@ tools/build-amiibo-db.mjs regenerate the database; also importable as generate()
 tools/update-db.mjs        fetch upstream sources + regenerate + report the diff
 tools/fetch-amiibo-images.mjs  download artwork, build the three tiers
 
-test/                     fourteen files, see Tests above
+test/                     twenty-three files, see Tests above
 ```
 
 ## Hosting

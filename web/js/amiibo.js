@@ -31,6 +31,7 @@ import {
   AMIIBO_PATHS,
   AMIIBO_NOTES,
   AMIIBO_AUTHORED,
+  AMIIBO_RELEASE,
 } from '../data/amiibo-db.js';
 
 export const AMIIBO_ID_OFFSET = 84;
@@ -360,6 +361,44 @@ export function seriesRepresentative(series) {
     }
   }
   return faceIndex.get(series) ?? null;
+}
+
+// Onward navigation: the rest of an amiibo's series, and the same character's
+// other variants. Both were a full scan of ~950 keys per call on the detail
+// page; both are one pass built on first use, like the two indexes above.
+let siblingIndex = null;
+let variantIndex = null;
+
+function buildOnwardIndexes() {
+  siblingIndex = new Map();
+  variantIndex = new Map();
+  for (const id of Object.keys(AMIIBO_NAMES)) {
+    const series = id.slice(12, 14);
+    const head = id.slice(0, 8);
+    if (!siblingIndex.has(series)) siblingIndex.set(series, []);
+    siblingIndex.get(series).push(id);
+    if (!variantIndex.has(head)) variantIndex.set(head, []);
+    variantIndex.get(head).push(id);
+  }
+  // Release order, oldest first; undated entries sort last, ties by ID so the
+  // order is stable rather than incidental.
+  for (const list of siblingIndex.values()) {
+    list.sort((a, b) =>
+      (AMIIBO_RELEASE[a] ?? '9999').localeCompare(AMIIBO_RELEASE[b] ?? '9999')
+      || a.localeCompare(b));
+  }
+}
+
+/** Every amiibo sharing this one's series byte, in release order. */
+export function seriesSiblings(id) {
+  if (!siblingIndex) buildOnwardIndexes();
+  return siblingIndex.get(id.slice(12, 14)) ?? [];
+}
+
+/** Every amiibo sharing this one's character — the first 8 hex characters. */
+export function characterVariants(id) {
+  if (!variantIndex) buildOnwardIndexes();
+  return variantIndex.get(id.slice(0, 8)) ?? [];
 }
 
 export function describeAmiibo(id) {

@@ -20,6 +20,7 @@
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="./css/app.css">
+<link rel="stylesheet" href="./css/amiibodetail.css">
 <script>
 // First paint honours the stored preferences (header.js manages them after).
 try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
@@ -30,93 +31,10 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
   .detailNav .pos { font-family:var(--pixel); font-size:.5rem; color:var(--muted); margin-left:auto; }
   .detailNav button { font-size:.5rem; padding:.4rem .6rem; min-height:2rem; }
 
-  .detail { display:grid; gap:1.5rem; grid-template-columns:1fr; margin-top:.5rem; }
-  @media (min-width:700px) { .detail { grid-template-columns:minmax(15rem,20rem) 1fr; } }
-
-  .portrait { border:2px solid var(--border); background:var(--panel);
-              box-shadow:4px 4px 0 var(--shadow);
-              display:flex; align-items:center; justify-content:center;
-              min-height:18rem; padding:1.5rem; position:relative; }
-  .portrait img { max-width:100%; max-height:24rem; object-fit:contain; }
-  .portrait .noArt { color:var(--muted); font-size:3rem; font-weight:700; }
-
-  .facts h1 { margin:0 0 .35rem; font-size:1.1rem; }
-  .facts .subtitle { color:var(--muted); margin-bottom:.9rem; }
-  .badges { display:flex; gap:.4rem; margin:0 0 1rem; flex-wrap:wrap; }
-  .tag { font-size:.72rem; padding:.1rem .45rem; border:1px solid var(--border); color:var(--muted); }
-  .tag.ok-tag { border-color:var(--ok); color:var(--ok); }
-  .tag.dev { background:var(--accent2); border-color:var(--accent2); color:#fff;
-             display:inline-flex; align-items:center; gap:.3rem; }
-  .tag.dev .ico { width:.85rem; height:.85rem; }
-  .tag.new { border-color:var(--warn); color:var(--warn); }
-  .tag.unknown { border-style:dashed; }
-
-  .fileBlock { margin:0 0 1rem; }
-  .fileBlock h2 { margin-bottom:.35rem; }
-  .fileBlock ul { margin:0; padding:0; list-style:none; font:12.5px/1.7 var(--mono); color:var(--fg); }
-  .fileBlock li { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-
-  .idRow { display:flex; align-items:center; gap:.5rem; margin-bottom:1rem; flex-wrap:wrap; }
-  .idmono { font:12px var(--mono); background:var(--panel); border:2px solid var(--border);
-            padding:.25rem .5rem; }
-  .idRow button { font-size:.45rem; min-height:1.8rem; padding:.3rem .5rem; }
-
-  .portrait.hhdMark svg { image-rendering:pixelated; width:100%; height:auto; max-width:24rem; max-height:24rem; }
-
-  .cardsBlock { margin:0 0 1rem; }
-  .cardGrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(10rem, 1fr));
-              gap:.5rem; }
-  .cTile { position:relative; display:grid; gap:.3rem; align-content:start;
-           padding:.5rem .55rem .55rem;
-           border:1px dashed var(--border); color:var(--muted);
-           opacity:.7; text-align:left; }
-  .cTile.have { border-style:solid; border-color:var(--ok); opacity:1; }
-  .cTile .cTop { display:flex; align-items:baseline; gap:.5rem; padding-right:1rem; }
-  .cTile .cNum { font-family:var(--pixel); font-size:.55rem; }
-  .cTile.have .cNum { color:var(--ok); }
-  .cTile .cCount { font-size:.68rem; margin-left:auto; }
-  .cTile .cTeaser { font-size:.74rem; line-height:1.45; color:var(--fg);
-                    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;
-                    overflow:hidden; }
-  .cTile:not(.have) .cTeaser { color:var(--muted); }
-  .cTile .cDev { position:absolute; top:.35rem; right:.35rem; color:var(--accent2); }
-  .cTile .cDev .ico, .cTile .cDev svg { width:.75rem; height:.75rem; display:block; }
-
-  .vehiclesBlock { margin-top:.4rem; }
-  .vehiclesBlock h2 { display:flex; align-items:center; gap:.5rem; }
-  .vehiclesBlock .why { min-height:0; padding:.1rem .35rem; font-size:.5rem;
-    border:1px solid var(--border); box-shadow:none; background:none; color:var(--muted); }
-  .vehicles { display:flex; flex-wrap:wrap; gap:.6rem; }
-  .vCard { display:grid; justify-items:center; gap:.3rem; width:5.5rem;
-           padding:.5rem .3rem; border:1px dashed var(--border);
-           color:var(--muted); opacity:.65; font-size:.72rem; text-align:center; }
-  .vCard.have { border-style:solid; border-color:var(--ok); color:var(--ok); opacity:1; }
-  .vArt { width:64px; height:52px; display:flex; align-items:center; justify-content:center;
-          position:relative; }
-  .vArt::before { content:attr(data-initial); position:absolute; color:var(--muted);
-                  font-size:1.1rem; font-weight:700; }
-  .vArt img { position:relative; max-width:100%; max-height:100%; object-fit:contain; }
-  .vCard:not(.have) .vArt img { filter:grayscale(1); opacity:.55; }
-  .vNote { font-size:.78rem; color:var(--muted); margin:.4rem 0 0; display:none; }
-  .vNote.open { display:block; }
-
+  /* The panel and the strip contents live in css/amiibodetail.css, shared
+     with the admin. What stays here is this page's own chrome. */
   .strip { margin-top:2rem; }
   .strip h2 { margin-bottom:.6rem; }
-  .stripRow { display:flex; gap:.5rem; overflow-x:auto; padding-bottom:.5rem;
-              scroll-snap-type:x proximity; }
-  .stripRow a { flex:none; width:72px; text-decoration:none; color:var(--muted);
-                text-align:center; font-size:.65rem; scroll-snap-align:start;
-                border:2px solid transparent; padding:.3rem; }
-  .stripRow a:hover { border-color:var(--accent); }
-  .stripRow a.current { border-color:var(--border); background:var(--panel); }
-  .stripRow .sArt { width:64px; height:64px; display:flex; align-items:center;
-    justify-content:center; background:var(--bg); border:2px solid var(--border);
-    margin-bottom:.25rem; position:relative; overflow:hidden; }
-  .stripRow .sArt::before { content:attr(data-initial); position:absolute; color:var(--muted); }
-  .stripRow .sArt img { position:relative; max-width:100%; max-height:100%; object-fit:contain; background:var(--bg); }
-  .stripRow a.owned { color:var(--fg); }
-  .stripRow a:not(.owned) .sArt img { filter:grayscale(1); opacity:.5; }
-  .stripRow .sNm { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 </style>
 </head>
 <body>

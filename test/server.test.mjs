@@ -34,8 +34,16 @@ before(async () => {
   dir = await mkdtemp(join(tmpdir(), 'allmiibo-admin-'));
   await mkdir(join(dir, 'data'), { recursive: true });
   await mkdir(join(dir, 'site/data'), { recursive: true });
+  await mkdir(join(dir, 'site/css'), { recursive: true });
+  await mkdir(join(dir, 'site/js'), { recursive: true });
   // A database to regenerate over, so the stable series tokens are preserved.
   await copyFile(join(REPO, 'web/data/amiibo-db.js'), join(dir, 'site/data/amiibo-db.js'));
+  // The shared assets the admin borrows from the site: the skin, the mascot and
+  // the icon set. A real deployment has these already; the temp site needs them
+  // copied in for the route to be exercised.
+  await copyFile(join(REPO, 'web/css/app.css'), join(dir, 'site/css/app.css'));
+  await copyFile(join(REPO, 'web/js/sprite.js'), join(dir, 'site/js/sprite.js'));
+  await copyFile(join(REPO, 'web/js/icons.js'), join(dir, 'site/js/icons.js'));
 
   ctx = createAdminServer({
     passwordHash: hashPassword(PASSWORD),
@@ -242,6 +250,63 @@ test('the UI is served with headers that stop it leaking', opts, async () => {
   assert.equal(res.headers.get('x-frame-options'), 'DENY');
   assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
   assert.equal(res.headers.get('cache-control'), 'no-store');
+});
+
+test('the site\'s stylesheet, fonts and shared modules are served to the admin', opts, async () => {
+  // The admin reuses the skin, the mascot and the icon set rather than keeping
+  // second copies. If these stop resolving the admin renders as a blank page,
+  // so the route is worth pinning.
+  for (const [path, needle] of [
+    ['/css/app.css', '--pixel'],
+    ['/js/sprite.js', 'pirateMark'],
+    ['/js/icons.js', 'ICONS'],
+  ]) {
+    const res = await fetch(`${base}${path}`);
+    assert.equal(res.status, 200, `${path} must be served`);
+    assert.match(await res.text(), new RegExp(needle), `${path} looks wrong`);
+  }
+});
+
+test('the admin\'s own files still win over the shared prefixes', opts, async () => {
+  const res = await fetch(`${base}/adminui.js`);
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /admin UI/);
+});
+
+test('a relative PUBLIC_SITE_DIR still serves the shared assets', opts, async () => {
+  // The bug this exists for: join('./web', '/css/app.css') normalises to
+  // 'web/css/app.css', which does not start with './web', so the containment
+  // check refused the server's own stylesheet as a traversal attempt. The admin
+  // then rendered as a blank page, because a failed import runs nothing.
+  // Paths are resolved to absolute up front now.
+  const relCtx = createAdminServer({
+    passwordHash: hashPassword(PASSWORD),
+    sessionSecret: 'b'.repeat(64),
+    publicSiteDir: './web',        // relative, exactly as .env ships it
+    dataDir: './content',
+    cacheDir: './tools/.cache',
+    secureCookies: false,
+  });
+  await new Promise((r) => relCtx.server.listen(0, '127.0.0.1', r));
+  const relBase = `http://127.0.0.1:${relCtx.server.address().port}`;
+  try {
+    for (const path of ['/css/app.css', '/js/sprite.js', '/js/icons.js']) {
+      const res = await fetch(`${relBase}${path}`);
+      assert.equal(res.status, 200, `${path} must be served with a relative config`);
+    }
+    // And the guard still holds with a relative root.
+    const escaped = await fetch(`${relBase}/css/../../package.json`);
+    assert.ok(escaped.status === 403 || escaped.status === 404);
+  } finally {
+    await new Promise((r) => relCtx.server.close(r));
+  }
+});
+
+test('the shared prefixes cannot be used to escape the public site', opts, async () => {
+  for (const attack of ['/css/../../package.json', '/js/../../.env']) {
+    const res = await fetch(`${base}${attack}`);
+    assert.ok(res.status === 403 || res.status === 404, `${attack} gave ${res.status}`);
+  }
 });
 
 test('a traversal attempt cannot escape the UI directory', opts, async () => {

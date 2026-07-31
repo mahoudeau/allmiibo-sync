@@ -20,7 +20,7 @@
 
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
-import { join, normalize, extname } from 'node:path';
+import { join, normalize, extname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { Store } from './store.mjs';
@@ -49,7 +49,7 @@ const TYPES = {
 };
 
 export function createAdminServer(config = {}) {
-  const cfg = {
+  const raw = {
     passwordHash: process.env.ADMIN_PASSWORD_HASH ?? '',
     sessionSecret: process.env.SESSION_SECRET ?? '',
     publicSiteDir: process.env.PUBLIC_SITE_DIR ?? join(ROOT, 'web'),
@@ -57,6 +57,19 @@ export function createAdminServer(config = {}) {
     cacheDir: process.env.CACHE_DIR ?? join(ROOT, 'tools/.cache'),
     secureCookies: process.env.INSECURE_COOKIES !== '1',
     ...config,
+  };
+
+  // Every directory is resolved to an absolute path before anything uses it.
+  // A relative one such as PUBLIC_SITE_DIR=./web breaks the containment check
+  // below, because join() normalises "./web" + "/css/app.css" to "web/css/…",
+  // which does not start with "./web" — so the server refuses its own files as
+  // if they were a traversal attempt. Resolving up front removes the whole
+  // class of mismatch rather than trying to compare two spellings of one path.
+  const cfg = {
+    ...raw,
+    publicSiteDir: resolve(raw.publicSiteDir),
+    dataDir: resolve(raw.dataDir),
+    cacheDir: resolve(raw.cacheDir),
   };
 
   const store = new Store({
@@ -117,10 +130,20 @@ export function createAdminServer(config = {}) {
     readSession(readCookie(req.headers.cookie), cfg.sessionSecret);
 
   async function serveUi(req, res, pathname) {
-    // The admin reuses the site's stylesheet and fonts rather than keeping a
-    // second copy that could drift. Those two prefixes resolve into the public
-    // site; everything else is the admin's own UI.
-    const shared = pathname.startsWith('/css/') || pathname.startsWith('/fonts/');
+    // The admin reuses the site's stylesheet, fonts and shared modules rather
+    // than keeping second copies that could drift: the same skin, the same
+    // mascot, the same icons. These prefixes resolve into the public site;
+    // everything else is the admin's own UI.
+    const shared = pathname.startsWith('/css/')
+      || pathname.startsWith('/fonts/')
+      || pathname.startsWith('/js/')
+      // The whole data directory, not only the artwork. The admin draws the
+      // collection grid, which means it imports /js/amiibo.js, which imports
+      // ../data/amiibo-db.js — the browser resolves that to /data/amiibo-db.js.
+      // Routing only /data/images/ here served the pictures and 404'd the
+      // database, and a module whose import 404s never runs at all: the page
+      // stayed on the sign-in form with the boot notice showing.
+      || pathname.startsWith('/data/');
     const root = shared ? cfg.publicSiteDir : UI_DIR;
 
     // The path is normalised and then checked to be inside its root: this is

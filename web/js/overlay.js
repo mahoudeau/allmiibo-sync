@@ -120,51 +120,79 @@ export function validateOverlay(overlay) {
   if (overlay.amiibos !== undefined) {
     if (!isPlainObject(overlay.amiibos)) bad('amiibos must be an object');
     else for (const [id, entry] of Object.entries(overlay.amiibos)) {
-      // Lowercase is enforced so a pasted uppercase ID fails loudly rather than
-      // shadowing nothing at all.
-      if (!ID_RE.test(id)) { bad(`${id}: not a 16-character lowercase hex ID`); continue; }
-      if (!isPlainObject(entry)) { bad(`${id}: must be an object`); continue; }
-      for (const key of Object.keys(entry)) {
-        if (!AMIIBO_KEYS.has(key)) bad(`${id}: unknown key ${JSON.stringify(key)}`);
-      }
-      if (entry.kind !== 'override' && entry.kind !== 'new') {
-        bad(`${id}: kind must be "override" or "new"`);
-      }
-      if (entry.kind === 'new' && (typeof entry.name !== 'string' || !entry.name.trim())) {
-        bad(`${id}: an authored amiibo needs a name`);
-      }
-      if (entry.release !== undefined && entry.release !== null && !ISO_DATE_RE.test(entry.release)) {
-        bad(`${id}: release must be YYYY-MM-DD or null`);
-      }
-      for (const field of ['name', 'fileName', 'shortName', 'blurb', 'note']) {
-        if (entry[field] !== undefined && typeof entry[field] !== 'string') {
-          bad(`${id}: ${field} must be a string`);
-        }
-      }
-      for (const field of ['fileName', 'shortName']) {
-        const v = entry[field];
-        if (typeof v !== 'string' || !v) continue;
-        // A filename is one path segment. sanitizeLocalName strips illegal
-        // characters but not separators, so "a/b" would sail through it and
-        // then quietly create a folder. Check separators explicitly.
-        if (v.includes('/') || v.includes('\\')) {
-          bad(`${id}: ${field} ${JSON.stringify(v)} must be a filename, not a path`);
-        }
-        // A pin the sanitiser would rewrite is a lie about what lands on disk.
-        if (sanitizeLocalName(v) !== v) bad(`${id}: ${field} ${JSON.stringify(v)} is not a safe filename`);
-        if (utf8Bytes(`${v}.bin`) > MAX_NAME_BYTES) {
-          bad(`${id}: ${field} is ${utf8Bytes(`${v}.bin`)} bytes with .bin, over the ${MAX_NAME_BYTES}-byte limit`);
-        }
-      }
-      if (entry.shortName && entry.fileName &&
-          utf8Bytes(entry.shortName) >= utf8Bytes(entry.fileName)) {
-        bad(`${id}: shortName must be shorter than fileName`);
-      }
-      if (entry.path !== undefined) errors.push(...validatePinnedPath(id, entry.path));
+      for (const p of validateAmiiboEntry(id, entry)) bad(`${id}: ${p.message}`);
     }
   }
 
   return errors;
+}
+
+/**
+ * Problems with one amiibo's overlay entry, each tagged with the field it
+ * belongs to.
+ *
+ * Split out of validateOverlay so the admin can put an error under the input
+ * that caused it. The alternative — matching the assembled `${id}: ...` strings
+ * with a regex — works until someone rewords a message, and several of these
+ * name no field at all ("Kirby Air Riders amiibo have four vehicle pairings").
+ * Tagging at the source is the only version that stays true.
+ *
+ * `field` is null for problems about the entry as a whole.
+ *
+ * @returns {{ field: string|null, message: string }[]}
+ */
+export function validateAmiiboEntry(id, entry) {
+  const problems = [];
+  const bad = (field, message) => problems.push({ field, message });
+
+  // Lowercase is enforced so a pasted uppercase ID fails loudly rather than
+  // shadowing nothing at all.
+  if (!ID_RE.test(id)) return [{ field: null, message: 'not a 16-character lowercase hex ID' }];
+  if (!isPlainObject(entry)) return [{ field: null, message: 'must be an object' }];
+
+  for (const key of Object.keys(entry)) {
+    if (!AMIIBO_KEYS.has(key)) bad(null, `unknown key ${JSON.stringify(key)}`);
+  }
+  if (entry.kind !== 'override' && entry.kind !== 'new') {
+    bad('kind', 'kind must be "override" or "new"');
+  }
+  if (entry.kind === 'new' && (typeof entry.name !== 'string' || !entry.name.trim())) {
+    bad('name', 'an authored amiibo needs a name');
+  }
+  if (entry.release !== undefined && entry.release !== null && !ISO_DATE_RE.test(entry.release)) {
+    bad('release', 'release must be YYYY-MM-DD or null');
+  }
+  for (const field of ['name', 'fileName', 'shortName', 'blurb', 'note']) {
+    if (entry[field] !== undefined && typeof entry[field] !== 'string') {
+      bad(field, `${field} must be a string`);
+    }
+  }
+  for (const field of ['fileName', 'shortName']) {
+    const v = entry[field];
+    if (typeof v !== 'string' || !v) continue;
+    // A filename is one path segment. sanitizeLocalName strips illegal
+    // characters but not separators, so "a/b" would sail through it and
+    // then quietly create a folder. Check separators explicitly.
+    if (v.includes('/') || v.includes('\\')) {
+      bad(field, `${field} ${JSON.stringify(v)} must be a filename, not a path`);
+    }
+    // A pin the sanitiser would rewrite is a lie about what lands on disk.
+    if (sanitizeLocalName(v) !== v) bad(field, `${field} ${JSON.stringify(v)} is not a safe filename`);
+    if (utf8Bytes(`${v}.bin`) > MAX_NAME_BYTES) {
+      bad(field, `${field} is ${utf8Bytes(`${v}.bin`)} bytes with .bin, over the ${MAX_NAME_BYTES}-byte limit`);
+    }
+  }
+  if (entry.shortName && entry.fileName &&
+      utf8Bytes(entry.shortName) >= utf8Bytes(entry.fileName)) {
+    bad('shortName', 'shortName must be shorter than fileName');
+  }
+  if (entry.path !== undefined) {
+    // validatePinnedPath prefixes the id, because it is also called on its own.
+    for (const message of validatePinnedPath(id, entry.path)) {
+      bad('path', message.startsWith(`${id}: `) ? message.slice(id.length + 2) : message);
+    }
+  }
+  return problems;
 }
 
 /** Problems with a pinned device path, or an empty list. */

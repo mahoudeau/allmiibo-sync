@@ -17,7 +17,8 @@ import { join } from 'node:path';
 const UI_DIR = fileURLToPath(new URL('../web/js/', import.meta.url));
 
 const GLOBALS = new Set([
-  'Array', 'Object', 'String', 'Number', 'Boolean', 'Math', 'JSON', 'Date', 'Error',
+  'Array', 'Object', 'String', 'Number', 'Boolean', 'Math', 'JSON', 'Date',
+  'Error', 'TypeError', 'RangeError',
   'Map', 'Set', 'WeakMap', 'Promise', 'Symbol', 'RegExp', 'parseInt', 'parseFloat', 'isNaN',
   'BigInt', 'Uint8Array', 'DataView', 'ArrayBuffer', 'TextEncoder', 'TextDecoder',
   'structuredClone', 'queueMicrotask', 'Intl',
@@ -178,7 +179,13 @@ test('every UI module parses', async () => {
   // the reference check cannot, such as a duplicate declaration.
   for (const file of files) {
     const src = await readFile(join(UI_DIR, file), 'utf8');
-    const body = src.replace(/^\s*import\s[^;]*;\s*$/gm, '').replace(/^\s*export\s+/gm, '');
+    // Import and re-export statements are stripped rather than parsed, because
+    // a bare function body is not a module. Both forms span lines — a re-export
+    // list especially — so these have to match across them.
+    const body = src
+      .replace(/^\s*import\s[\s\S]*?;/gm, '')
+      .replace(/^\s*export\s*\{[\s\S]*?\}\s*from\s*['"][^'"]*['"]\s*;/gm, '')
+      .replace(/^\s*export\s+/gm, '');
     assert.doesNotThrow(
       () => new (Object.getPrototypeOf(async function () {}).constructor)(body),
       (err) => { throw new Error(`${file} does not parse: ${err.message}`); }
