@@ -54,7 +54,7 @@ and 2.16.0 (January 2026) added on-device emulation for v3 amiibo.
 - **Interface**: an 8-bit skin with three themes, an original pirate mascot
   in twelve colourways, and an Advanced toggle that keeps the expert layer out
   of the way until asked for. ✅
-- **Tests**: 484 across twenty-three files; the protocol suite runs against a
+- **Tests**: 497 across twenty-three files; the protocol suite runs against a
   simulated device, the admin suite against a real HTTP server on an ephemeral
   port, the UI suites against a real DOM, the rest are pure. ✅
 
@@ -569,6 +569,28 @@ Regeneration calls the same `generate()` the command line calls, and is tried as
 a dry run before anything is written. A save that would put two amiibos on one
 device path is refused with the reason, and neither file is touched.
 
+### Backups, restore and export
+
+The BACKUPS drawer lists those timestamped copies, newest first, and offers each
+one for download or restore. **A restore is a save**: it runs the same dry run,
+is refused the same way if the result would not build, and takes its own backup
+of what it replaces before writing — so restoring the wrong one is itself
+undoable. Both go through one function in the server for exactly that reason;
+two code paths to the same file is how one of them quietly loses a gate.
+
+Restoring over unsaved edits asks about the edits first, separately, rather than
+burying "you will lose your work" inside "restore this backup?".
+
+EXPORT downloads the live overlay. It fetches it rather than navigating to the
+URL: navigation bypasses the error handling, so an expired session used to save
+the 401 response body under the name of a backup — a corrupt file you would not
+discover until you needed it.
+
+Only a file whose name is a backup stamp can be read from the backup directory.
+The pattern is defined once, in `server/store.mjs`, and imported by the route;
+two copies of a filename whitelist drifting apart is how the interesting bugs
+get in.
+
 ### Running it
 
 Secrets live in the environment and never in the repository.
@@ -661,7 +683,7 @@ real work.
 npm test
 ```
 
-484 tests, no hardware needed:
+497 tests, no hardware needed:
 
 - `protocol.test.mjs`: against a simulated device: framing,
   multi-notification reassembly, command serialisation, chunked writes,
@@ -707,7 +729,12 @@ npm test
 - `server.test.mjs`: the admin over real HTTP on an ephemeral port. Refuses
   without a session, without a CSRF token, and with another session's token;
   refuses a save that would not build, leaving both files untouched; caps body
-  size; blocks four shapes of path traversal.
+  size; blocks four shapes of path traversal. Also the backup routes: a restore
+  meets the same gate as a save and is itself undoable, and only a file whose
+  name is a backup stamp can be read from the backup directory — asserted by
+  planting one that is not and requiring it to stay unreadable, since Node's
+  URL parser never decodes `%2F` and so a traversal string cannot reach that
+  code to begin with.
 - `admin.test.mjs`: the leak guards. No committed *or uncommitted* file may name
   a subdomain of the public site, assign a secret, or contain a password hash;
   nothing may link to the admin. The file does not name the host it protects.

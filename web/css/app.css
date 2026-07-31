@@ -374,6 +374,14 @@ button.statTile:hover { border-color: var(--accent); }
 .drawer[open] > summary .chev { transform: rotate(90deg); }
 .drawer > summary .n { font: 11px/1 var(--mono); color: var(--muted); margin-left: auto; }
 .drawer .body { padding: 0 .75rem .6rem; }
+/* A line of explanation above a drawer's list. Scoped, because "hint" on its
+   own is the kind of name two pages would each claim. */
+.drawer .hint { font-size: .85rem; color: var(--muted); margin: .2rem 0 .6rem; }
+.drawer .fileList li { align-items: center; min-height: 2rem; }
+.drawer .fileList li .acts { display: flex; gap: .4rem; flex: none; }
+.drawer .fileList li button { min-height: 1.7rem; padding: .2rem .5rem; font-size: .42rem;
+  box-shadow: none; }
+.drawer .fileList li button:active { transform: none; }
 .fileList { margin: 0; padding: 0; list-style: none; max-height: 18rem; overflow: auto;
   contain: content; font: 12.5px/1.7 var(--mono); }
 .fileList li { display: flex; justify-content: space-between; gap: 1rem; padding: 0 .4rem; }

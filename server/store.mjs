@@ -23,6 +23,15 @@ import { EMPTY_OVERLAY, parseOverlay, serializeOverlay, validateOverlay } from '
 /** Keep this many backups; older ones are pruned oldest-first after a write. */
 export const KEEP_BACKUPS = 50;
 
+/**
+ * What a backup file may be called: an ISO stamp with `:` and `.` replaced.
+ *
+ * Exported so the HTTP route and the store check the same thing. Two copies of
+ * a filename whitelist that drift is how a path traversal gets in, and the
+ * route's copy is the one that would be forgotten.
+ */
+export const BACKUP_NAME_RE = /^[0-9TZ-]+\.json$/;
+
 export class Store {
   /**
    * @param {object} opts
@@ -118,9 +127,22 @@ export class Store {
 
   /** Read one backup back, for a restore. The name is checked, never joined raw. */
   async readBackup(name) {
-    if (!/^[0-9TZ-]+\.json$/.test(name)) throw new Error('not a backup name');
-    const text = await readFile(join(this.backupDir, name), 'utf8');
-    return parseOverlay(text);
+    return parseOverlay(await this.readBackupRaw(name));
+  }
+
+  /**
+   * One backup's bytes, for a download.
+   *
+   * Unparsed on purpose: a download should hand back exactly what is on disk,
+   * including a backup too old to validate — which is precisely the one you
+   * would want to inspect. Restoring it still goes through readBackup, so a
+   * broken file can be looked at but not published.
+   */
+  async readBackupRaw(name) {
+    if (typeof name !== 'string' || !BACKUP_NAME_RE.test(name)) {
+      throw new Error('not a backup name');
+    }
+    return readFile(join(this.backupDir, name), 'utf8');
   }
 
   /** When the overlay last changed, for the UI to show. */

@@ -6,7 +6,12 @@ import { icon } from './icons.js';
 let dlg = null;
 
 function ensure() {
-  if (dlg) return dlg;
+  // Reused only while it is still in the document it will be shown in. A
+  // detached node, or one belonging to a document that has since been replaced,
+  // would otherwise be shown forever where nobody can see it, and every confirm
+  // after that would resolve against nothing. Both clauses are needed: a node
+  // in a discarded document still reports itself as connected.
+  if (dlg?.isConnected && dlg.ownerDocument === document) return dlg;
   dlg = document.createElement('dialog');
   dlg.className = 'nesDialog';
   dlg.innerHTML = `

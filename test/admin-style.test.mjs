@@ -158,7 +158,7 @@ test('every class the admin borrows from app.css is one it means to borrow', () 
     // components
     'status', 'note', 'caution', 'empty', 'eTitle', 'primary', 'danger',
     'searchBox', 'pillRow', 'pill', 'segCtl', 'thumb', 'statRow', 'statTile',
-    'toolbar', 'drawer', 'clear', 'n',
+    'toolbar', 'drawer', 'fileList', 'clear', 'n',
     // the grid, from collection.css
     'series', 'items', 'item', 'cards', 'art', 'nm', 'nmWrap', 'tag', 'sPill',
     'subHead', 'seriesHead', 'seriesArt', 'chev', 'year',

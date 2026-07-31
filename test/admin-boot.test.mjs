@@ -39,6 +39,11 @@ const DB = {
  * Each call gets its own module instance: adminui.js holds state at module
  * scope, so a shared one would leak edits between tests.
  */
+const BACKUPS = [
+  '2026-07-31T14-05-09-123Z.json',
+  '2026-07-30T09-12-44-000Z.json',
+];
+
 let instance = 0;
 async function bootAdmin({ overlay = { schema: 1, amiibos: {} }, upstreamReady = true } = {}) {
   const page = mountPage('admin/index.html');
@@ -46,7 +51,9 @@ async function bootAdmin({ overlay = { schema: 1, amiibos: {} }, upstreamReady =
     '/api/session': { csrf: 'test-token' },
     '/api/db': DB,
     '/api/overlay': { overlay, upstreamReady },
-    'PUT /api/overlay': { entries: 946, backup: '2026-01-01.json', notices: [] },
+    'PUT /api/overlay': { entries: 946, backup: '2026-01-01T09-30-00-000Z.json', notices: [] },
+    '/api/backups': { backups: BACKUPS },
+    'POST /api/restore': { ok: true, entries: 946, restored: BACKUPS[0] },
     'POST /api/logout': {},
   });
   globalThis.fetch = fetch;
@@ -326,7 +333,12 @@ test('selecting an amiibo shows the same panel a visitor sees', async () => {
   }
 });
 
-test('the preview shows the curated name, and follows an edit', async () => {
+test('the preview follows an edit as it is typed, without a reselect', async () => {
+  // This test used to reselect the amiibo before asserting, with a comment
+  // explaining that the editor redraws on selection. That was not a caveat, it
+  // was the bug: the heading kept the old name while the field beside it held
+  // the new one, and the grid cell had already updated. The preview's whole
+  // claim is that it shows the published result.
   const { page } = await bootAdmin();
   try {
     const id = page.$('.item').dataset.id;
@@ -340,11 +352,59 @@ test('the preview shows the curated name, and follows an edit', async () => {
     input.value = 'Curated Name';
     input.dispatchEvent(new page.window.Event('input'));
 
-    // The editor redraws on selection, not on every keystroke, so reselect.
-    page.$(`.item[data-id="${id}"]`).dispatchEvent(new page.window.Event('click'));
     assert.equal(heading(), 'Curated Name',
-      'the preview shows what the site will say, not what upstream says');
+      'the preview updates on the edit itself, not on the next selection');
     assert.notEqual(heading(), upstream, 'the test is actually changing something');
+    assert.equal(page.$(`.item[data-id="${id}"] .nm`).textContent, 'Curated Name',
+      'and the grid agrees with it');
+
+    // Clearing the field puts the upstream value back, both places.
+    input.value = '';
+    input.dispatchEvent(new page.window.Event('input'));
+    assert.equal(heading(), upstream);
+    assert.equal(page.$(`.item[data-id="${id}"] .nm`).textContent, upstream);
+  } finally {
+    page.restore();
+  }
+});
+
+test('editing the release year updates the previewed subtitle too', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const id = page.$('.item').dataset.id;
+    page.$(`.item[data-id="${id}"]`).dispatchEvent(new page.window.Event('click'));
+
+    const subtitle = () => page.$('.preview .facts .subtitle').textContent.trim();
+    const before = subtitle();
+
+    const input = page.byId('f-release');
+    input.value = '1999-12-31';
+    input.dispatchEvent(new page.window.Event('input'));
+
+    assert.match(subtitle(), /1999/, 'the year in the subtitle follows the field');
+    assert.notEqual(subtitle(), before);
+    // The rest of the line is untouched: series and type do not come from here.
+    assert.match(subtitle(), /·/);
+  } finally {
+    page.restore();
+  }
+});
+
+test('the pencil survives an edit rather than being written over', async () => {
+  // The previewed parts carry an appended button, so an update that used
+  // textContent would silently delete it.
+  const { page } = await bootAdmin();
+  try {
+    const id = page.$('.item').dataset.id;
+    page.$(`.item[data-id="${id}"]`).dispatchEvent(new page.window.Event('click'));
+    assert.ok(page.$('.preview .facts h1 .editPart'), 'the heading has its pencil');
+
+    const input = page.byId('f-name');
+    input.value = 'Something Else';
+    input.dispatchEvent(new page.window.Event('input'));
+
+    assert.ok(page.$('.preview .facts h1 .editPart'), 'and still has it after an edit');
+    assert.equal(page.$('.preview .facts h1').textContent.trim(), 'Something Else');
   } finally {
     page.restore();
   }
@@ -492,6 +552,152 @@ test('the grid is the collection page grid, with the same classes app.css styles
     const img = page.$('.item .art img');
     assert.match(img.src, /^\/data\/images\/thumb\/[0-9a-f]{16}\.png$/,
       'artwork comes from the site, by ID, and the path is not built from user input');
+  } finally {
+    page.restore();
+  }
+});
+
+// ---- backups ------------------------------------------------------------
+
+test('the backups drawer lists what the server has, newest first', async () => {
+  const { page } = await bootAdmin();
+  try {
+    // Loaded on boot rather than on open: the count is the point of a
+    // collapsed drawer.
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The attribute, not the property: linkedom does not reflect `open`, and
+    // the markup is what is under test here.
+    assert.equal(page.byId('backupsDrawer').hasAttribute('open'), false,
+      'collapsed by default');
+    assert.equal(page.byId('backupCount').textContent, String(BACKUPS.length));
+
+    const rows = page.$$('#backupList li');
+    assert.equal(rows.length, BACKUPS.length);
+    assert.equal(rows[0].querySelector('span').title, BACKUPS[0],
+      'the raw name is kept for the request');
+    assert.equal(rows[0].querySelector('span').textContent, '2026-07-31 14:05:09',
+      'and a readable stamp is shown');
+
+    for (const row of rows) {
+      const labels = [...row.querySelectorAll('button')].map((b) => b.textContent);
+      assert.deepEqual(labels, ['DOWNLOAD', 'RESTORE']);
+    }
+  } finally {
+    page.restore();
+  }
+});
+
+test('an empty backup list says so rather than showing nothing', async () => {
+  const page = mountPage('admin/index.html');
+  globalThis.fetch = stubFetch({
+    '/api/session': { csrf: 't' },
+    '/api/db': DB,
+    '/api/overlay': { overlay: { schema: 1, amiibos: {} }, upstreamReady: true },
+    '/api/backups': { backups: [] },
+  });
+  try {
+    await import(`../admin/adminui.js?t=${instance++}`);
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(page.byId('backupCount').textContent, '0');
+    assert.match(page.byId('backupList').textContent, /No backups yet/);
+  } finally {
+    page.restore();
+  }
+});
+
+test('RESTORE asks first, and declining restores nothing', async () => {
+  const { page, fetch } = await bootAdmin();
+  try {
+    await new Promise((r) => setTimeout(r, 0));
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+    const restores = () => fetch.calls.filter((c) => c.path === '/api/restore').length;
+
+    const button = [...page.$$('#backupList button')].find((b) => b.textContent === 'RESTORE');
+    button.dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    const dialog = page.$('dialog.nesDialog');
+    assert.ok(dialog, 'a confirm is on screen');
+    assert.match(dialog.textContent, /RESTORE THIS BACKUP/);
+    assert.match(dialog.textContent, /can be undone/, 'and says it is reversible');
+    assert.equal(restores(), 0);
+
+    dialog.querySelector('.dCancel').dispatchEvent(new page.window.Event('click'));
+    await settle();
+    assert.equal(restores(), 0, 'declining restores nothing');
+
+    button.dispatchEvent(new page.window.Event('click'));
+    await settle();
+    page.$('dialog.nesDialog .dConfirm').dispatchEvent(new page.window.Event('click'));
+    await settle();
+    assert.equal(restores(), 1, 'accepting restores once');
+    assert.equal(fetch.calls.find((c) => c.path === '/api/restore').method, 'POST');
+  } finally {
+    page.restore();
+  }
+});
+
+test('restoring over unsaved edits asks about them separately', async () => {
+  const { page, fetch } = await bootAdmin();
+  try {
+    await new Promise((r) => setTimeout(r, 0));
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+
+    // Make an edit, so the overlay in this tab differs from disk.
+    const id = page.$('.item').dataset.id;
+    page.$(`.item[data-id="${id}"]`).dispatchEvent(new page.window.Event('click'));
+    const input = page.byId('f-name');
+    input.value = 'Unsaved';
+    input.dispatchEvent(new page.window.Event('input'));
+
+    const button = [...page.$$('#backupList button')].find((b) => b.textContent === 'RESTORE');
+    button.dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    const dialog = page.$('dialog.nesDialog');
+    assert.match(dialog.textContent, /DISCARD YOUR UNSAVED EDITS/,
+      'the edits are asked about before the backup is');
+    dialog.querySelector('.dCancel').dispatchEvent(new page.window.Event('click'));
+    await settle();
+    assert.equal(fetch.calls.filter((c) => c.path === '/api/restore').length, 0);
+    assert.equal(page.byId('save').disabled, false, 'and the edit survives');
+  } finally {
+    page.restore();
+  }
+});
+
+test('EXPORT fetches rather than navigating, so a failure is a message', async () => {
+  // The bug: location.href = '/api/export' bypasses the api() wrapper, so an
+  // expired session saved the 401 body as a file called amiibo-overrides.json.
+  const page = mountPage('admin/index.html');
+  const fetch = stubFetch({
+    '/api/session': { csrf: 't' },
+    '/api/db': DB,
+    '/api/overlay': { overlay: { schema: 1, amiibos: {} }, upstreamReady: true },
+    '/api/backups': { backups: [] },
+    '/api/export': { status: 401, body: { error: 'not signed in' } },
+  });
+  globalThis.fetch = fetch;
+  const navigated = [];
+  try {
+    await import(`../admin/adminui.js?t=${instance++}`);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Anything that navigated would have set location.href.
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      value: new Proxy({}, { set: (_, k, v) => { navigated.push(`${String(k)}=${v}`); return true; } }),
+    });
+
+    page.byId('export').dispatchEvent(new page.window.Event('click'));
+    await new Promise((r) => setTimeout(r, 0));
+
+    assert.deepEqual(navigated, [], 'the page did not navigate to the API');
+    assert.ok(fetch.calls.some((c) => c.path === '/api/export'), 'it fetched instead');
+    assert.equal(page.byId('status').hidden, false);
+    assert.match(page.byId('status').textContent, /Download failed/,
+      'and the failure is said out loud rather than saved as a file');
   } finally {
     page.restore();
   }

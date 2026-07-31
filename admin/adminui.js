@@ -14,7 +14,7 @@
 // Root-relative, so the admin still never names the host it is reachable at.
 import { pirateMark } from '/js/sprite.js';
 import { ICONS } from '/js/icons.js';
-import { buildCollection, seriesRepresentative } from '/js/amiibo.js';
+import { buildCollection, seriesRepresentative, describeAmiibo, isHhdItemCards } from '/js/amiibo.js';
 import { AMIIBO_RELEASE } from '/data/amiibo-db.js';
 import { sortSeries, seriesDate } from '/js/collectionview.js';
 import { buildSeriesGrid, applyGridFilter, reorderGroups } from '/js/collectiongrid.js';
@@ -65,6 +65,7 @@ const state = {
   selected: null,
   dirty: false,
   fields: new Map(),  // the open editor's field key -> its .field wrapper
+  preview: null,      // the open editor's previewed parts, updated in place
   bad: new Set(),     // ids whose entry would not validate; SAVE waits on this
 };
 
@@ -99,6 +100,35 @@ async function api(path, { method = 'GET', body } = {}) {
     throw err;
   }
   return parsed;
+}
+
+/**
+ * Save a file the server hands back.
+ *
+ * Not `location.href = '/api/…'`, which was the bug: that navigates, bypassing
+ * the api() wrapper, so an expired session downloaded the 401 error body under
+ * the filename of a backup — a corrupt file you would not discover until you
+ * needed it. Fetching first means a failure is a message, not a file.
+ */
+async function download(path, filename) {
+  try {
+    const res = await fetch(`/api${path}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      let parsed = null;
+      try { parsed = JSON.parse(body); } catch { /* not JSON */ }
+      throw new Error(parsed?.error ?? `HTTP ${res.status}`);
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    say(`Downloaded ${filename}.`, 'ok');
+  } catch (err) {
+    say(`Download failed: ${err.message}`, 'err');
+  }
 }
 
 function say(message, kind = '') {
@@ -161,6 +191,7 @@ async function boot() {
   buildRows();
   applyFilter();
   markClean();
+  loadBackups();
   if (!overlayRes.upstreamReady) {
     say('The upstream sources have not been fetched yet, so saving cannot rebuild the site.', 'warn');
   }
@@ -363,6 +394,110 @@ function updateStats() {
   el('tileEdited').classList.toggle('ok', curated > 0);
 }
 
+// ---- backups ------------------------------------------------------------
+
+/**
+ * The timestamped copies, newest first.
+ *
+ * Every save takes one before it writes, so the list is also the undo history.
+ * Loaded on boot rather than on open: the count in the summary is the point of
+ * the collapsed drawer.
+ */
+async function loadBackups() {
+  const list = el('backupList');
+  let names = [];
+  try {
+    ({ backups: names } = await api('/backups'));
+  } catch (err) {
+    el('backupCount').textContent = '—';
+    list.innerHTML = '';
+    list.append(liText(`Could not list backups: ${err.message}`));
+    return;
+  }
+
+  el('backupCount').textContent = String(names.length);
+  list.textContent = '';
+  if (!names.length) {
+    list.append(liText('No backups yet. The first save will leave one.'));
+    return;
+  }
+
+  for (const name of names) {
+    const li = document.createElement('li');
+    const label = document.createElement('span');
+    label.textContent = readableStamp(name);
+    label.title = name;
+
+    const acts = document.createElement('span');
+    acts.className = 'acts';
+
+    const get = document.createElement('button');
+    get.type = 'button';
+    get.textContent = 'DOWNLOAD';
+    get.addEventListener('click', () => download(`/backups/${name}`, name));
+
+    const put = document.createElement('button');
+    put.type = 'button';
+    put.textContent = 'RESTORE';
+    put.addEventListener('click', () => restore(name));
+
+    acts.append(get, put);
+    li.append(label, acts);
+    list.append(li);
+  }
+}
+
+function liText(text) {
+  const li = document.createElement('li');
+  li.append(Object.assign(document.createElement('span'), { textContent: text }));
+  return li;
+}
+
+/** `2026-07-31T12-34-56-789Z.json` back into something a person reads. */
+function readableStamp(name) {
+  const m = name.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}` : name;
+}
+
+async function restore(name) {
+  // Restoring over unsaved edits would lose them silently, and the confirm
+  // below is about the backup, not about the edits — so they are asked
+  // separately rather than buried in one dialog.
+  if (state.dirty) {
+    const discard = await confirmDialog({
+      title: 'DISCARD YOUR UNSAVED EDITS?',
+      body: 'Restoring replaces the overlay, including the edits you have not saved.',
+      confirmLabel: 'DISCARD THEM',
+      danger: true,
+    });
+    if (!discard) return;
+  }
+
+  const ok = await confirmDialog({
+    title: 'RESTORE THIS BACKUP?',
+    body: 'The overlay is replaced with this version and the site is rebuilt.',
+    detail: [
+      readableStamp(name),
+      'What is there now is backed up first, so this can be undone.',
+    ],
+    confirmLabel: 'RESTORE',
+    icon: 'back',
+  });
+  if (!ok) return;
+
+  say('Restoring and rebuilding the site…');
+  try {
+    const result = await api('/restore', { method: 'POST', body: { name } });
+    say(`Restored ${readableStamp(name)}. The site now has ${result.entries} amiibo.`, 'ok');
+    // The overlay on the server is now something else entirely, so the whole
+    // view is reloaded rather than patched.
+    state.dirty = false;
+    await boot();
+  } catch (err) {
+    say([err.message, ...(err.details ?? [])].join(' · '), 'err');
+  }
+}
+
 // ---- the editor ---------------------------------------------------------
 
 // Which field each previewed part is edited by. The pencil on a part focuses
@@ -437,20 +572,16 @@ function renderEditor() {
     },
   });
 
-  // The preview shows the curated name, not the upstream one, so an edit is
-  // visible where it will land rather than only in the input. The panel gets
-  // its name from the database; only the text node is replaced, because the
-  // heading also carries the pencil adorn appended.
-  const heading = detail.parts.title;
-  if (heading) {
-    const text = [...heading.childNodes].find((n) => n.nodeType === 3);
-    if (text) text.textContent = effectiveName(id, state.db.names[id] ?? id);
-  }
-
   const preview = document.createElement('div');
   preview.className = 'preview';
   preview.append(detail.frag);
   box.append(preview);
+
+  // Kept so an edit can update the preview in place. Re-rendering the editor
+  // on every keystroke would be simpler and wrong: it would replace the input
+  // being typed into and take the caret with it.
+  state.preview = detail.parts;
+  refreshPreview(id);
 
   state.fields = new Map();
   for (const field of FIELDS) {
@@ -497,6 +628,43 @@ function renderEditor() {
   box.append(actions);
 }
 
+/**
+ * Replace a part's text without disturbing anything else inside it.
+ *
+ * The previewed parts carry an appended pencil, so textContent would delete it.
+ */
+function setPartText(node, text) {
+  if (!node) return;
+  const existing = [...node.childNodes].find((n) => n.nodeType === 3);
+  if (existing) existing.textContent = text;
+  else node.prepend(document.createTextNode(text));
+}
+
+/**
+ * Point the preview at the effective values — what the site will say once this
+ * overlay is published, not what upstream says.
+ *
+ * Called on every edit, not only on selection. The preview's whole claim is
+ * that it shows the published result; a heading that keeps the old name while
+ * the field beside it holds the new one is the panel lying about its own
+ * purpose, and the grid cell was already updating live.
+ */
+function refreshPreview(id) {
+  const parts = state.preview;
+  if (!parts || state.selected !== id) return;
+  const entry = state.overlay.amiibos[id] ?? {};
+
+  setPartText(parts.title, effectiveName(id, state.db.names[id] ?? id));
+
+  if (parts.subtitle) {
+    const d = describeAmiibo(id);
+    const year = (entry.release ?? state.db.release[id] ?? '').slice(0, 4);
+    setPartText(parts.subtitle, isHhdItemCards(id)
+      ? 'Animal Crossing · Card set'
+      : [d?.seriesName, d?.typeName, year].filter(Boolean).join(' · '));
+  }
+}
+
 function edit(id, key, value) {
   const entry = state.overlay.amiibos[id] ?? { kind: 'override' };
   const trimmed = value.trim();
@@ -510,6 +678,7 @@ function edit(id, key, value) {
   if (meaningful.length === 0 && entry.kind !== 'new') delete state.overlay.amiibos[id];
   else state.overlay.amiibos[id] = entry;
 
+  refreshPreview(id);
   showProblems(id);
   markDirty();
   markCell(id);
@@ -610,8 +779,10 @@ async function save() {
     const result = await api('/overlay', { method: 'PUT', body: state.overlay });
     markClean();
     say(`Saved. The site now has ${result.entries} amiibo.` +
-        (result.backup ? ` Previous version kept as ${result.backup}.` : ''), 'ok');
+        (result.backup ? ` Previous version kept as ${readableStamp(result.backup)}.` : ''), 'ok');
     for (const n of result.notices ?? []) say(`${n.id}: ${n.message}`, 'warn');
+    // The save just took one, so the list is stale.
+    loadBackups();
   } catch (err) {
     refreshSaveState();
     // The server refuses a save that would not build, so this is where a
@@ -626,7 +797,7 @@ el('signIn').addEventListener('click', signIn);
 el('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') signIn(); });
 el('signOut').addEventListener('click', signOut);
 el('save').addEventListener('click', save);
-el('export').addEventListener('click', () => { location.href = '/api/export'; });
+el('export').addEventListener('click', () => download('/export', 'amiibo-overrides.json'));
 
 let filterTimer = null;
 el('q').addEventListener('input', () => {

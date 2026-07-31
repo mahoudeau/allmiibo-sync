@@ -23,7 +23,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, normalize, extname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { Store } from './store.mjs';
+import { Store, BACKUP_NAME_RE } from './store.mjs';
 import { Regenerator, GenerateError } from './regen.mjs';
 import {
   verifyPassword, issueSession, readSession, sessionCookie, clearCookie,
@@ -128,6 +128,66 @@ export function createAdminServer(config = {}) {
 
   const sessionOf = (req) =>
     readSession(readCookie(req.headers.cookie), cfg.sessionSecret);
+
+  /**
+   * Validate an overlay, write it, and rebuild the site from it.
+   *
+   * The single write path. A save and a restore are the same operation on a
+   * different source of the overlay, and they must be held to the same gates —
+   * a restore of a backup taken before an upstream change can fail to build
+   * just as a fresh edit can. Sharing the code is the only way that stays true.
+   *
+   * The order matters and is the whole safety story: refuse before writing.
+   *
+   * @returns {{ status: number, body: object }}
+   */
+  async function publish(overlay) {
+    // Checked before anything is written: a save that would put two amiibos on
+    // one device path is refused, with the reason, and the overlay on disk is
+    // untouched.
+    const dry = await regen.dryRun(overlay ?? EMPTY_OVERLAY);
+    if (!dry.ok) {
+      return { status: 422, body: { error: 'the database would not build', details: dry.errors } };
+    }
+
+    let saved;
+    try {
+      saved = await store.write(overlay);
+    } catch (err) {
+      return { status: 422, body: { error: err.message, details: err.details ?? [] } };
+    }
+
+    try {
+      const built = await regen.run(overlay);
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          backup: saved.backup,
+          bytes: built.bytes,
+          entries: built.report.entries,
+          authored: built.report.authored.length,
+          notices: built.report.notices,
+        },
+      };
+    } catch (err) {
+      // The overlay is saved but the site was not rebuilt. Say so plainly
+      // rather than reporting a success that did not fully happen.
+      const details = err instanceof GenerateError ? err.details : [err.message];
+      return { status: 500, body: { error: 'saved, but the site was not rebuilt', details } };
+    }
+  }
+
+  /** A download. The filename is always a validated constant or a matched name. */
+  function attachment(res, text, filename) {
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'content-disposition': `attachment; filename="${filename}"`,
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    });
+    return res.end(text);
+  }
 
   async function serveUi(req, res, pathname) {
     // The admin reuses the site's stylesheet, fonts and shared modules rather
@@ -270,53 +330,53 @@ export function createAdminServer(config = {}) {
           } catch (err) {
             return json(res, err.status ?? 400, { error: err.message || 'invalid JSON' });
           }
-
-          // Checked before anything is written: a save that would put two
-          // amiibos on one device path is refused, with the reason, and the
-          // overlay on disk is untouched.
-          const dry = await regen.dryRun(overlay ?? EMPTY_OVERLAY);
-          if (!dry.ok) return json(res, 422, { error: 'the database would not build', details: dry.errors });
-
-          let saved;
-          try {
-            saved = await store.write(overlay);
-          } catch (err) {
-            return json(res, 422, { error: err.message, details: err.details ?? [] });
-          }
-
-          try {
-            const built = await regen.run(overlay);
-            return json(res, 200, {
-              ok: true,
-              backup: saved.backup,
-              bytes: built.bytes,
-              entries: built.report.entries,
-              authored: built.report.authored.length,
-              notices: built.report.notices,
-            });
-          } catch (err) {
-            // The overlay is saved but the site was not rebuilt. Say so plainly
-            // rather than reporting a success that did not fully happen.
-            const details = err instanceof GenerateError ? err.details : [err.message];
-            return json(res, 500, {
-              error: 'saved, but the site was not rebuilt',
-              details,
-            });
-          }
+          const { status, body } = await publish(overlay);
+          return json(res, status, body);
         }
 
         if (path === '/api/backups' && req.method === 'GET') {
           return json(res, 200, { backups: await store.backups() });
         }
 
+        // One backup, verbatim. The route captures a single segment and the
+        // name is then checked against the store's own pattern — imported
+        // rather than restated, because two copies of a filename whitelist
+        // drifting apart is how a traversal gets in. Nothing touches the
+        // filesystem until it passes, and the filename in the header is the
+        // validated name, never the raw request.
+        const backupMatch = path.match(/^\/api\/backups\/([^/]+)$/);
+        if (backupMatch && req.method === 'GET') {
+          const name = backupMatch[1];
+          if (!BACKUP_NAME_RE.test(name)) return json(res, 400, { error: 'not a backup name' });
+          const text = await store.readBackupRaw(name).catch(() => null);
+          if (text === null) return json(res, 404, { error: 'no such backup' });
+          return attachment(res, text, name);
+        }
+
+        // Restore runs the identical gates as a save, because it is one: the
+        // overlay it writes came from this machine but could still fail to
+        // build if the sources have moved on since it was taken.
+        if (path === '/api/restore' && req.method === 'POST') {
+          let name;
+          try {
+            ({ name } = JSON.parse(await readBody(req)) ?? {});
+          } catch (err) {
+            return json(res, err.status ?? 400, { error: err.message || 'invalid JSON' });
+          }
+          let overlay;
+          try {
+            overlay = await store.readBackup(name);
+          } catch {
+            return json(res, 404, { error: 'no such backup' });
+          }
+          const { status, body } = await publish(overlay);
+          // store.write backed the current overlay up first, so this is itself
+          // undoable — worth saying rather than leaving to be discovered.
+          return json(res, status, { ...body, restored: name });
+        }
+
         if (path === '/api/export' && req.method === 'GET') {
-          const text = await store.readRaw();
-          res.writeHead(200, {
-            'content-type': 'application/json; charset=utf-8',
-            'content-disposition': 'attachment; filename="amiibo-overrides.json"',
-            'cache-control': 'no-store',
-          });
-          return res.end(text);
+          return attachment(res, await store.readRaw(), 'amiibo-overrides.json');
         }
 
         return json(res, 404, { error: 'no such endpoint' });

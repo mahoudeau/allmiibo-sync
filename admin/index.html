@@ -155,6 +155,24 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
 
     <div id="status" class="status" hidden></div>
 
+    <!-- Every save leaves a timestamped copy, and a restore is itself a save,
+         so it leaves one too. Collapsed by default: this is the panel you want
+         when something has gone wrong, not while you work. -->
+    <details class="drawer" id="backupsDrawer">
+      <summary>
+        <span class="chev ico" data-ico="chevronRight"></span>
+        BACKUPS <span class="n" id="backupCount">0</span>
+      </summary>
+      <div class="body">
+        <p class="hint">
+          One per save, newest first. Restoring replaces the overlay and
+          rebuilds the site — and backs up what is there now first, so it can
+          be undone.
+        </p>
+        <ul class="fileList" id="backupList"></ul>
+      </div>
+    </details>
+
     <!-- The collection page's toolbar, element for element, styled by
          css/collection.css so the two cannot drift apart. -->
     <div class="toolbar">
