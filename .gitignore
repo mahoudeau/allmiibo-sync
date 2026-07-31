@@ -36,6 +36,12 @@ web/data/images/
 # update-db working files
 tools/.cache/
 
+# The admin keeps a timestamped copy of the overlay on every save. They are a
+# local safety net, not history: the overlay itself is committed, and git is the
+# history. Without this a week of editing would add hundreds of near-identical
+# files to the repository.
+content/backups/
+
 # Deployment — kept local, never committed (server address + credentials)
 deploy.sh
 .env

@@ -1,0 +1,335 @@
+// The admin service: a small HTTP server, node built-ins only.
+//
+// It serves the admin UI and a handful of JSON endpoints, and it writes two
+// things: the curated overlay, and the regenerated database inside the public
+// site. The public site itself is served by Apache and knows nothing about this
+// process; if it dies, the site is unaffected.
+//
+// Configuration comes from the environment, never from the repository:
+//
+//   ADMIN_PASSWORD_HASH   from hashPassword() in auth.mjs
+//   SESSION_SECRET        32+ bytes of hex
+//   PUBLIC_SITE_DIR       where the public site's files live
+//   DATA_DIR              where the overlay and its backups live
+//   CACHE_DIR             the fetched upstream sources
+//   PORT, HOST            listen address
+//   INSECURE_COOKIES      set only for local http development
+//
+// The admin's hostname is deliberately absent: the UI uses relative URLs, so
+// nothing here needs to know it, and it therefore cannot leak into the repo.
+
+import { createServer } from 'node:http';
+import { readFile, stat } from 'node:fs/promises';
+import { join, normalize, extname } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { Store } from './store.mjs';
+import { Regenerator, GenerateError } from './regen.mjs';
+import {
+  verifyPassword, issueSession, readSession, sessionCookie, clearCookie,
+  readCookie, checkCsrf, RateLimiter, CSRF_HEADER,
+} from './auth.mjs';
+import { EMPTY_OVERLAY } from '../web/js/overlay.js';
+
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
+const UI_DIR = join(ROOT, 'admin');
+
+// A save is a few hundred kB of JSON at the very most. Anything larger is a
+// mistake or an attempt to exhaust memory, and is refused before being read.
+const MAX_BODY = 4 * 1024 * 1024;
+
+const TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.woff2': 'font/woff2',
+};
+
+export function createAdminServer(config = {}) {
+  const cfg = {
+    passwordHash: process.env.ADMIN_PASSWORD_HASH ?? '',
+    sessionSecret: process.env.SESSION_SECRET ?? '',
+    publicSiteDir: process.env.PUBLIC_SITE_DIR ?? join(ROOT, 'web'),
+    dataDir: process.env.DATA_DIR ?? join(ROOT, 'content'),
+    cacheDir: process.env.CACHE_DIR ?? join(ROOT, 'tools/.cache'),
+    secureCookies: process.env.INSECURE_COOKIES !== '1',
+    ...config,
+  };
+
+  const store = new Store({
+    overlayPath: join(cfg.dataDir, 'amiibo-overrides.json'),
+    backupDir: join(cfg.dataDir, 'backups'),
+  });
+  const regen = new Regenerator({
+    cacheDir: cfg.cacheDir,
+    dbPath: join(cfg.publicSiteDir, 'data/amiibo-db.js'),
+  });
+  const limiter = new RateLimiter();
+
+  const configured = Boolean(cfg.passwordHash && cfg.sessionSecret);
+
+  const json = (res, status, body, headers = {}) => {
+    const text = JSON.stringify(body);
+    res.writeHead(status, {
+      'content-type': 'application/json; charset=utf-8',
+      // Nothing here is cacheable, and an authenticated response certainly is
+      // not shareable.
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+      ...headers,
+    });
+    res.end(text);
+  };
+
+  const readBody = (req) => new Promise((resolve, reject) => {
+    const declared = Number(req.headers['content-length'] ?? 0);
+    if (declared > MAX_BODY) return reject(Object.assign(new Error('body too large'), { status: 413 }));
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      // Checked as it arrives too: content-length is a claim, not a promise.
+      if (size > MAX_BODY) {
+        reject(Object.assign(new Error('body too large'), { status: 413 }));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+
+  const clientKey = (req) => {
+    // Behind a reverse proxy the socket address is the proxy, so the forwarded
+    // address is preferred. It is spoofable by a direct client, which only
+    // matters for rate limiting: an attacker can already vary their own key.
+    const fwd = req.headers['x-forwarded-for'];
+    if (typeof fwd === 'string' && fwd) return fwd.split(',')[0].trim();
+    return req.socket.remoteAddress ?? 'unknown';
+  };
+
+  const sessionOf = (req) =>
+    readSession(readCookie(req.headers.cookie), cfg.sessionSecret);
+
+  async function serveUi(req, res, pathname) {
+    // The admin reuses the site's stylesheet and fonts rather than keeping a
+    // second copy that could drift. Those two prefixes resolve into the public
+    // site; everything else is the admin's own UI.
+    const shared = pathname.startsWith('/css/') || pathname.startsWith('/fonts/');
+    const root = shared ? cfg.publicSiteDir : UI_DIR;
+
+    // The path is normalised and then checked to be inside its root: this is
+    // the one place a request string touches the filesystem.
+    const rel = pathname === '/' ? '/index.html' : pathname;
+    const full = normalize(join(root, rel));
+    if (!full.startsWith(root)) {
+      res.writeHead(403).end('forbidden');
+      return;
+    }
+    const info = await stat(full).catch(() => null);
+    const target = info?.isDirectory() ? join(full, 'index.html') : full;
+    const body = await readFile(target).catch(() => null);
+    if (body === null) {
+      res.writeHead(404, { 'content-type': 'text/plain' }).end('not found');
+      return;
+    }
+    res.writeHead(200, {
+      'content-type': TYPES[extname(target)] ?? 'application/octet-stream',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      // The admin must never be indexed, framed, or leak its URL onward.
+      'x-robots-tag': 'noindex, nofollow, noarchive',
+      'x-frame-options': 'DENY',
+      'referrer-policy': 'no-referrer',
+    });
+    res.end(body);
+  }
+
+  const server = createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url, 'http://localhost');
+      const path = url.pathname;
+
+      if (!configured) {
+        return json(res, 503, {
+          error: 'not configured',
+          detail: 'ADMIN_PASSWORD_HASH and SESSION_SECRET must be set in the environment.',
+        });
+      }
+
+      // ---- login ----------------------------------------------------------
+      if (path === '/api/login' && req.method === 'POST') {
+        const key = clientKey(req);
+        limiter.sweep();
+        const gate = limiter.check(key);
+        if (gate.locked) {
+          return json(res, 429, {
+            error: 'too many attempts',
+            retryAfterSeconds: Math.ceil(gate.retryAfterMs / 1000),
+          }, { 'retry-after': String(Math.ceil(gate.retryAfterMs / 1000)) });
+        }
+
+        let password = '';
+        try {
+          password = JSON.parse(await readBody(req))?.password ?? '';
+        } catch { /* falls through to the failure below */ }
+
+        if (!verifyPassword(password, cfg.passwordHash)) {
+          limiter.fail(key);
+          // Deliberately vague: no hint about whether anything was close.
+          return json(res, 401, { error: 'wrong password' });
+        }
+        limiter.succeed(key);
+        const { token, csrf } = issueSession(cfg.sessionSecret);
+        return json(res, 200, { ok: true, csrf },
+          { 'set-cookie': sessionCookie(token, { secure: cfg.secureCookies }) });
+      }
+
+      if (path === '/api/logout' && req.method === 'POST') {
+        return json(res, 200, { ok: true },
+          { 'set-cookie': clearCookie({ secure: cfg.secureCookies }) });
+      }
+
+      // ---- everything past here needs a session ---------------------------
+      if (path.startsWith('/api/')) {
+        const session = sessionOf(req);
+        if (!session) return json(res, 401, { error: 'not signed in' });
+
+        const mutating = req.method !== 'GET' && req.method !== 'HEAD';
+        if (mutating && !checkCsrf(session, req.headers[CSRF_HEADER])) {
+          return json(res, 403, { error: 'missing or bad CSRF token' });
+        }
+
+        if (path === '/api/session' && req.method === 'GET') {
+          return json(res, 200, { ok: true, csrf: session.csrf, expires: session.exp });
+        }
+
+        if (path === '/api/db' && req.method === 'GET') {
+          // The generated database, as data. Imported fresh each time with a
+          // cache-busting query, because it is rewritten on every save and the
+          // module cache would otherwise serve the version from startup.
+          const dbUrl = `${pathToFileURL(join(cfg.publicSiteDir, 'data/amiibo-db.js')).href}?v=${Date.now()}`;
+          const db = await import(dbUrl).catch(() => null);
+          if (!db) return json(res, 503, { error: 'the site database has not been built yet' });
+          return json(res, 200, {
+            names: db.AMIIBO_NAMES,
+            series: db.AMIIBO_SERIES,
+            types: db.AMIIBO_TYPES,
+            release: db.AMIIBO_RELEASE,
+            seriesShort: db.AMIIBO_SERIES_SHORT,
+            fileNames: db.AMIIBO_FILE_NAMES,
+            shortNames: db.AMIIBO_SHORT_NAMES,
+            categories: db.AMIIBO_CATEGORIES,
+            paths: db.AMIIBO_PATHS,
+            notes: db.AMIIBO_NOTES,
+            authored: db.AMIIBO_AUTHORED,
+            upstream: db.AMIIBO_UPSTREAM,
+          });
+        }
+
+        if (path === '/api/overlay' && req.method === 'GET') {
+          return json(res, 200, {
+            overlay: await store.read(),
+            modified: await store.modified(),
+            upstreamReady: await regen.ready(),
+          });
+        }
+
+        if (path === '/api/overlay' && req.method === 'PUT') {
+          let overlay;
+          try {
+            overlay = JSON.parse(await readBody(req));
+          } catch (err) {
+            return json(res, err.status ?? 400, { error: err.message || 'invalid JSON' });
+          }
+
+          // Checked before anything is written: a save that would put two
+          // amiibos on one device path is refused, with the reason, and the
+          // overlay on disk is untouched.
+          const dry = await regen.dryRun(overlay ?? EMPTY_OVERLAY);
+          if (!dry.ok) return json(res, 422, { error: 'the database would not build', details: dry.errors });
+
+          let saved;
+          try {
+            saved = await store.write(overlay);
+          } catch (err) {
+            return json(res, 422, { error: err.message, details: err.details ?? [] });
+          }
+
+          try {
+            const built = await regen.run(overlay);
+            return json(res, 200, {
+              ok: true,
+              backup: saved.backup,
+              bytes: built.bytes,
+              entries: built.report.entries,
+              authored: built.report.authored.length,
+              notices: built.report.notices,
+            });
+          } catch (err) {
+            // The overlay is saved but the site was not rebuilt. Say so plainly
+            // rather than reporting a success that did not fully happen.
+            const details = err instanceof GenerateError ? err.details : [err.message];
+            return json(res, 500, {
+              error: 'saved, but the site was not rebuilt',
+              details,
+            });
+          }
+        }
+
+        if (path === '/api/backups' && req.method === 'GET') {
+          return json(res, 200, { backups: await store.backups() });
+        }
+
+        if (path === '/api/export' && req.method === 'GET') {
+          const text = await store.readRaw();
+          res.writeHead(200, {
+            'content-type': 'application/json; charset=utf-8',
+            'content-disposition': 'attachment; filename="amiibo-overrides.json"',
+            'cache-control': 'no-store',
+          });
+          return res.end(text);
+        }
+
+        return json(res, 404, { error: 'no such endpoint' });
+      }
+
+      // ---- the UI ---------------------------------------------------------
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        return json(res, 405, { error: 'method not allowed' });
+      }
+      return serveUi(req, res, path);
+    } catch (err) {
+      // Never leak a stack trace to the client; log it instead.
+      console.error('admin error:', err);
+      if (!res.headersSent) json(res, err.status ?? 500, { error: 'server error' });
+      else res.end();
+    }
+  });
+
+  return { server, store, regen, config: cfg };
+}
+
+// ---- CLI ----------------------------------------------------------------
+
+const isCli = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
+if (isCli) {
+  const port = Number(process.env.PORT ?? 8081);
+  const host = process.env.HOST ?? '127.0.0.1';
+  const { server, config } = createAdminServer();
+  if (!config.passwordHash || !config.sessionSecret) {
+    console.error('ADMIN_PASSWORD_HASH and SESSION_SECRET must be set. Refusing to start unprotected.');
+    console.error("Generate a hash with:  node -e \"import('./server/auth.mjs').then(m=>console.log(m.hashPassword('your password')))\"");
+    process.exit(1);
+  }
+  server.listen(port, host, () => {
+    console.log(`admin listening on http://${host}:${port}/`);
+    console.log(`  public site: ${config.publicSiteDir}`);
+    console.log(`  data:        ${config.dataDir}`);
+  });
+}

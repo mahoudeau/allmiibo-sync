@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin · allmiibo-sync</title>
+<!-- Deliberately no og:*, no manifest, no canonical link: any of them would
+     publish this URL in a preview card or an app manifest, and the address is
+     meant to stay quiet. Nothing links here either. -->
+<meta name="robots" content="noindex, nofollow, noarchive">
+<link rel="stylesheet" href="./css/app.css">
+<script>
+// First paint honours the stored preferences, byte-identical to every other page.
+try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
+</script>
+<style>
+  .adminBar { display:flex; align-items:center; gap:.8rem; flex-wrap:wrap;
+              border-bottom:2px solid var(--border); padding-bottom:.7rem; margin-bottom:1rem; }
+  .adminBar h1 { font-size:.8rem; margin:0; }
+  .adminBar .spacer { margin-left:auto; }
+  .badge { font-family:var(--pixel); font-size:.5rem; padding:.25rem .45rem;
+           border:2px solid var(--border); color:var(--muted); }
+  .badge.dirty { border-color:var(--warn); color:var(--warn); }
+  .badge.saved { border-color:var(--ok); color:var(--ok); }
+
+  .cols { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.1fr); gap:1rem; align-items:start; }
+  @media (max-width:52rem) { .cols { grid-template-columns:1fr; } }
+
+  .rowList { border:2px solid var(--border); background:var(--panel);
+             max-height:32rem; overflow:auto; }
+  .aRow { display:flex; align-items:center; gap:.6rem; width:100%; text-align:left;
+          padding:.4rem .6rem; border:0; border-bottom:1px solid var(--border);
+          background:none; color:var(--fg); min-height:0; box-shadow:none;
+          content-visibility:auto; contain-intrinsic-size:0 2.1rem; }
+  .aRow:hover { background:var(--panel2); border-color:var(--border); }
+  .aRow.on { background:var(--panel2); box-shadow:inset 3px 0 0 var(--accent); }
+  .aRow .nm { flex:1; font-size:.85rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .aRow .sr { font-size:.7rem; color:var(--muted); flex:none; }
+  .aRow .mk { font-family:var(--pixel); font-size:.45rem; color:var(--accent); flex:none; }
+
+  .editor { border:2px solid var(--border); background:var(--panel); padding:.9rem 1rem; }
+  .fRow { margin:.7rem 0; }
+  .fRow label { display:block; font-family:var(--pixel); font-size:.5rem;
+                color:var(--muted); margin-bottom:.25rem; }
+  .fRow input { width:100%; font:inherit; padding:.4rem .5rem;
+                border:2px solid var(--border); background:var(--bg); color:var(--fg); }
+  .fRow .was { font-size:.75rem; color:var(--muted); margin-top:.2rem; }
+  .fRow.bad input { border-color:var(--err); }
+  .fRow .why { font-size:.75rem; color:var(--err); margin-top:.2rem; }
+  .loginBox { max-width:22rem; margin:4rem auto; }
+</style>
+</head>
+<body>
+<main>
+  <!-- Login. Replaced by the editor once a session exists. -->
+  <section id="login" class="loginBox" hidden>
+    <h1>Admin</h1>
+    <p class="sub">Sign in to edit the library.</p>
+    <div class="fRow">
+      <label for="pw">PASSWORD</label>
+      <input id="pw" type="password" autocomplete="current-password">
+    </div>
+    <button id="signIn" class="primary">SIGN IN</button>
+    <div id="loginStatus" class="status" hidden></div>
+  </section>
+
+  <div id="app" hidden>
+    <div class="adminBar">
+      <h1>ALLMIIBO ADMIN</h1>
+      <span id="count" class="badge"></span>
+      <span id="state" class="badge">NO CHANGES</span>
+      <span class="spacer"></span>
+      <button id="save" class="primary" disabled>SAVE &amp; PUBLISH</button>
+      <button id="export">EXPORT</button>
+      <button id="signOut">SIGN OUT</button>
+    </div>
+
+    <div id="status" class="status" hidden></div>
+
+    <div class="cols">
+      <div>
+        <div class="searchBox">
+          <input id="q" type="search" placeholder="Search name, series or ID…" aria-label="Search">
+        </div>
+        <div id="rows" class="rowList"></div>
+      </div>
+      <div id="editor" class="editor">
+        <p class="sub">Pick an amiibo to edit.</p>
+      </div>
+    </div>
+  </div>
+</main>
+<script type="module" src="./adminui.js"></script>
+</body>
+</html>
