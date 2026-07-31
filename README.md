@@ -22,6 +22,17 @@ needs lives in this repository and runs on browser and Node built-ins alone.
 The BLE protocol is documented in [PROTOCOL.md](PROTOCOL.md) rather than being
 pulled from someone else's script at runtime.
 
+**The site people visit is static and has no server.** It is a directory of
+files: no API call, no database, no runtime fetch of anything. That is
+unchanged, and it is the property the rest of this document assumes.
+
+There is one exception, and it is not part of the site. [`server/`](server/) is a
+private admin service for curating the amiibo database (see
+[Admin](#admin)), which regenerates the site's data file when something is
+edited. The site never talks to it, does not know it exists, and works exactly
+the same whether it is running or not. It is optional, it is not deployed with
+the site, and it too has no dependencies.
+
 ## Status
 
 Everything below is verified on hardware: **Pixl.js 2.11.2 and 2.16.0**
@@ -38,8 +49,9 @@ and 2.16.0 (January 2026) added on-device emulation for v3 amiibo.
 - **Interface**: an 8-bit skin with three themes, an original pirate mascot
   in twelve colourways, and an Advanced toggle that keeps the expert layer out
   of the way until asked for. ✅
-- **Tests**: 176 across seven files; the protocol suite runs against a
-  simulated device, the rest are pure. ✅
+- **Tests**: 375 across fourteen files; the protocol suite runs against a
+  simulated device, the admin suite against a real HTTP server on an ephemeral
+  port, the rest are pure. ✅
 
 Three hardware findings shape the sync design:
 
@@ -309,6 +321,61 @@ and vendored; nothing is fetched at runtime:
 every added, renamed or removed entry, so a bad upstream edit can't slip
 into a commit unreviewed, and fetches artwork for anything new.
 
+### The curated overlay
+
+Upstream is not always right, and it is not always current. Corrections live in
+[`content/amiibo-overrides.json`](content/amiibo-overrides.json), which the
+generator merges on top of the two sources. It can correct any upstream field,
+add amiibo upstream does not have yet, pin a filename or a device path, and
+define categories and notes.
+
+It exists because **the database is generated**: `npm run update-db` rewrites
+`web/data/amiibo-db.js` from scratch, so an edit made directly to that file
+survives exactly until the next refresh. The overlay is an input, so it does not.
+
+The merge happens **after the two sources combine and before anything is derived
+from the names**. That ordering is the whole safety argument: a corrected or
+authored entry then goes through the same disambiguation, the same 47-byte name
+check and the same collision gate as an upstream one, with no special-casing
+anywhere downstream. A curated name cannot bypass the check that stops two
+amiibos landing on one device path.
+
+Precedence, highest first:
+
+| Output | 1 | 2 | 3 |
+|---|---|---|---|
+| the ID exists | overlay `kind:"new"` | `db_amiibo.c` | `amiibo.json` |
+| `AMIIBO_NAMES` | overlay `name` | firmware table | API |
+| `AMIIBO_SERIES` / `_TYPES` | overlay `label` | API | `Series ${b}` |
+| `AMIIBO_RELEASE` | overlay `release` (`null` deletes) | earliest regional | absent |
+| `AMIIBO_SERIES_SHORT` | overlay `short` | the committed token | minted |
+| `AMIIBO_FILE_NAMES` / `_SHORT_NAMES` | overlay pin | derived | omitted |
+| device path | a filename you chose on disk | overlay `path` | the ladder above |
+
+Five more generated tables carry it: `AMIIBO_CATEGORIES`, `AMIIBO_PATHS`,
+`AMIIBO_NOTES`, `AMIIBO_AUTHORED` and `AMIIBO_UPSTREAM` (what an override
+replaced, which is how `update-db` notices upstream moving underneath a
+correction, since the generated file alone cannot show a value an override was
+masking). All are emitted whether or not anything is curated, so importers need
+no fallback.
+
+**Upstream can only warn; the overlay author can fail.** A routine refresh must
+not break because a third party edited their repository, so an override for an ID
+upstream dropped warns, and one upstream has caught up with is reported as
+redundant. Authoring an ID that upstream now has is fatal: two sources claim to
+name it and the tool cannot choose. So is an unknown key, because a mistyped
+`"catagories"` that silently does nothing is the worst failure a curated file can
+have.
+
+A path cannot be pinned on an ID that stands for more than one physical dump.
+Kirby Air Riders characters have four vehicle pairings per ID and the 91 Happy
+Home Designer cards share a fabricated one, so a single pinned path would
+collapse them and keep the last.
+
+Authored entries appear behind the same Settings switch as the fan-made card set.
+Neither is an official product, so with it off the headline completion figure
+stays comparable.
+
 ### Naming a file for an amiibo
 
 Sync normally moves files whose names you chose, and folder names are never
@@ -390,9 +457,9 @@ Some tools distribute a whole amiibo library as a **single file**. Two such
 containers are read; both are specified in full in
 [`FORMATS.md`](FORMATS.md).
 
-- **Flat 572** — the one written as well as read, produced by `PACK FOLDER` and
+- **Flat 572**, the one written as well as read, produced by `PACK FOLDER` and
   `PACK DEVICE`. Reverse engineered, described below.
-- **FCA** — read only, to the [published specification](https://github.com/fishybow/fca/blob/main/SPEC.md)
+- **FCA**, read only, to the [published specification](https://github.com/fishybow/fca/blob/main/SPEC.md)
   by fishybow (MIT). A real archive with a header and length-prefixed typed
   entries, and the better of the two where there is a choice: its type-2 entries
   carry whole 2048-byte v3 dumps, so **Kirby Air Riders vehicles survive**, which
@@ -472,6 +539,83 @@ your own host. A fresh clone shows letter placeholders until you run
 `fetch-images`; the page uses the sharpest tier present and never fetches
 anything at runtime.
 
+## Admin
+
+An optional private service for curating the database from a browser, without
+git and without a deploy. It is **not part of the site**: it lives outside
+`web/`, is not deployed by the site's deploy path, and nothing links to it.
+
+```
+you ──▶ the admin (Node)          the site (Apache, static)
+            │                            ▲
+            │ writes content/…json        │
+            └─ regenerates ───────────────┘  web/data/amiibo-db.js
+```
+
+Saving writes the overlay, then regenerates the site's database, so an edit is
+live immediately. Both writes are atomic, a temporary file renamed into place,
+so a crash leaves the previous version intact rather than a truncated one, and a
+visitor loading the site mid-save gets the old file or the new one, never half of
+either. Every save keeps a timestamped copy of the previous overlay first, in
+`content/backups/` (gitignored: the overlay itself is committed, and git is the
+history).
+
+Regeneration calls the same `generate()` the command line calls, and is tried as
+a dry run before anything is written. A save that would put two amiibos on one
+device path is refused with the reason, and neither file is touched.
+
+### Running it
+
+Secrets live in the environment and never in the repository.
+
+Hash a password once:
+
+```sh
+node -e "import('./server/auth.mjs').then(m=>console.log(m.hashPassword('your password')))"
+```
+
+Then set these in the environment, wherever your host keeps them. They are
+written out here as names only, deliberately: the leak guard in
+`test/admin.test.mjs` fails on anything in the repository that looks like one of
+these being assigned a value, and documentation is not worth an exception.
+
+| Variable | Value |
+|---|---|
+| `ADMIN_PASSWORD_HASH` | the output of the command above |
+| `SESSION_SECRET` | 32 bytes of hex, e.g. from `openssl rand -hex 32` |
+| `PUBLIC_SITE_DIR` | where the site's files are served from |
+| `DATA_DIR` | where the overlay and its backups live |
+| `CACHE_DIR` | the fetched upstream sources |
+| `PORT`, `HOST` | optional; default `8081` on `127.0.0.1` |
+
+Then `node server/index.mjs`.
+
+With no password and no session secret it refuses every request and will not
+start from the command line. It fails closed rather than running open.
+
+### Security
+
+The repository is public, so the code describes the whole scheme; the security is
+in the secrets, which are only ever in the environment. The password is
+scrypt-hashed and compared in constant time. Sessions are signed, stateless and
+expiring, with an `HttpOnly`, `Secure`, `SameSite=Strict` cookie. Every mutating
+request needs a CSRF token belonging to that session. Failed logins are rate
+limited per client. Request bodies are capped as they arrive rather than trusting
+the declared length. The one place a request string reaches the filesystem is
+normalised and checked to be inside its root. Errors never carry a stack.
+
+The hostname it answers on is treated as a secret too, which mostly means the
+code never needs it: the UI uses relative URLs and the server reads its host from
+the environment. The admin page carries no `og:*`, no manifest and no canonical
+link, any of which would publish the address in a preview card. A test enforces
+all of this over every committed *and uncommitted* file, without itself naming
+the host.
+
+Worth being plain about: **a secret hostname is obscurity, not security.** It
+appears in DNS and in Certificate Transparency logs the moment TLS is issued for
+it, which makes subdomains publicly enumerable. The password and the session
+handling are what actually protect this.
+
 ## Design notes
 
 - **Speed.** A full replace of a ~1000-dump library (clear the device, then
@@ -512,7 +656,7 @@ real work.
 npm test
 ```
 
-225 tests, no hardware needed:
+375 tests, no hardware needed:
 
 - `protocol.test.mjs`: against a simulated device: framing,
   multi-notification reassembly, command serialisation, chunked writes,
@@ -542,6 +686,26 @@ npm test
   never steals a path a real file occupies. Everything is asserted against
   synthetic bundles built to the spec, since `amiibos/` is not committed; the two
   real samples are checked behind an `existsSync` guard.
+- `dbsource.test.mjs`: the upstream parsers and the name derivation, against
+  tiny committed fixtures. This logic built the database for months with no
+  direct test, because it lived inside the generator where nothing could reach
+  it. Covers escaped quotes and non-ASCII names, malformed rows being skipped
+  without throwing, the earliest release winning, and each disambiguation rule
+  in turn.
+- `overlay.test.mjs`: the curated overlay. Mostly about what it refuses:
+  unknown keys, uppercase IDs, a filename that is really a path, a pin that
+  would not fit the device, and a pinned path on an ID that stands for many
+  physical dumps.
+- `auth.test.mjs`: passwords, sessions, cookies, CSRF and rate limiting.
+  Includes the cases that are easy to get wrong: a malformed hash refusing
+  everyone rather than everyone, and garbage tokens failing rather than throwing.
+- `server.test.mjs`: the admin over real HTTP on an ephemeral port. Refuses
+  without a session, without a CSRF token, and with another session's token;
+  refuses a save that would not build, leaving both files untouched; caps body
+  size; blocks four shapes of path traversal.
+- `admin.test.mjs`: the leak guards. No committed *or uncommitted* file may name
+  a subdomain of the public site, assign a secret, or contain a password hash;
+  nothing may link to the admin. The file does not name the host it protects.
 - `db.test.mjs`: invariants of the generated database, enforced on the committed
   file as well as at generation: every `(series, filename)` pair unique, short
   tokens present and unique, the delta tables carrying only real deltas, and no
@@ -584,6 +748,10 @@ web/js/bytes.js           little-endian codecs, string and metadata TLV
 web/js/ble.js             Web Bluetooth transport (Nordic UART Service)
 web/js/protocol.js        framing, reassembly, command queue, VFS commands
 web/js/planner.js         reconciliation logic + path assignment (pure, no I/O)
+web/js/dbsource.js        upstream parsers + name derivation, shared by the
+                          generator, the admin server and the browser
+web/js/devicepath.js      device byte limits and safe names, with no DB import
+web/js/overlay.js         the curated overlay: schema, validation, merge
 web/js/bundle.js          flat 572 all-in-one format: detect, split, pack
 web/js/fca.js             FCA all-in-one archive: detect, split (read only)
 web/js/bundlesource.js    unpack either into the local index, gap-fill dedupe
@@ -608,11 +776,20 @@ web/js/tutorial.js        the guided tour: spotlight overlay + per-page steps
 web/js/probe.js           read-only probe logic
 web/js/writetest.js       write-test logic
 
-tools/build-amiibo-db.mjs regenerate the database from source files
+content/amiibo-overrides.json  curated corrections, merged by the generator
+content/backups/          the admin's timestamped saves (gitignored)
+
+server/index.mjs          the admin service: routing, sessions, static UI
+server/auth.mjs           scrypt password, signed cookie, rate limit, CSRF
+server/store.mjs          atomic overlay writes and backups
+server/regen.mjs          rebuild the site database after an edit
+admin/                    the admin UI (not part of the public site)
+
+tools/build-amiibo-db.mjs regenerate the database; also importable as generate()
 tools/update-db.mjs        fetch upstream sources + regenerate + report the diff
 tools/fetch-amiibo-images.mjs  download artwork, build the three tiers
 
-test/                     nine files, see Tests above
+test/                     fourteen files, see Tests above
 ```
 
 ## Hosting
@@ -623,6 +800,12 @@ elsewhere, serve the contents of `web/` from any HTTPS server; HTTPS is what
 Web Bluetooth requires. A deployment is a plain mirror of `web/`: the
 artwork tiers are gitignored but do get deployed, and `design-lab.html` stays
 home.
+
+The [admin](#admin) is not part of that mirror. It lives outside `web/`, so a
+deploy neither carries it nor exposes it. If you run one, it needs its own site
+and its own hostname, and the deploy must stop overwriting `web/data/`. The
+admin owns that directory once it is regenerating the database, and a mirror
+would put the repository's copy back over your edits.
 
 ## Keep dumps and keys out of git
 
@@ -684,7 +867,9 @@ They depict no Nintendo character or mark.
 ### Licences in this repository
 
 - The author's own source, everything except `web/data/amiibo-db.js`, is
-  **MIT** (`LICENSE`).
+  **MIT** (`LICENSE`). That includes `content/amiibo-overrides.json`: it is
+  independently authored corrections, not a modification of the GPL-2.0 name
+  table, and it embeds none of it. Only the generated combination is GPL-2.0.
 - The generated `web/data/amiibo-db.js` embeds the amiibo name table from
   pixl.js and is therefore **GPL-2.0** (`LICENSE.GPL-2.0`); its series/type
   labels and dates come from AmiiboAPI (MIT).
