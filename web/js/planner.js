@@ -16,10 +16,19 @@
 //   - Paths cap at 63 bytes total and names at 47, so destinations are
 //     validated up front and reported rather than failing mid-transfer.
 
-import { MAX_PATH_BYTES, MAX_NAME_BYTES } from './protocol.js';
 import { seriesFolder, amiiboFileName, isHhdItemCards, vehicleTag } from './amiibo.js';
+import {
+  utf8Bytes,
+  devicePath,
+  checkDestination,
+  sanitizeLocalName,
+  sanitizeLocalRelPath,
+} from './devicepath.js';
 
-const encoder = new TextEncoder();
+// Re-exported so every existing call site keeps importing them from here. They
+// live in devicepath.js because the database generator needs them too and cannot
+// import this file: planner -> amiibo -> the database being generated.
+export { utf8Bytes, devicePath, checkDestination, sanitizeLocalName, sanitizeLocalRelPath };
 
 export const MODES = ['push', 'pull', 'two-way'];
 
@@ -41,56 +50,6 @@ export const DEFAULT_EXCLUDES = [
 export function isExcluded(relPath, excludes = DEFAULT_EXCLUDES) {
   const name = relPath.slice(relPath.lastIndexOf('/') + 1);
   return excludes.includes(name) || excludes.includes(relPath);
-}
-
-export function utf8Bytes(s) {
-  return encoder.encode(s).length;
-}
-
-// Full device path for a relative path under the sync root, e.g.
-// devicePath("E:/amiibo", "Zelda/Link.bin") === "E:/amiibo/Zelda/Link.bin"
-export function devicePath(deviceRoot, relPath) {
-  const root = deviceRoot.endsWith('/') ? deviceRoot.slice(0, -1) : deviceRoot;
-  return relPath ? `${root}/${relPath}` : root;
-}
-
-// Returns null if the destination fits, or a human-readable reason if not.
-export function checkDestination(deviceRoot, relPath) {
-  const full = devicePath(deviceRoot, relPath);
-  const bytes = utf8Bytes(full);
-  if (bytes > MAX_PATH_BYTES) {
-    return `path is ${bytes} bytes, over the ${MAX_PATH_BYTES}-byte limit`;
-  }
-  const name = full.slice(full.lastIndexOf('/') + 1);
-  const nameBytes = utf8Bytes(name);
-  if (nameBytes > MAX_NAME_BYTES) {
-    return `filename is ${nameBytes} bytes, over the ${MAX_NAME_BYTES}-byte limit`;
-  }
-  return null;
-}
-
-// The device filesystem accepts names the browser will not create locally.
-// Chrome's File System Access API enforces Windows naming rules on every
-// platform, so a folder called "Dark Souls " — with a trailing space, which
-// the device is perfectly happy with — fails with "Name is not allowed".
-//
-// Observed on a real device: two folders with trailing spaces, which killed
-// four operations of an 870-operation backup.
-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
-const ILLEGAL_LOCAL_CHARS = /[<>:"|?*\u0000-\u001f]/g;
-
-/** A single path segment made safe for the local filesystem. */
-export function sanitizeLocalName(name) {
-  let out = name.replace(ILLEGAL_LOCAL_CHARS, '_');
-  // Trailing spaces and dots are the ones that actually bite.
-  out = out.replace(/[ .]+$/, '').replace(/^\s+/, '');
-  if (WINDOWS_RESERVED.test(out)) out = `_${out}`;
-  return out || '_';
-}
-
-/** A device-relative path made safe for the local filesystem. */
-export function sanitizeLocalRelPath(relPath) {
-  return relPath.split('/').map(sanitizeLocalName).join('/');
 }
 
 // ---- choosing a path for an amiibo that has no home yet ------------------
