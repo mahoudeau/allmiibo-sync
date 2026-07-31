@@ -16,7 +16,7 @@
 //   - Paths cap at 63 bytes total and names at 47, so destinations are
 //     validated up front and reported rather than failing mid-transfer.
 
-import { seriesFolder, amiiboFileName, isHhdItemCards, vehicleTag } from './amiibo.js';
+import { seriesFolder, amiiboFileName, isHhdItemCards, vehicleTag, amiiboPath } from './amiibo.js';
 import {
   utf8Bytes,
   devicePath,
@@ -88,6 +88,17 @@ export function amiiboRelPath(id, { deviceRoot, uid = null, vehicle = null, keep
   const series = parseInt(id.slice(12, 14), 16);
   const long = seriesFolder(series);
   const short = seriesFolder(series, { short: true });
+
+  // A curated path, if one was set. It is tried through the same fits() check as
+  // every other rung and is never truncated, so a pin that does not fit under a
+  // longer device root falls through to the ladder rather than breaking. The
+  // build has already refused to pin an ID that stands for more than one dump,
+  // which is what makes it safe to try this early.
+  const pinned = amiiboPath(id);
+  if (pinned) {
+    const relPath = fits(deviceRoot, pinned);
+    if (relPath) return relPath;
+  }
 
   // A name the user chose is kept as-is; only the folder is added. Trying the
   // full series label first and the initialism second is the same ladder the

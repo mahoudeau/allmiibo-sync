@@ -21,6 +21,8 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
+import { OVERLAY_PATH, parseOverlay } from '../web/js/overlay.js';
+
 const run = promisify(execFile);
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -81,11 +83,24 @@ for (const [name, url] of Object.entries(SOURCES)) {
   console.log(`fetched ${name} (${res.headers.get('content-length') ?? '?'} bytes)`);
 }
 
-await run('node', [
-  join(ROOT, 'tools/build-amiibo-db.mjs'),
-  join(CACHE, 'db_amiibo.c'),
-  join(CACHE, 'amiibo.json'),
-]).then(({ stdout }) => process.stdout.write(stdout));
+// The generator refuses to write on a collision or a bad overlay, and everything
+// explaining why goes to stderr. Discarding it turned the one failure that
+// matters into an unhandled rejection and a stack trace, which is precisely the
+// moment you need the list of clashing IDs instead.
+try {
+  const { stdout, stderr } = await run('node', [
+    join(ROOT, 'tools/build-amiibo-db.mjs'),
+    join(CACHE, 'db_amiibo.c'),
+    join(CACHE, 'amiibo.json'),
+  ]);
+  process.stdout.write(stdout);
+  if (stderr) process.stderr.write(stderr);
+} catch (err) {
+  process.stdout.write(err.stdout ?? '');
+  process.stderr.write(err.stderr ?? `${err.message}\n`);
+  console.error('\nThe database was not regenerated. Nothing has been changed.');
+  process.exit(1);
+}
 
 // ---- report the difference -------------------------------------------------
 
@@ -145,6 +160,63 @@ if (churn.length) {
   for (const c of churn) console.log(`  ${c}`);
 } else {
   console.log('\nnaming: unchanged (no device-side renames)');
+}
+
+// ---- the curated overlay ---------------------------------------------------
+//
+// Upstream moving underneath a correction is the case worth surfacing: without
+// AMIIBO_UPSTREAM it is undetectable, because the generated file alone cannot
+// show a value that an override was masking.
+
+const overlayText = await readFile(join(ROOT, OVERLAY_PATH), 'utf8').catch(() => null);
+if (overlayText !== null) {
+  let overlay = null;
+  try {
+    overlay = parseOverlay(overlayText);
+  } catch (err) {
+    console.error(`\n${err.message}`);
+    process.exit(1);
+  }
+
+  const amiibos = Object.entries(overlay.amiibos ?? {});
+  const authored = amiibos.filter(([, e]) => e.kind === 'new').length;
+  const pinnedPaths = amiibos.filter(([, e]) => e.path !== undefined).length;
+  console.log(
+    `\noverlay: ${amiibos.length - authored} corrections, ${authored} authored, ` +
+      `${Object.keys(overlay.categories ?? {}).length} categories, ${pinnedPaths} pinned paths`
+  );
+
+  const wasUpstream = parseIds(block(beforeText, 'AMIIBO_UPSTREAM'));
+  const nowUpstream = parseIds(block(afterText, 'AMIIBO_UPSTREAM'));
+  const problems = [];
+
+  for (const [id, entry] of amiibos) {
+    if (entry.kind !== 'override') continue;
+    if (!after.has(id)) {
+      problems.push(`ORPHANED  ${id}: upstream no longer has this ID. The override does nothing.`);
+      continue;
+    }
+    if (entry.name === undefined) continue;
+    if (!nowUpstream.has(id)) {
+      problems.push(`REDUNDANT ${id}: upstream now says "${after.get(id)}" itself. Delete the override.`);
+    } else if (wasUpstream.has(id) && wasUpstream.get(id) !== nowUpstream.get(id)) {
+      problems.push(
+        `STALE     ${id}: upstream renamed "${wasUpstream.get(id)}" -> "${nowUpstream.get(id)}". ` +
+          `Your override still says "${entry.name}". Confirm it is still the correction you want.`
+      );
+    }
+  }
+
+  for (const [catId, cat] of Object.entries(overlay.categories ?? {})) {
+    for (const m of cat.members ?? []) {
+      if (!after.has(m)) problems.push(`ORPHANED  ${m}: category "${catId}" lists an ID upstream dropped.`);
+    }
+  }
+
+  if (problems.length) {
+    console.log(`\nOVERLAY NEEDS ATTENTION (${problems.length}):`);
+    for (const p of problems) console.log(`  ${p}`);
+  }
 }
 
 // ---- artwork for anything new ----------------------------------------------

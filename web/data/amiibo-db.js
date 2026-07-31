@@ -2076,3 +2076,21 @@ export const AMIIBO_SHORT_NAMES = Object.freeze({
   '3480000002580002': "Mega Man - GE",
   '35c0000003920a02': "Shovel Knight - GE",
 });
+
+// Curated groupings, from content/amiibo-overrides.json. Nothing upstream has these.
+export const AMIIBO_CATEGORIES = Object.freeze({});
+
+// amiibo ID -> a curated device-relative path, tried before the generated name.
+export const AMIIBO_PATHS = Object.freeze({});
+
+// amiibo ID -> a curator's note, shown in the UI.
+export const AMIIBO_NOTES = Object.freeze({});
+
+// IDs that exist only because content/amiibo-overrides.json says so. Not official products, so
+// the UI lists them with the other fan-made entries behind the same setting and
+// the headline completion figure stays comparable.
+export const AMIIBO_AUTHORED = Object.freeze([]);
+
+// amiibo ID -> the upstream value an override replaced. Not for display: it is
+// how update-db notices upstream changing underneath a correction.
+export const AMIIBO_UPSTREAM = Object.freeze({});

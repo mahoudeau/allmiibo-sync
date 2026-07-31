@@ -253,60 +253,38 @@ ${curatedTables({ categories, paths: pins.paths, notes: pins.notes, authored, up
 }
 
 /**
- * The tables that exist only because of curated data.
+ * The tables that carry curated data.
  *
- * Emitted as one block so a database built from an empty overlay is byte-for-byte
- * what it was before any of this existed — the tables simply do not appear. That
- * is what makes "the refactor changed nothing" checkable.
+ * Always emitted, empty or not. They are part of the file's shape, so consumers
+ * can import them by name without every importer having to cope with a database
+ * built before the overlay existed.
  */
 function curatedTables({ categories, paths, notes, authored, upstreamWas }) {
-  const anything = Object.keys(categories).length || paths.size || notes.size ||
-    authored.length || upstreamWas.size;
-  if (!anything) return '';
-
-  const idTable = (name, map, comment) => {
-    if (!map.size) return '';
-    return `
+  const idTable = (name, map, comment) => `
 // ${comment}
-export const ${name} = Object.freeze({
+export const ${name} = Object.freeze({${map.size ? `
 ${[...map].sort((a, b) => a[0].localeCompare(b[0])).map(([id, v]) => `  '${id}': ${JSON.stringify(v)},`).join('\n')}
-});
+` : ''}});
 `;
-  };
 
-  let out = '';
-
-  if (Object.keys(categories).length) {
-    out += `
+  return `
 // Curated groupings, from ${OVERLAY_PATH}. Nothing upstream has these.
-export const AMIIBO_CATEGORIES = Object.freeze({
+export const AMIIBO_CATEGORIES = Object.freeze({${Object.keys(categories).length ? `
 ${Object.entries(categories).map(([id, c]) =>
   `  ${JSON.stringify(id)}: Object.freeze({ label: ${JSON.stringify(c.label)}, order: ${c.order}, members: Object.freeze([${c.members.map((m) => `'${m}'`).join(', ')}]) }),`
 ).join('\n')}
-});
-`;
-  }
-
-  out += idTable('AMIIBO_PATHS', paths,
-    'amiibo ID -> a curated device-relative path, tried before the generated name.');
-  out += idTable('AMIIBO_NOTES', notes,
-    'amiibo ID -> a curator\'s note, shown in the UI.');
-
-  if (authored.length) {
-    out += `
-// IDs that exist only because ${OVERLAY_PATH} says so. Not official products:
-// the UI counts them alongside the other fan-made entries, behind the same
-// setting, so the headline completion figure stays comparable.
-export const AMIIBO_AUTHORED = Object.freeze([
+` : ''}});
+${idTable('AMIIBO_PATHS', paths,
+  'amiibo ID -> a curated device-relative path, tried before the generated name.')}${idTable('AMIIBO_NOTES', notes,
+  "amiibo ID -> a curator's note, shown in the UI.")}
+// IDs that exist only because ${OVERLAY_PATH} says so. Not official products, so
+// the UI lists them with the other fan-made entries behind the same setting and
+// the headline completion figure stays comparable.
+export const AMIIBO_AUTHORED = Object.freeze([${authored.length ? `
 ${authored.slice().sort().map((id) => `  '${id}',`).join('\n')}
-]);
-`;
-  }
-
-  out += idTable('AMIIBO_UPSTREAM', upstreamWas,
-    'amiibo ID -> the upstream value an override replaced. Not for display: it is\n// how update-db notices upstream changing underneath a correction.');
-
-  return out;
+` : ''}]);
+${idTable('AMIIBO_UPSTREAM', upstreamWas,
+  'amiibo ID -> the upstream value an override replaced. Not for display: it is\n// how update-db notices upstream changing underneath a correction.')}`;
 }
 
 // ---- CLI ----------------------------------------------------------------

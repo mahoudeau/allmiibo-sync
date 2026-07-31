@@ -27,6 +27,10 @@ import {
   AMIIBO_SERIES_SHORT,
   AMIIBO_FILE_NAMES,
   AMIIBO_SHORT_NAMES,
+  AMIIBO_CATEGORIES,
+  AMIIBO_PATHS,
+  AMIIBO_NOTES,
+  AMIIBO_AUTHORED,
 } from '../data/amiibo-db.js';
 
 export const AMIIBO_ID_OFFSET = 84;
@@ -200,6 +204,60 @@ export function amiiboName(id) {
 // known to be unique. The path assembly itself lives in planner.js next to
 // checkDestination.
 
+// ---- curated data -------------------------------------------------------
+//
+// Everything below comes from content/amiibo-overrides.json by way of the
+// generator. All of it is empty until something is curated, so these are plain
+// lookups with sensible nulls rather than anything conditional.
+
+/** A curated device path for an amiibo, or null. See amiiboRelPath in planner.js. */
+export function amiiboPath(id) {
+  return AMIIBO_PATHS[id] ?? null;
+}
+
+/** A curator's note about an amiibo, or null. */
+export function amiiboNote(id) {
+  return AMIIBO_NOTES[id] ?? null;
+}
+
+// Authored entries are not official products. They are listed alongside the
+// other fan-made ones and behind the same setting, so switching that off leaves
+// the headline completion figure comparable with anyone else's.
+let authoredSet = null;
+export function isAuthored(id) {
+  authoredSet ??= new Set(AMIIBO_AUTHORED);
+  return authoredSet.has(id);
+}
+
+/** Curated categories, in their curated order. */
+export function categoryList() {
+  return Object.entries(AMIIBO_CATEGORIES)
+    .map(([id, c]) => ({ id, label: c.label, order: c.order ?? 0, size: c.members.length }))
+    .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
+}
+
+/** The amiibo IDs in a category. */
+export function categoryMembers(categoryId) {
+  return AMIIBO_CATEGORIES[categoryId]?.members ?? [];
+}
+
+// The inverse index, built once. Categories store their members rather than
+// each amiibo storing its categories, because tagging forty amiibos is one list
+// of forty IDs instead of forty separate entries.
+let categoryIndex = null;
+export function amiiboCategories(id) {
+  if (!categoryIndex) {
+    categoryIndex = new Map();
+    for (const [catId, c] of Object.entries(AMIIBO_CATEGORIES)) {
+      for (const m of c.members) {
+        if (!categoryIndex.has(m)) categoryIndex.set(m, []);
+        categoryIndex.get(m).push({ id: catId, label: c.label });
+      }
+    }
+  }
+  return categoryIndex.get(id) ?? [];
+}
+
 /** Folder name for a series byte. `short` picks the initialism, e.g. "MSS". */
 export function seriesFolder(series, { short = false } = {}) {
   const table = short ? AMIIBO_SERIES_SHORT : SERIES_NAMES;
@@ -324,8 +382,12 @@ const MANY_DUMPS = 8;
 export function buildCollection(
   ownedLocal,
   ownedDevice = null,
+  // `hideHhd` is the fan-made switch. It covers the Happy Home Designer cards
+  // and anything authored in the overlay alike: neither is an official product,
+  // so with it off the headline completion figure stays comparable.
   { nameHints = null, dumpCounts = null, hideHhd = false } = {}
 ) {
+  const isFanmade = (id) => isHhdItemCards(id) || isAuthored(id);
   const localSet = ownedLocal instanceof Map ? new Set(ownedLocal.keys()) : new Set(ownedLocal);
   const deviceSet = ownedDevice
     ? ownedDevice instanceof Map
@@ -339,7 +401,7 @@ export function buildCollection(
     if (!d) return;
     // Hiding the fan-made set is display-only: the entry (and its counts)
     // disappear, but sync still treats the files like any others.
-    if (hideHhd && isHhdItemCards(id)) return;
+    if (hideHhd && isFanmade(id)) return;
     if (!seriesMap.has(d.series)) {
       seriesMap.set(d.series, { series: d.series, seriesName: d.seriesName, items: [] });
     }
