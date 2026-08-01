@@ -69,6 +69,7 @@ export function parseGenerated(text) {
     fileNames: parseIds(block(text, 'AMIIBO_FILE_NAMES')),
     shortNames: parseIds(block(text, 'AMIIBO_SHORT_NAMES')),
     upstream: parseIds(block(text, 'AMIIBO_UPSTREAM')),
+    excluded: parseIds(block(text, 'AMIIBO_EXCLUDED')),
   };
 }
 
@@ -127,6 +128,17 @@ export function diffDatabases(beforeText, afterText, { overlay = null } = {}) {
         before: null, after: name,
       });
     }
+  }
+  // An entry declined last time is offered again, because declining an addition
+  // means "not this time" rather than "never". Without this the exclusion would
+  // silence it forever: the candidate omits it too, so there would be no
+  // difference to notice.
+  for (const [id, name] of after.excluded) {
+    if (before.names.has(id)) continue;   // it is published; nothing to offer
+    push({
+      key: `added:${id}`, group: 'added', subject: id, label: name,
+      before: null, after: name, declinedBefore: true,
+    });
   }
   for (const [id, name] of before.names) {
     if (!after.names.has(id)) {
@@ -235,10 +247,20 @@ export function diffDatabases(beforeText, afterText, { overlay = null } = {}) {
   // Which of the three answers each change can actually offer. DISCARD only
   // means something where there is an edit of mine to discard.
   for (const c of changes) {
-    c.choices = c.group === 'added'
-      ? ['keep']
-      : c.mine ? ['keep', 'discard', 'skip'] : ['keep', 'skip'];
-    c.required = c.group !== 'added';
+    // KEEP is offered only where there is something to keep. A value upstream
+    // has only just introduced has no previous version to hold on to, so the
+    // choice is not between three answers but between taking it and taking it.
+    // An addition can be declined now — it is held out by an exclusion and
+    // offered again next time — so it has two real answers like everything
+    // else. What still cannot be declined is a value with no previous version:
+    // a brand-new series label has nothing to fall back to and the build
+    // hard-fails without one.
+    const holdable = c.group === 'added' || skipRecipe(c) !== null;
+    c.choices = ['keep', ...(c.mine ? ['discard'] : []), ...(holdable ? ['skip'] : [])];
+    // Nothing is required: anything left untouched is accepted, and the confirm
+    // step says so. Asking a question whose only answer is "yes" is what made
+    // the old screen block on a row nobody could act on.
+    c.required = false;
   }
 
   const counts = { added: 0, removed: 0, renamed: 0, naming: 0, label: 0, release: 0 };
@@ -247,7 +269,140 @@ export function diffDatabases(beforeText, afterText, { overlay = null } = {}) {
   counts.danger = changes.filter((c) => c.danger).length;
   counts.orphans = orphans.length;
 
-  return { counts, changes, orphans };
+  const entities = groupByEntity(changes, { before, after, overlay });
+
+  return { counts, changes, orphans, entities, summary: summarise(entities) };
+}
+
+// ---- entities: what a person is actually deciding about -------------------
+//
+// A change to a field is not a thing you decide about. An amiibo is. Upstream
+// adding one produces a name, a release date and possibly a whole new series —
+// three rows in the flat list, one event in the world. Listing them as peers is
+// what made the review screen unreadable and its counts disagree: the summary
+// counted rows per group while the blocking count was over something else.
+//
+// So the flat `changes` list stays (the apply path names changes by key), and
+// this is the view a screen renders: one row per amiibo or series, with the
+// fields it brings nested underneath.
+
+const KIND_OF = { series: 'series', types: 'type' };
+
+/** Which entity a flat change belongs to, and what it says about it. */
+function entityOf(change) {
+  switch (change.group) {
+    case 'added':
+      return { kind: 'amiibo', id: change.subject, op: 'add', field: 'name' };
+    case 'removed':
+      return { kind: 'amiibo', id: change.subject, op: 'remove', field: 'name' };
+    case 'renamed':
+      return { kind: 'amiibo', id: change.subject, op: 'edit', field: 'name' };
+    case 'release':
+      return { kind: 'amiibo', id: change.subject, op: 'edit', field: 'released' };
+    case 'label':
+      return { kind: KIND_OF[change.kind], id: String(change.subject), op: 'edit', field: 'name' };
+    case 'naming':
+      return change.kind === 'seriesFolder'
+        ? { kind: 'series', id: String(change.subject), op: 'edit', field: 'folder' }
+        : { kind: 'amiibo', id: change.subject, op: 'edit', field: change.kind };
+    default:
+      return null;
+  }
+}
+
+function groupByEntity(changes, { before, after, overlay }) {
+  const byKey = new Map();
+
+  for (const change of changes) {
+    const where = entityOf(change);
+    if (!where) continue;
+    const key = `${where.kind}:${where.id}`;
+
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        key,
+        kind: where.kind,
+        id: where.id,
+        op: where.op,
+        label: '',
+        fields: [],
+        changeKeys: [],
+        device: null,
+        danger: false,
+        // A change nobody can decline is shown as a consequence rather than as
+        // a question. A brand-new series label is the case: the build hard-fails
+        // on a series byte with no name, so "decline" would mean "refuse to
+        // build" rather than "leave it as it was".
+        decidable: true,
+      });
+    }
+    const e = byKey.get(key);
+
+    // add and remove outrank edit: an amiibo that arrives with a date is being
+    // added, not edited.
+    if (where.op !== 'edit') e.op = where.op;
+
+    e.fields.push({
+      field: where.field,
+      published: change.before,
+      yours: change.mine?.value ?? null,
+      upstream: change.after,
+    });
+    e.changeKeys.push(change.key);
+    if (change.danger) e.danger = true;
+    if (change.device) e.device = change.device;
+    if (!change.choices.includes('skip') && change.group !== 'added') e.decidable = false;
+  }
+
+  // Names, and the link between a new amiibo and the new series it needs.
+  const newSeries = new Set(
+    [...byKey.values()].filter((e) => e.kind === 'series' && e.op === 'edit'
+      && e.fields.some((f) => f.field === 'name' && f.published === null))
+      .map((e) => e.id));
+
+  for (const e of byKey.values()) {
+    if (e.kind === 'amiibo') {
+      e.label = after.names.get(e.id) ?? before.names.get(e.id)
+        ?? after.excluded.get(e.id) ?? e.id;
+      const seriesByte = String(parseInt(e.id.slice(12, 14), 16));
+      e.series = after.series.get(seriesByte) ?? before.series.get(seriesByte) ?? null;
+      // Its series is new too, so the two decisions move together.
+      if (newSeries.has(seriesByte)) e.needs = `series:${seriesByte}`;
+    } else {
+      const table = e.kind === 'series' ? 'series' : 'types';
+      e.label = after[table].get(e.id) ?? before[table].get(e.id) ?? `0x${Number(e.id).toString(16)}`;
+      // A series that exists only because upstream added amiibo in it is a
+      // consequence of accepting them, not an independent question.
+      if (newSeries.has(e.id)) {
+        e.op = 'add';
+        e.decidable = false;
+      }
+    }
+    // An overlay entry means one of the values on offer is yours.
+    e.mine = e.fields.some((f) => f.yours !== null);
+  }
+
+  const order = { amiibo: 2, series: 0, type: 1 };
+  return [...byKey.values()].sort((a, b) =>
+    order[a.kind] - order[b.kind] || a.label.localeCompare(b.label));
+}
+
+/**
+ * The headline, in the shape Terraform uses: named counts, zeros intact, over
+ * ENTITIES rather than fields — so the number in the summary is the number of
+ * rows on screen, and the two cannot disagree.
+ */
+function summarise(entities) {
+  const of = (kind, op) => entities.filter((e) => e.kind === kind && e.op === op).length;
+  return {
+    amiibo: { add: of('amiibo', 'add'), edit: of('amiibo', 'edit'), remove: of('amiibo', 'remove') },
+    series: { add: of('series', 'add'), edit: of('series', 'edit'), remove: of('series', 'remove') },
+    type: { add: of('type', 'add'), edit: of('type', 'edit'), remove: of('type', 'remove') },
+    // The two facts that decide whether this update deserves attention.
+    yours: entities.filter((e) => e.mine).length,
+    device: entities.filter((e) => e.device).length,
+    total: entities.length,
+  };
 }
 
 // ---- turning decisions into an overlay -----------------------------------
@@ -259,6 +414,12 @@ export function diffDatabases(beforeText, afterText, { overlay = null } = {}) {
  * BEFORE value — the one currently published — as an override.
  */
 function skipRecipe(change) {
+  // Nothing to hold. A brand-new series label, or a release date upstream has
+  // only just published, had no previous value — "keep what the site shows
+  // today" would mean pinning nothing, and pinning null fails validation.
+  // Release is the exception: null there is meaningful, it means no date.
+  if (change.before === null && change.group !== 'release') return null;
+
   switch (change.group) {
     case 'renamed':
       return { scope: 'amiibo', field: 'name', value: change.before };
@@ -300,6 +461,7 @@ export function applyDecisions(overlay, diff, decisions, today = null) {
     types: { ...(overlay.types ?? {}) },
     categories: { ...(overlay.categories ?? {}) },
     amiibos: { ...(overlay.amiibos ?? {}) },
+    excluded: [...(overlay.excluded ?? [])],
   };
   const applied = { kept: 0, discarded: 0, skipped: 0, pinsWritten: 0, pinsDropped: 0 };
   const byKey = new Map(diff.changes.map((c) => [c.key, c]));
@@ -318,12 +480,22 @@ export function applyDecisions(overlay, diff, decisions, today = null) {
     }
   };
 
-  for (const [key, verdict] of Object.entries(decisions)) {
+  // Walked over the CHANGES rather than the decisions, because a change nobody
+  // touched is accepted — and accepting has work to do when a previous decline
+  // is still holding an entry out. Reading only the decisions left such an
+  // entry excluded for good, turning "not this time" into "never" by silence.
+  // Keys naming no change are still honoured as a no-op, as before.
+  const answered = new Map(diff.changes.map((c) => [c.key, decisions[c.key] ?? 'keep']));
+  for (const [key, verdict] of answered) {
     const change = byKey.get(key);
     if (!change) continue;
 
     if (verdict === 'keep') {
-      // The default, and free: re-applying the overlay is what the build does.
+      // Free, except where a previous decline is still holding the entry out:
+      // accepting it has to lift that, or nothing happens.
+      if (change.group === 'added' && (next.excluded ?? []).includes(String(change.subject))) {
+        next.excluded = next.excluded.filter((id) => id !== String(change.subject));
+      }
       applied.kept++;
       continue;
     }
@@ -345,6 +517,16 @@ export function applyDecisions(overlay, diff, decisions, today = null) {
     }
 
     if (verdict === 'skip') {
+      // Declining an addition is the one case with nowhere to pin: the entry
+      // comes from the sources, so keeping it out needs an exclusion. It is
+      // re-offered on the next update, which is what "not this time" means.
+      if (change.group === 'added') {
+        const list = new Set(next.excluded ?? []);
+        list.add(String(change.subject));
+        next.excluded = [...list].sort();
+        applied.skipped++;
+        continue;
+      }
       const recipe = skipRecipe(change);
       if (!recipe) continue;
       const table = recipe.scope === 'series' ? 'series' : 'amiibos';

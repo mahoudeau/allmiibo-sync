@@ -21,7 +21,7 @@ import {
 // Series names are curated data: they come from upstream and can be renamed in
 // the overlay. Asserting the literal here tests the database, not the decoder —
 // and a legitimate rename would fail a test about byte parsing.
-import { AMIIBO_SERIES } from '../web/data/amiibo-db.js';
+import { AMIIBO_SERIES, AMIIBO_NAMES } from '../web/data/amiibo-db.js';
 
 // A minimal stand-in for a dump: 540 bytes with an ID at offset 84.
 function dump(idHex, size = 540) {
@@ -292,25 +292,31 @@ test('parseUid skips the BCC byte, matching how NTAG UIDs are actually laid out'
   assert.equal(parseUid(new Uint8Array(2)), null);
 });
 
+// Derived, never written down: the database grows on every upstream update, and
+// a count copied into a test fails on the next one while asserting nothing about
+// the behaviour. What matters here is the DIFFERENCE the setting makes.
+const DB_ROWS = Object.keys(AMIIBO_NAMES).length;
+
 test('hideHhd removes the fan-made set from the universe entirely', () => {
   const id = '026a000100000502';
   const owned = new Set([id, '0000000000000002']);
-  // Off (default): the set is a known entry — 946 database rows + 1 curated.
+  // Off (default): the set is a known entry — every database row plus 1 curated.
   const shown = buildCollection(owned, null, { dumpCounts: new Map([[id, 91]]) });
-  assert.equal(shown.stats.knownTotal, 947);
+  assert.equal(shown.stats.knownTotal, DB_ROWS + 1);
   assert.ok(shown.series.flatMap((s) => s.items).some((i) => i.special === 'hhd-items'));
   // On: gone from the list and from every count, even though dumps are owned.
   const hidden = buildCollection(owned, null, { dumpCounts: new Map([[id, 91]]), hideHhd: true });
-  assert.equal(hidden.stats.knownTotal, 946);
+  assert.equal(hidden.stats.knownTotal, DB_ROWS,
+    'exactly the curated placeholder is removed, and nothing else');
   assert.ok(!hidden.series.flatMap((s) => s.items).some((i) => i.special));
   assert.equal(hidden.stats.ownedKnown, 1); // just Mario
   // An official-only collector can reach "complete": missing excludes the set.
-  assert.equal(hidden.stats.missingLocal, 945);
+  assert.equal(hidden.stats.missingLocal, DB_ROWS - 1, 'all but the Mario owned');
 });
 
 test('hideHhd also suppresses the curated placeholder when nothing is owned', () => {
   const c = buildCollection(new Set(), null, { hideHhd: true });
-  assert.equal(c.stats.knownTotal, 946);
+  assert.equal(c.stats.knownTotal, DB_ROWS);
   assert.ok(!c.series.flatMap((s) => s.items).some((i) => i.special));
 });
 

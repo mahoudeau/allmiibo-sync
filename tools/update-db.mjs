@@ -15,13 +15,14 @@
 // Prints exactly what changed, because a silent regeneration is how a bad
 // upstream edit would slip into the committed database unreviewed.
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile, rename } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
 import { OVERLAY_PATH, parseOverlay, EMPTY_OVERLAY } from '../web/js/overlay.js';
+import { Upstream } from '../server/upstream.mjs';
 import { parseGenerated, diffDatabases } from '../web/js/dbdiff.js';
 
 const run = promisify(execFile);
@@ -38,20 +39,33 @@ const SOURCES = {
 };
 
 const skipImages = process.argv.includes('--no-images');
+// See what a refresh would do without doing any of it. The sources are still
+// fetched — you cannot diff against what you have not downloaded — but they go
+// to a staging directory, the database is built to a scratch file, and neither
+// the live cache nor web/data/amiibo-db.js is touched.
+const dryRun = process.argv.includes('--dry-run');
 
 // ---- snapshot what we have, fetch sources, regenerate ---------------------
 
 const beforeText = await readFile(DB_FILE, 'utf8');
 const before = parseGenerated(beforeText);
 console.log(`current database: ${before.names.size} entries`);
+if (dryRun) console.log('dry run: nothing will be written\n');
 
-await mkdir(CACHE, { recursive: true });
-for (const [name, url] of Object.entries(SOURCES)) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${name}: HTTP ${res.status} from ${url}`);
-  await writeFile(join(CACHE, name), Buffer.from(await res.arrayBuffer()));
-  console.log(`fetched ${name} (${res.headers.get('content-length') ?? '?'} bytes)`);
+// Fetching goes through the same Upstream the admin uses, so both land in
+// pending/ and neither can leave a half-fetched or implausible pair live. The
+// live cache is replaced only by promote(), after a successful build.
+const upstream = new Upstream({ cacheDir: CACHE, sources: SOURCES });
+const meta = await upstream.refresh();
+for (const src of meta.sources) {
+  console.log(`fetched ${src.name} (${src.bytes} bytes, ${src.entries} entries`
+    + `${src.changed ? '' : ', unchanged'})`);
 }
+
+// The candidate is built to a scratch path so it can be compared before it
+// counts. On a real run it is then moved into place; on a dry run it is thrown
+// away with the fetch.
+const CANDIDATE = join(CACHE, 'pending/candidate.js');
 
 // The generator refuses to write on a collision or a bad overlay, and everything
 // explaining why goes to stderr. Discarding it turned the one failure that
@@ -60,14 +74,16 @@ for (const [name, url] of Object.entries(SOURCES)) {
 try {
   const { stdout, stderr } = await run('node', [
     join(ROOT, 'tools/build-amiibo-db.mjs'),
-    join(CACHE, 'db_amiibo.c'),
-    join(CACHE, 'amiibo.json'),
+    join(CACHE, 'pending/db_amiibo.c'),
+    join(CACHE, 'pending/amiibo.json'),
+    '--out', CANDIDATE,
   ]);
   process.stdout.write(stdout);
   if (stderr) process.stderr.write(stderr);
 } catch (err) {
   process.stdout.write(err.stdout ?? '');
   process.stderr.write(err.stderr ?? `${err.message}\n`);
+  await upstream.discard();
   console.error('\nThe database was not regenerated. Nothing has been changed.');
   process.exit(1);
 }
@@ -78,7 +94,7 @@ try {
 // screen. Two reports of what upstream changed would drift, and the drift would
 // be invisible until one of them said a device-wide rename was harmless.
 
-const afterText = await readFile(DB_FILE, 'utf8');
+const afterText = await readFile(CANDIDATE, 'utf8');
 const after = parseGenerated(afterText);
 
 const overlayForDiff = await readFile(join(ROOT, OVERLAY_PATH), 'utf8')
@@ -90,6 +106,22 @@ const of = (group) => diff.changes.filter((c) => c.group === group);
 const list = (rows, fmt) => { for (const c of rows) console.log(`  ${fmt(c)}`); };
 
 console.log(`\ndatabase: ${before.names.size} -> ${after.names.size} entries`);
+
+// The headline, in the shape the admin's review shows and Terraform's plan
+// uses: named counts over ENTITIES, zeros intact. Counted from the same
+// summary the screen renders, so the two cannot describe the same update
+// differently.
+const s = diff.summary;
+console.log(
+  `\nUpdate: ${s.amiibo.add} amiibo to add, ${s.amiibo.edit} to change, `
+  + `${s.amiibo.remove} to remove`
+  + (s.series.add || s.series.edit || s.series.remove
+    ? ` · ${s.series.add} series to add, ${s.series.edit} to change` : '')
+  + (s.type.add || s.type.edit ? ` · ${s.type.add} types to add` : ''));
+console.log(
+  (s.yours ? `${s.yours} collide with something you curated` : 'Nothing you curated is affected')
+  + ' · '
+  + (s.device ? `${s.device} would rename files on a device` : 'No files move on any device'));
 
 const added = of('added');
 if (added.length) {
@@ -190,6 +222,21 @@ if (overlayText !== null) {
     for (const p of problems) console.log(`  ${p}`);
   }
 }
+
+// ---- commit, or throw it all away ------------------------------------------
+
+if (dryRun) {
+  await upstream.discard();
+  console.log('\nDry run: the database, the cache and the overlay are all unchanged.');
+  console.log('Run `npm run update-db` to apply this, or review it in the admin.');
+  process.exit(0);
+}
+
+// The candidate becomes the database, and only then do the sources it was built
+// from become live. The other order would leave the database ahead of the cache,
+// so the next regeneration would silently put the old upstream back.
+await rename(CANDIDATE, DB_FILE);
+await upstream.promote();
 
 // ---- artwork for anything new ----------------------------------------------
 

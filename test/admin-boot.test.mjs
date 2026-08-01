@@ -44,6 +44,59 @@ const BACKUPS = [
   '2026-07-30T09-12-44-000Z.json',
 ];
 
+// The preview the admin renders, produced by the real diff over a real
+// database rather than written out by hand.
+//
+// A hand-built fixture is exactly how the old screen's tests stayed green while
+// the screen was wrong: the fixture said what the test author believed, not
+// what the module produces. This mutates the committed database the way
+// upstream did — two amiibo in a brand new series — and lets dbdiff describe it.
+const { readFileSync } = await import('node:fs');
+const { diffDatabases } = await import('../web/js/dbdiff.js');
+
+const LIVE = readFileSync(new URL('../web/data/amiibo-db.js', import.meta.url), 'utf8');
+const GRACE = '3540000005032002';
+const LEON = '3541000005042002';
+const SERIES = 32;
+
+// The BEFORE is the committed database with these entries taken OUT, and the
+// AFTER is that same text with them put back. Removing first is what makes the
+// pair independent of upstream: this exact update has since been applied, so
+// building the AFTER by addition alone produced a database with duplicate keys
+// and no difference to describe, and thirteen tests failed at once. A fixture
+// that assumes what upstream does not yet have expires the moment it does.
+const without = (text, ...lines) => text.split('\n')
+  .filter((l) => !lines.some((n) => l.startsWith(n)))
+  .join('\n');
+
+const BEFORE_TEXT = without(LIVE,
+  `  '${GRACE}'`, `  '${LEON}'`, `  ${SERIES}: `);
+
+const AFTER_TEXT = BEFORE_TEXT
+  .replace('export const AMIIBO_NAMES = Object.freeze({\n',
+    'export const AMIIBO_NAMES = Object.freeze({\n'
+    + `  '${GRACE}': "Grace Ashcroft",\n  '${LEON}': "Leon S. Kennedy",\n`)
+  .replace('export const AMIIBO_RELEASE = Object.freeze({\n',
+    'export const AMIIBO_RELEASE = Object.freeze({\n'
+    + `  '${GRACE}': '2026-07-30',\n  '${LEON}': '2026-07-30',\n`)
+  .replace('export const AMIIBO_SERIES = Object.freeze({\n',
+    `export const AMIIBO_SERIES = Object.freeze({\n  ${SERIES}: "Resident Evil",\n`);
+
+const PREVIEW = {
+  pending: {
+    fetchedAt: '2026-08-01T10-00-00-000Z',
+    sources: [
+      { name: 'db_amiibo.c', changed: true },
+      { name: 'amiibo.json', changed: false },
+    ],
+  },
+  ok: true,
+  errors: [],
+  fingerprint: 'fp-1',
+  report: { entries: 948, mintedSeries: [] },
+  diff: diffDatabases(BEFORE_TEXT, AFTER_TEXT),
+};
+
 let instance = 0;
 async function bootAdmin({ overlay = { schema: 1, amiibos: {} }, upstreamReady = true } = {}) {
   const page = mountPage('admin/index.html');
@@ -54,6 +107,10 @@ async function bootAdmin({ overlay = { schema: 1, amiibos: {} }, upstreamReady =
     'PUT /api/overlay': { entries: 946, backup: '2026-01-01T09-30-00-000Z.json', notices: [] },
     '/api/backups': { backups: BACKUPS },
     'POST /api/restore': { ok: true, entries: 946, restored: BACKUPS[0] },
+    'POST /api/upstream/refresh': { ok: true, changed: true, fetchedAt: '2026-08-01T10-00-00-000Z' },
+    'DELETE /api/upstream/pending': { ok: true },
+    '/api/upstream/preview': PREVIEW,
+    'POST /api/upstream/apply': { ok: true, entries: 947, applied: { pinsWritten: 0 }, renames: [] },
     'POST /api/logout': {},
   });
   globalThis.fetch = fetch;
@@ -1116,6 +1173,389 @@ test('a series can be named where upstream has none, which unblocks authoring th
     assert.ok(cell, 'and it lands in the grid');
     assert.match(cell.closest('details.series').textContent, /Invented Series/,
       'under the series that was just named');
+  } finally {
+    page.restore();
+  }
+});
+
+// ---- the update review ---------------------------------------------------
+//
+// Track Changes, arranged by entity. The two failures being guarded against are
+// the ones that made the old screen unreadable: counting fields instead of
+// entities, so the summary and the rows disagreed; and asking questions with
+// one possible answer, then blocking on them.
+
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+async function openReview(page) {
+  page.byId('refresh').dispatchEvent(new page.window.Event('click'));
+  await settle();
+  await settle();
+  return {
+    steps: () => page.$$('#reviewSteps button').map((b) => b.textContent.replace(/^\d+/, '')),
+    rows: () => page.$$('#reviewPanel .entity'),
+    row: (key) => page.$(`#reviewPanel .entity[data-key="${CSS.escape(key)}"]`),
+    next: page.byId('reviewNext'),
+    back: page.byId('reviewBack'),
+    apply: page.byId('reviewApply'),
+    summary: () => page.byId('reviewSummary').textContent,
+    risk: () => page.byId('reviewRisk').textContent,
+  };
+}
+
+/** Walk to the last step. */
+async function toConfirm(page, r) {
+  while (!r.next.hidden) {
+    r.next.dispatchEvent(new page.window.Event('click'));
+    await settle();
+  }
+}
+
+test('a refresh opens the review, hiding the library rather than a dialog', async () => {
+  const { page } = await bootAdmin();
+  try {
+    assert.equal(page.byId('review').hidden, true);
+    const r = await openReview(page);
+    assert.equal(page.byId('review').hidden, false);
+    assert.equal(page.byId('library').hidden, true,
+      'the grid steps aside: hundreds of rows do not belong in a dialog');
+  } finally {
+    page.restore();
+  }
+});
+
+test('the summary counts exactly the rows the steps render', async () => {
+  // THE regression. The old screen counted changes per group in the tiles and
+  // required-changes in UNDECIDED, over a group that had no tile at all, so
+  // "0 0 0 2 2 3" described nothing. Both numbers now come from the same array.
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+
+    let seen = 0;
+    for (let i = 0; i < r.steps().length; i++) {
+      page.$$('#reviewSteps button')[i].dispatchEvent(new page.window.Event('click'));
+      await settle();
+      seen += r.rows().length;
+    }
+
+    const s = PREVIEW.diff.summary;
+    const expected = Object.values(s.amiibo).reduce((a, b) => a + b, 0)
+      + Object.values(s.series).reduce((a, b) => a + b, 0)
+      + Object.values(s.type).reduce((a, b) => a + b, 0);
+    assert.equal(seen, expected,
+      'every entity in the summary is on screen exactly once, and vice versa');
+    assert.equal(seen, s.total);
+  } finally {
+    page.restore();
+  }
+});
+
+test('an amiibo arriving with several fields is ONE row, not several', async () => {
+  // Grace and Leon were each listed twice — once under NEW AMIIBO and once
+  // under RELEASE DATES — because the field was the unit instead of the amiibo.
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    const amiiboStep = r.steps().findIndex((t) => t === 'AMIIBO');
+    page.$$('#reviewSteps button')[amiiboStep].dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    const rows = r.rows();
+    const leon = rows.filter((n) => n.textContent.includes('Leon S. Kennedy'));
+    assert.equal(leon.length, 1, 'Leon appears once');
+    // …with his date nested inside that one row, not as a peer of it.
+    assert.match(leon[0].querySelector('.fields').textContent, /released/);
+    assert.match(leon[0].querySelector('.fields').textContent, /2026-07-30/);
+  } finally {
+    page.restore();
+  }
+});
+
+test('the summary is a fixed sentence with named counts, zeros intact', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    assert.match(r.summary(), /2 amiibo to add/);
+    assert.match(r.summary(), /0 to change/, 'zeros are printed, as Terraform does');
+    assert.match(r.summary(), /0 to remove/);
+    assert.match(r.summary(), /1 series to add/);
+
+    // The risk line is the only part that says whether this needs care.
+    assert.match(r.risk(), /Nothing you have curated is affected/);
+    assert.match(r.risk(), /No files move on your device/);
+    assert.equal(page.byId('reviewRisk').className, 'summaryRisk',
+      'and it is uncoloured when there is no risk');
+  } finally {
+    page.restore();
+  }
+});
+
+test('steps run coarse to fine, and empty ones are not shown', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    assert.deepEqual(r.steps(), ['SERIES', 'AMIIBO', 'CONFIRM'],
+      'series before the amiibo inside it; no TYPES or DEVICE step, because '
+      + 'this update has neither');
+  } finally {
+    page.restore();
+  }
+});
+
+test('nothing blocks APPLY, and the confirm step says what will be taken', async () => {
+  // The old screen refused to proceed until a row whose only answer was TAKE
+  // had been clicked. NN/g: do not confirm routine actions.
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    await toConfirm(page, r);
+
+    assert.equal(r.apply.hidden, false);
+    assert.equal(r.apply.disabled, false, 'reachable without touching anything');
+    const text = page.byId('reviewPanel').textContent;
+    assert.match(text, /3 changes applied/);
+    assert.match(text, /3 left untouched, and will be accepted/,
+      'the default is stated rather than left implicit');
+  } finally {
+    page.restore();
+  }
+});
+
+test('a change nobody can decline has no buttons, and says why', async () => {
+  // The Resident Evil series: brand new, so there is no previous name to keep,
+  // and the build refuses a series byte without one. It arrives because the
+  // amiibo need it.
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    const series = r.row('series:32');
+    assert.ok(series, 'the new series is shown');
+    assert.equal(series.querySelector('.acts'), null, 'with nothing to click');
+    assert.match(series.querySelector('.why').textContent, /nothing to decide/i);
+  } finally {
+    page.restore();
+  }
+});
+
+test('ACCEPT and DECLINE mark the row, and say which is which', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    page.$$('#reviewSteps button')[r.steps().indexOf('AMIIBO')]
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    const row = r.rows()[0];
+    const key = row.dataset.key;
+    const buttons = [...row.querySelectorAll('.acts button')].map((b) => b.textContent);
+    assert.deepEqual(buttons, ['✓ ACCEPT', '✕ DECLINE']);
+
+    row.querySelector('.acts button:last-child').dispatchEvent(new page.window.Event('click'));
+    await settle();
+    assert.equal(r.row(key).classList.contains('declined'), true);
+    assert.match(r.row(key).querySelector('.verdict').textContent, /DECLINED/);
+
+    r.row(key).querySelector('.acts button').dispatchEvent(new page.window.Event('click'));
+    await settle();
+    assert.equal(r.row(key).classList.contains('accepted'), true);
+    assert.match(r.row(key).querySelector('.verdict').textContent, /ACCEPTED/);
+  } finally {
+    page.restore();
+  }
+});
+
+test('declining a new amiibo says it comes back, rather than leaving you to find out', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    page.$$('#reviewSteps button')[r.steps().indexOf('AMIIBO')]
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+    const decline = r.rows()[0].querySelector('.acts button:last-child');
+    assert.match(decline.title, /offer it again/i);
+  } finally {
+    page.restore();
+  }
+});
+
+test('declining every amiibo in a new series declines the series with them', async () => {
+  // The cascade. A series exists because amiibo carry it; keeping it with
+  // nothing in it would be a series that is not there.
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    page.$$('#reviewSteps button')[r.steps().indexOf('AMIIBO')]
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    const rows = r.rows();
+    rows[0].querySelector('.acts button:last-child').dispatchEvent(new page.window.Event('click'));
+    await settle();
+    // One still accepted, so the series stays.
+    page.$$('#reviewSteps button')[r.steps().indexOf('SERIES')]
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+    assert.equal(r.row('series:32').classList.contains('declined'), false,
+      'one amiibo still needs it');
+
+    page.$$('#reviewSteps button')[r.steps().indexOf('AMIIBO')]
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+    r.rows()[1].querySelector('.acts button:last-child').dispatchEvent(new page.window.Event('click'));
+    await settle();
+    page.$$('#reviewSteps button')[r.steps().indexOf('SERIES')]
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+    assert.equal(r.row('series:32').classList.contains('declined'), true,
+      'now nothing needs it');
+  } finally {
+    page.restore();
+  }
+});
+
+test('ACCEPT ALL decides a section and nothing else', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    page.$$('#reviewSteps button')[r.steps().indexOf('AMIIBO')]
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    const bulk = [...page.$$('#reviewPanel h3 .bulk button')].find((b) => b.textContent === 'DECLINE ALL');
+    assert.ok(bulk, 'a section with more than one decidable row offers a bulk answer');
+    bulk.dispatchEvent(new page.window.Event('click'));
+    await settle();
+    assert.ok(r.rows().every((n) => n.classList.contains('declined')));
+  } finally {
+    page.restore();
+  }
+});
+
+test('APPLY sends one verdict per change, expanded from the rows', async () => {
+  const { page, fetch } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    await toConfirm(page, r);
+    r.apply.dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    const call = fetch.calls.find((c) => c.path === '/api/upstream/apply');
+    assert.ok(call, 'the update was applied');
+    const sent = JSON.parse(call.body);
+    assert.equal(sent.fingerprint, 'fp-1');
+    // The screen decides per entity; the server names flat changes. Every one
+    // of them has to arrive with a verdict.
+    assert.deepEqual(
+      Object.keys(sent.decisions).sort(),
+      PREVIEW.diff.changes.map((c) => c.key).sort());
+    assert.ok(Object.values(sent.decisions).every((v) => v === 'keep'),
+      'untouched means accepted');
+  } finally {
+    page.restore();
+  }
+});
+
+test('a decline reaches the server as a decline on every field it covers', async () => {
+  const { page, fetch } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    page.$$('#reviewSteps button')[r.steps().indexOf('AMIIBO')]
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+    const key = r.rows()[0].dataset.key;
+    r.rows()[0].querySelector('.acts button:last-child').dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    await toConfirm(page, r);
+    r.apply.dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    const sent = JSON.parse(fetch.calls.find((c) => c.path === '/api/upstream/apply').body);
+    const entity = PREVIEW.diff.entities.find((e) => e.key === key);
+    for (const changeKey of entity.changeKeys) {
+      assert.equal(sent.decisions[changeKey], 'skip',
+        `${changeKey} carries the row's verdict`);
+    }
+  } finally {
+    page.restore();
+  }
+});
+
+test('CANCEL puts the library back', async () => {
+  const { page } = await bootAdmin();
+  try {
+    await openReview(page);
+    page.byId('reviewClose').dispatchEvent(new page.window.Event('click'));
+    assert.equal(page.byId('review').hidden, true);
+    assert.equal(page.byId('library').hidden, false);
+  } finally {
+    page.restore();
+  }
+});
+
+test('the review checks fail on the mistakes they were written for', async () => {
+  // Each of the three rules above is asserted here to be breakable — a check
+  // that cannot fail is decoration, and this screen was rebuilt precisely
+  // because its predecessor's checks passed while the screen made no sense.
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    const s = PREVIEW.diff.summary;
+    const entities = PREVIEW.diff.entities;
+
+    // 1. ARITHMETIC. The old screen counted flat CHANGES, so an amiibo arriving
+    //    with a name and a date counted twice. Same update, different number —
+    //    which is what "0 0 0 2 2 3" was.
+    const fieldWise = PREVIEW.diff.changes.length;
+    assert.ok(fieldWise > s.total, 'the fixture really does have multi-field entities');
+    assert.throws(
+      () => assert.equal(fieldWise, s.total, 'counting fields must not match counting rows'),
+      /must not match/);
+
+    // 2. NO SINGLE-ANSWER QUESTIONS. The new series is shown without buttons.
+    //    Had it been rendered as decidable it would be a question with one
+    //    answer — and, on the old screen, one that also blocked APPLY.
+    page.$$('#reviewSteps button')[r.steps().indexOf('SERIES')]
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+    const series = r.row('series:32');
+    assert.equal(series.querySelector('.acts'), null, 'no buttons today');
+    assert.throws(
+      () => assert.ok(series.querySelector('.acts'), 'a one-answer row must offer nothing'),
+      /must offer nothing/);
+    assert.equal(entities.find((e) => e.key === 'series:32').decidable, false);
+
+    // 3. CASCADE. Without it, declining every amiibo in a new series leaves the
+    //    series accepted — published, empty, and pointing at nothing.
+    const users = entities.filter((e) => e.needs === 'series:32');
+    assert.ok(users.length > 0, 'the fixture has amiibo depending on the series');
+    const noCascade = Object.fromEntries(users.map((e) => [e.key, 'skip']));
+    assert.throws(
+      () => assert.equal(noCascade['series:32'], 'skip',
+        'a decision that does not reach back must leave the series undeclined'),
+      /must leave the series undeclined/);
+  } finally {
+    page.restore();
+  }
+});
+
+test('a refresh with unsaved edits refuses rather than losing them', async () => {
+  const { page, fetch } = await bootAdmin();
+  try {
+    const id = page.$('.item').dataset.id;
+    page.$(`.item[data-id="${id}"]`).dispatchEvent(new page.window.Event('click'));
+    const input = page.byId('f-name');
+    input.value = 'Unsaved';
+    input.dispatchEvent(new page.window.Event('input'));
+
+    page.byId('refresh').dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    assert.match(page.$('dialog.nesDialog').textContent, /SAVE YOUR EDITS FIRST/);
+    assert.equal(fetch.calls.filter((c) => c.path === '/api/upstream/refresh').length, 0,
+      'and nothing was fetched');
+    assert.equal(page.byId('review').hidden, true);
   } finally {
     page.restore();
   }

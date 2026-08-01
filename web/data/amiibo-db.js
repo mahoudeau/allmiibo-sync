@@ -9,7 +9,7 @@
 //   - solosky/pixl.js       fw/application/src/amiidb/db_amiibo.c  (names, GPL-2.0)
 //   - 8bitDream/AmiiboAPI   database/amiibo.json                   (series, types, dates, MIT)
 //
-// 946 amiibo IDs, 31 series, 5 types.
+// 948 amiibo IDs, 32 series, 5 types.
 
 // amiibo ID (16 hex chars, bytes 84..91 of a dump) -> display name.
 export const AMIIBO_NAMES = Object.freeze({
@@ -921,6 +921,8 @@ export const AMIIBO_NAMES = Object.freeze({
   '350c000004fa0f02': "Ratha",
   '350d000004fb0f02': "Ratha V",
   '350e000004fc0f02': "Rudy",
+  '3540000005032002': "Grace Ashcroft",
+  '3541000005042002': "Leon S. Kennedy",
   '3580000005062102': "Diana",
   '35c0000002500a02': "Shovel Knight",
   '35c0000003920a02': "Shovel Knight - Gold Edition",
@@ -992,6 +994,7 @@ export const AMIIBO_SERIES = Object.freeze({
   28: "My Mario Wooden Blocks",
   29: "Street Fighter 6",
   30: "Kirby Air Riders",
+  32: "Resident Evil",
   33: "Pragmata",
   255: "Super Nintendo World",
 });
@@ -1915,6 +1918,8 @@ export const AMIIBO_RELEASE = Object.freeze({
   '350c000004fa0f02': '2026-03-13',
   '350d000004fb0f02': '2026-03-13',
   '350e000004fc0f02': '2026-03-13',
+  '3540000005032002': '2026-07-30',
+  '3541000005042002': '2026-07-30',
   '3580000005062102': '2026-04-17',
   '35c0000002500a02': '2015-12-11',
   '35c0000003920a02': '2019-12-10',
@@ -1993,6 +1998,7 @@ export const AMIIBO_SERIES_SHORT = Object.freeze({
   28: "MMWB",
   29: "SF6",
   30: "KAR",
+  32: "RE",
   33: "Pragmata",
   255: "SNW",
 });
@@ -2098,3 +2104,8 @@ export const AMIIBO_AUTHORED = Object.freeze([]);
 // amiibo ID -> the upstream value an override replaced. Not for display: it is
 // how update-db notices upstream changing underneath a correction.
 export const AMIIBO_UPSTREAM = Object.freeze({});
+
+// amiibo ID -> the name upstream gives an entry this database deliberately does
+// not carry. Kept rather than merely omitted so the next update can offer it
+// again: declining an addition means "not this time", not "never".
+export const AMIIBO_EXCLUDED = Object.freeze({});

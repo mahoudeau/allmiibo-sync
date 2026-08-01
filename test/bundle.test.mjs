@@ -435,9 +435,11 @@ test('the 943-amiibo sample reads as measured', { skip: !existsSync(sample('Ally
   assert.equal(new Set(recs.map((r) => r.amiiboId)).size, 943, 'no duplicate IDs');
   assert.equal(new Set(recs.map((r) => r.uid)).size, 943, 'every record a distinct tag');
 
-  const ids = new Set(recs.map((r) => r.amiiboId));
-  const missing = Object.keys(AMIIBO_NAMES).filter((id) => !ids.has(id));
-  assert.equal(missing.length, 3, 'predates the last three Air Riders characters');
+  // What the sample is MISSING is deliberately not asserted. It is a fixed
+  // artefact and the database grows every month, so any number here is a count
+  // of how long ago the file was made — it drifts on an upstream update while
+  // saying nothing about the parser. The claim that matters is above: every one
+  // of its 943 records names an amiibo the database knows.
 });
 
 test('the air-riders sample holds six records for four amiibos', { skip: !existsSync(sample('all in one air riders.bin')) }, () => {

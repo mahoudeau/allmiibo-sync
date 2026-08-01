@@ -113,6 +113,11 @@ export function mountHtml(html, { url = 'http://localhost/', storage = {} } = {}
 
   const globals = {
     window: dom.window,
+    // A browser global linkedom does not provide. Selector keys in this project
+    // contain ':' (change keys like `naming:fileName:<id>`), which a selector
+    // reads as a pseudo-class, so escaping is not optional in a browser and the
+    // application is right to use it.
+    CSS: globalThis.CSS ?? { escape: (s) => String(s).replace(/[^\w-]/g, (c) => `\\${c}`) },
     document: dom.document,
     localStorage,
     sessionStorage: { ...localStorage },
@@ -122,7 +127,16 @@ export function mountHtml(html, { url = 'http://localhost/', storage = {} } = {}
     Event: dom.Event,
     CustomEvent: dom.CustomEvent ?? dom.Event,
     getComputedStyle: () => ({ getPropertyValue: () => '' }),
-    matchMedia: (q) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {} }),
+    // Reduced motion is reported as ON, which is the truthful answer for a DOM
+    // with no layout and nothing to animate. It also stops self-rescheduling
+    // animation timers — the header's mascot blink — from holding the process
+    // open after every test has already passed.
+    matchMedia: (q) => ({
+      matches: /prefers-reduced-motion:\s*reduce/.test(q),
+      media: q,
+      addEventListener() {},
+      removeEventListener() {},
+    }),
     requestAnimationFrame: (fn) => setTimeout(() => fn(Date.now()), 0),
     cancelAnimationFrame: (id) => clearTimeout(id),
     addEventListener: dom.window.addEventListener?.bind(dom.window) ?? (() => {}),

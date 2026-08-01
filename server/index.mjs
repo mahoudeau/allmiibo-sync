@@ -20,16 +20,19 @@
 
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join, normalize, extname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { Store, BACKUP_NAME_RE } from './store.mjs';
-import { Regenerator, GenerateError } from './regen.mjs';
+import { Regenerator, GenerateError, publicReport } from './regen.mjs';
+import { Upstream } from './upstream.mjs';
 import {
   verifyPassword, issueSession, readSession, sessionCookie, clearCookie,
   readCookie, checkCsrf, RateLimiter, CSRF_HEADER,
 } from './auth.mjs';
-import { EMPTY_OVERLAY } from '../web/js/overlay.js';
+import { EMPTY_OVERLAY, serializeOverlay } from '../web/js/overlay.js';
+import { diffDatabases, applyDecisions, undecided } from '../web/js/dbdiff.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const UI_DIR = join(ROOT, 'admin');
@@ -80,7 +83,30 @@ export function createAdminServer(config = {}) {
     cacheDir: cfg.cacheDir,
     dbPath: join(cfg.publicSiteDir, 'data/amiibo-db.js'),
   });
+  const upstream = new Upstream({
+    cacheDir: cfg.cacheDir,
+    ...(config.sources ? { sources: config.sources } : {}),
+    ...(config.fetch ? { fetch: config.fetch } : {}),
+  });
   const limiter = new RateLimiter();
+  // Being a polite consumer of someone else's raw endpoint under a stuck retry
+  // loop. Keyed by a constant rather than by client: the point is not to defend
+  // against the single authenticated operator.
+  const fetchLimiter = new RateLimiter({ max: 10, windowMs: 60 * 60 * 1000 });
+
+  // Refresh, preview and apply run one at a time. Not a rate limit — a mutex.
+  // Two concurrent applies could interleave store.write and promote, which is
+  // the one way to lose curated data here.
+  let inFlight = null;
+  const exclusive = async (fn) => {
+    if (inFlight) return { busy: true };
+    inFlight = (async () => fn())();
+    try {
+      return { busy: false, value: await inFlight };
+    } finally {
+      inFlight = null;
+    }
+  };
 
   const configured = Boolean(cfg.passwordHash && cfg.sessionSecret);
 
@@ -175,6 +201,161 @@ export function createAdminServer(config = {}) {
       // rather than reporting a success that did not fully happen.
       const details = err instanceof GenerateError ? err.details : [err.message];
       return { status: 500, body: { error: 'saved, but the site was not rebuilt', details } };
+    }
+  }
+
+  /**
+   * A fingerprint of everything the preview was computed from.
+   *
+   * Apply sends it back. If it no longer matches, the world moved underneath —
+   * a second tab saved, someone re-fetched, `npm run update-db` ran on the box
+   * — and the decisions describe a diff that no longer exists. That is a
+   * refusal, not something to reconcile.
+   */
+  const fingerprint = (dbText, pendingMeta, overlay) =>
+    createHash('sha256')
+      .update(dbText)
+      .update(JSON.stringify(pendingMeta?.sources ?? []))
+      .update(serializeOverlay(overlay))
+      .digest('hex');
+
+  /**
+   * What a pending refresh would change, without writing anything.
+   *
+   * The candidate is built from pending/ while the live cache is left alone,
+   * which is what makes this safe to call at any time.
+   */
+  async function buildPreview() {
+    const meta = await upstream.pending();
+    if (!meta) return { status: 200, body: { pending: null } };
+
+    const overlay = await store.read();
+    const dry = await regen.dryRun(overlay, { cacheDir: upstream.pendingDir });
+    if (!dry.ok) {
+      // The new sources introduce something the build refuses — a collision,
+      // usually. There is no candidate to diff against, and inventing a
+      // degraded one would be a second code path exercised once a year.
+      return {
+        status: 200,
+        body: {
+          pending: meta,
+          ok: false,
+          errors: dry.errors,
+          diff: null,
+          fingerprint: null,
+        },
+      };
+    }
+
+    const diff = diffDatabases(dry.previous, dry.contents, { overlay });
+    return {
+      status: 200,
+      body: {
+        pending: meta,
+        ok: true,
+        errors: [],
+        diff,
+        report: publicReport(dry.report),
+        fingerprint: fingerprint(dry.previous, meta, overlay),
+      },
+    };
+  }
+
+  /**
+   * Decide a pending refresh and publish the result.
+   *
+   * The order is the whole safety story, and one part of it is worth stating
+   * because it looks wrong: the cache is promoted BEFORE the database is
+   * written. If the rebuild then fails, the cache is new and the database is
+   * old, and any retry regenerates the same reviewed result. The other order
+   * would leave the database ahead of the cache, so the next ordinary save
+   * would silently REVERT published data to the old upstream. Reverting is the
+   * worse failure.
+   */
+  async function applyUpstream({ fingerprint: sent, decisions = {} }) {
+    const meta = await upstream.pending();
+    if (!meta) return { status: 409, body: { error: 'there is no pending refresh to apply' } };
+
+    const overlay = await store.read();
+    const dry = await regen.dryRun(overlay, { cacheDir: upstream.pendingDir });
+    if (!dry.ok) {
+      return { status: 422, body: { error: 'the refresh would not build', details: dry.errors } };
+    }
+
+    const current = fingerprint(dry.previous, meta, overlay);
+    if (sent !== current) {
+      return {
+        status: 409,
+        body: { error: 'the preview is out of date', fingerprint: current },
+      };
+    }
+
+    // The diff is re-derived here rather than trusted from the client: the
+    // decisions are allowed to NAME changes, never to describe them.
+    const diff = diffDatabases(dry.previous, dry.contents, { overlay });
+
+    // Anything the client did not name is accepted. Refusing instead used to
+    // mean a row nobody could act on — a brand new series label with a single
+    // possible answer — held the whole update hostage. Accepting by default is
+    // also what the site does the rest of the time: it follows upstream unless
+    // the overlay says otherwise. The count is reported back so the receipt
+    // says how much was taken without being asked about.
+    const byDefault = diff.changes
+      .filter((c) => !decisions[c.key])
+      .map((c) => c.key);
+    const settled = { ...Object.fromEntries(byDefault.map((k) => [k, 'keep'])), ...decisions };
+
+    const today = new Date().toISOString().slice(0, 10);
+    const { overlay: next, applied } = applyDecisions(overlay, diff, settled, today);
+    applied.acceptedByDefault = byDefault.length;
+
+    // Refuse before writing, exactly as a save does: a decision set that would
+    // collide two amiibo onto one device path is rejected with the reason and
+    // nothing is touched.
+    const check = await regen.dryRun(next, { cacheDir: upstream.pendingDir });
+    if (!check.ok) {
+      return {
+        status: 422,
+        body: { error: 'those decisions would not build', details: check.errors },
+      };
+    }
+
+    let saved;
+    try {
+      saved = await store.write(next);
+    } catch (err) {
+      return { status: 422, body: { error: err.message, details: err.details ?? [] } };
+    }
+
+    await upstream.promote();
+
+    try {
+      // The bytes `check` produced are exactly the bytes to write: the overlay
+      // and the sources are the same, so building again would only cost time.
+      const built = await regen.writeContents(check.contents);
+      const renames = diff.changes
+        .filter((c) => c.group === 'naming' && settled[c.key] !== 'skip' && c.device)
+        .map((c) => ({ before: c.device.before, after: c.device.after }));
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          backup: saved.backup,
+          bytes: built.bytes,
+          entries: check.report.entries,
+          applied,
+          renames,
+          report: publicReport(check.report),
+        },
+      };
+    } catch (err) {
+      const details = err instanceof GenerateError ? err.details : [err.message];
+      return {
+        status: 500,
+        body: { error: 'applied, but the site was not rebuilt', details },
+      };
+    } finally {
+      await upstream.discard();
     }
   }
 
@@ -377,6 +558,60 @@ export function createAdminServer(config = {}) {
 
         if (path === '/api/export' && req.method === 'GET') {
           return attachment(res, await store.readRaw(), 'amiibo-overrides.json');
+        }
+
+        // ---- upstream ------------------------------------------------------
+
+        if (path === '/api/upstream' && req.method === 'GET') {
+          const status = await upstream.status();
+          return json(res, 200, { ...status, promotedAt: await upstream.promotedAt() });
+        }
+
+        if (path === '/api/upstream/refresh' && req.method === 'POST') {
+          const gate = fetchLimiter.check('upstream');
+          if (gate.locked) {
+            res.setHeader('retry-after', Math.ceil(gate.retryAfterMs / 1000));
+            return json(res, 429, {
+              error: 'too many refreshes in the last hour',
+              retryAfterSeconds: Math.ceil(gate.retryAfterMs / 1000),
+            });
+          }
+          const { busy, value } = await exclusive(async () => {
+            fetchLimiter.fail('upstream');
+            try {
+              return { ok: true, meta: await upstream.refresh() };
+            } catch (err) {
+              return { ok: false, error: err.message };
+            }
+          });
+          if (busy) return json(res, 409, { error: 'a refresh is already running' });
+          // Nothing was written on failure — not even to pending.
+          return value.ok
+            ? json(res, 200, { ok: true, ...value.meta })
+            : json(res, 502, { error: 'the upstream sources could not be fetched', details: [value.error] });
+        }
+
+        if (path === '/api/upstream/pending' && req.method === 'DELETE') {
+          await upstream.discard();
+          return json(res, 200, { ok: true });
+        }
+
+        if (path === '/api/upstream/preview' && req.method === 'GET') {
+          const { busy, value } = await exclusive(() => buildPreview());
+          if (busy) return json(res, 409, { error: 'a refresh is already running' });
+          return json(res, value.status, value.body);
+        }
+
+        if (path === '/api/upstream/apply' && req.method === 'POST') {
+          let body;
+          try {
+            body = JSON.parse(await readBody(req)) ?? {};
+          } catch (err) {
+            return json(res, err.status ?? 400, { error: err.message || 'invalid JSON' });
+          }
+          const { busy, value } = await exclusive(() => applyUpstream(body));
+          if (busy) return json(res, 409, { error: 'a refresh is already running' });
+          return json(res, value.status, value.body);
         }
 
         return json(res, 404, { error: 'no such endpoint' });

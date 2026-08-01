@@ -77,7 +77,8 @@ test('an ID appearing is added, one disappearing is removed', () => {
   assert.equal(added.length, 1);
   assert.equal(added[0].subject, MARIO);
   assert.equal(added[0].danger, false, 'an addition costs nothing');
-  assert.deepEqual(added[0].choices, ['keep'], 'and there is nothing to decide');
+  assert.deepEqual(added[0].choices, ['keep', 'skip'],
+    'and it can be declined, which holds it out until the next update');
 });
 
 test('a name upstream changed is a rename, not an add and a remove', () => {
@@ -254,30 +255,38 @@ test('the input overlay is never mutated', () => {
 
 // ---- bulk answers and the gate ------------------------------------------
 
-test('ACCEPT EVERYTHING SAFE leaves every dangerous change undecided', () => {
-  // The teeth of the whole screen: the only way to accept a device-wide rename
-  // or a removal is to touch it.
+test('nothing is required, because untouched means accepted', () => {
+  // The old screen blocked APPLY until every change had been clicked, including
+  // rows whose only possible answer was "yes". NN/g: do not confirm routine
+  // actions. Anything left alone is accepted, and the confirm step says how
+  // many that is rather than refusing to proceed.
   const after = edit(
     edit(DB, '  0: "SSB",', '  0: "SMASH",'),
     `'${MARIO}': "Mario",`, `'${MARIO}': "Mario (Classic)",`);
   const d = diffDatabases(DB, after);
-  assert.ok(d.counts.danger > 0, 'there is something dangerous to leave alone');
-
-  const safe = bulkDecide(d, 'safe');
-  const left = undecided(d, safe);
-  assert.equal(left.length, d.counts.danger, 'exactly the dangerous ones remain');
-  for (const key of left) {
-    assert.equal(d.changes.find((c) => c.key === key).danger, true);
-  }
+  assert.ok(d.counts.danger > 0, 'even with something dangerous in it');
+  assert.deepEqual(undecided(d, {}), [],
+    'no change blocks apply on its own');
+  assert.ok(d.changes.every((c) => c.required === false));
 });
 
-test('an addition never blocks apply, because there is nothing to decide', () => {
-  const NEW = 'ffff000000000002';
-  const after = DB.replace('export const AMIIBO_NAMES = Object.freeze({\n',
-    `export const AMIIBO_NAMES = Object.freeze({\n  '${NEW}': "Invented",\n`);
-  const d = diffDatabases(DB, after);
-  assert.equal(d.counts.added, 1);
-  assert.deepEqual(undecided(d, {}), [], 'nothing is required');
+test('every change offers at least two real answers', () => {
+  // A row with one button is not a question. The old screen had them — a brand
+  // new series label offered only TAKE, and still blocked APPLY.
+  const after = edit(
+    edit(DB, '  0: "SSB",', '  0: "SMASH",'),
+    `'${MARIO}': "Mario",`, `'${MARIO}': "Mario (Classic)",`);
+  const d = diffDatabases(DB, after, {
+    overlay: { ...EMPTY_OVERLAY, amiibos: { [MARIO]: { kind: 'override', name: 'Mine' } } },
+  });
+
+  for (const e of d.entities) {
+    if (!e.decidable) continue;   // shown as a consequence, with no buttons
+    const keys = new Set(e.changeKeys);
+    const choices = d.changes.filter((c) => keys.has(c.key)).flatMap((c) => c.choices);
+    assert.ok(new Set(choices).size > 1,
+      `${e.label} offers only ${[...new Set(choices)]} — that is not a question`);
+  }
 });
 
 test('a decision naming a change that is not there is ignored, not guessed at', () => {
@@ -287,6 +296,99 @@ test('a decision naming a change that is not there is ignored, not guessed at', 
     EMPTY_OVERLAY, d, { 'renamed:deadbeefdeadbeef': 'skip' });
   assert.deepEqual(next.amiibos, {});
   assert.equal(applied.pinsWritten, 0);
+});
+
+// ---- declining an addition, and the next update -------------------------
+
+/** A database with one more entry in it, the way an upstream refresh arrives. */
+function withNewEntry(text, id, name) {
+  return text.replace('export const AMIIBO_NAMES = Object.freeze({\n',
+    `export const AMIIBO_NAMES = Object.freeze({\n  '${id}': "${name}",\n`);
+}
+
+/**
+ * What the generator emits once the exclusion is in the overlay: the entry is
+ * absent from the names, and the excluded table records what upstream calls it.
+ *
+ * Built by replacing the table if the database has one and appending if it does
+ * not, then checked by parsing the result back. Both halves of that were wrong
+ * in turn: appending alone left the generator's own empty table in front, where
+ * the parser found it first and read no exclusions at all. A fixture that
+ * assumes the shape of a generated file has to prove it guessed right.
+ */
+function withExclusion(text, id, name) {
+  assert.ok(!text.includes(`'${id}'`), 'the entry must not be in the database');
+  const row = `  '${id}': ${JSON.stringify(name)},\n`;
+  const head = 'export const AMIIBO_EXCLUDED = Object.freeze({';
+  const out = text.includes(head)
+    ? text.replace(`${head}`, `${head}\n${row.trimEnd()}`)
+    : `${text}\n${head}\n${row}});\n`;
+
+  assert.equal(parseGenerated(out).excluded.get(id), name,
+    'the fixture must actually read back as excluded');
+  return out;
+}
+
+const NEW_ID = 'ffff000000000002';
+
+test('declining an addition writes an exclusion, and nothing else', () => {
+  const after = withNewEntry(DB, NEW_ID, 'Invented');
+  const d = diffDatabases(DB, after);
+  const { overlay: next, applied } = applyDecisions(
+    EMPTY_OVERLAY, d, { [`added:${NEW_ID}`]: 'skip' });
+
+  assert.deepEqual(next.excluded, [NEW_ID]);
+  assert.deepEqual(next.amiibos, {}, 'no pin: there is nothing published to hold');
+  assert.deepEqual(validateOverlay(next), []);
+  assert.ok(applied.excluded > 0 || next.excluded.length === 1);
+});
+
+// Both sides of the next update: the published database and the freshly
+// generated candidate are built from the SAME overlay, so both hold the entry
+// out. Their names tables are identical and a plain diff sees nothing at all —
+// the excluded table is the only thing keeping the question alive.
+const declined = () => ({
+  published: withExclusion(DB, NEW_ID, 'Invented'),
+  candidate: withExclusion(DB, NEW_ID, 'Invented'),
+  overlay: { ...EMPTY_OVERLAY, excluded: [NEW_ID] },
+});
+
+test('a declined addition is offered again on the next update', () => {
+  const { published, candidate, overlay } = declined();
+  const d = diffDatabases(published, candidate, { overlay });
+
+  const again = d.changes.filter((c) => c.group === 'added' && c.subject === NEW_ID);
+  assert.equal(again.length, 1, 'offered exactly once, not twice');
+  assert.equal(again[0].declinedBefore, true, 'and marked as one you already saw');
+  assert.equal(again[0].label, 'Invented', 'by the name upstream gives it');
+  assert.equal(d.summary.amiibo.add, 1, 'and it is in the headline count');
+});
+
+test('accepting it the second time clears the exclusion', () => {
+  // Otherwise the entry would be added and immediately held out again, which is
+  // the kind of loop nobody would think to look for.
+  const { published, candidate, overlay: before } = declined();
+  const d = diffDatabases(published, candidate, { overlay: before });
+
+  const { overlay: next } = applyDecisions(before, d, { [`added:${NEW_ID}`]: 'keep' });
+  assert.deepEqual(next.excluded, [], 'the entry is let through');
+  assert.deepEqual(before.excluded, [NEW_ID], 'and the input was not mutated');
+  assert.deepEqual(validateOverlay(next), []);
+});
+
+test('leaving it untouched accepts it, like every other change', () => {
+  const { published, candidate, overlay: before } = declined();
+  const d = diffDatabases(published, candidate, { overlay: before });
+  const { overlay: next } = applyDecisions(before, d, {});
+  assert.deepEqual(next.excluded, [], 'silence is acceptance, so it comes back in');
+});
+
+test('declining it again keeps it out, without listing it twice', () => {
+  const { published, candidate, overlay: before } = declined();
+  const d = diffDatabases(published, candidate, { overlay: before });
+  const { overlay: next } = applyDecisions(before, d, { [`added:${NEW_ID}`]: 'skip' });
+  assert.deepEqual(next.excluded, [NEW_ID]);
+  assert.deepEqual(validateOverlay(next), [], 'a duplicate would be a hard error');
 });
 
 // ---- overlay health -----------------------------------------------------
@@ -334,7 +436,19 @@ test('these checks fail on the mistakes they were written for', () => {
       'a double-quote-only parser must find no dates'),
     /must find no dates/);
 
-  // 3. SKIP that forgot to record what upstream said leaves a pin nobody can
+  // 3. A plain names-only diff cannot see a declined addition at all: both
+  //    sides omit it, so "offered again next update" would silently be never.
+  const { published, candidate } = declined();
+  assert.deepEqual(
+    [...parseGenerated(published).names.keys()],
+    [...parseGenerated(candidate).names.keys()],
+    'the two databases name exactly the same entries');
+  assert.throws(
+    () => assert.ok(parseGenerated(candidate).names.has(NEW_ID),
+      'a names-only comparison must find nothing to report'),
+    /must find nothing to report/);
+
+  // 4. SKIP that forgot to record what upstream said leaves a pin nobody can
   //    later classify as holding, moot or stale.
   const renamed = edit(DB, `'${MARIO}': "Mario",`, `'${MARIO}': "Mario (Classic)",`);
   const d = diffDatabases(DB, renamed);
@@ -343,4 +457,45 @@ test('these checks fail on the mistakes they were written for', () => {
     () => assert.equal(next.amiibos[MARIO].upstreamWas, undefined),
     /strictly equal/,
     'the record must be there');
+});
+
+test('a value upstream has only just introduced cannot be held back', () => {
+  // Found by real upstream data, not by a constructed case: upstream shipped a
+  // brand new series, and "keep what the site shows today" tried to pin its
+  // label to null — because there was no previous label. That fails validation,
+  // so the whole apply was refused with an error about the build rather than
+  // about the impossible choice.
+  const after = DB.replace(
+    'export const AMIIBO_SERIES = Object.freeze({\n',
+    'export const AMIIBO_SERIES = Object.freeze({\n  99: "Brand New Series",\n');
+
+  const d = diffDatabases(DB, after);
+  const [label] = d.changes.filter((c) => c.group === 'label');
+  assert.equal(label.before, null, 'there was no previous label');
+  assert.deepEqual(label.choices, ['keep'], 'so taking it is the only answer');
+
+  // And asking to hold it anyway writes nothing rather than something invalid.
+  const { overlay: next } = applyDecisions(EMPTY_OVERLAY, d, { [label.key]: 'skip' });
+  assert.deepEqual(next.series, {}, 'no pin was written');
+  assert.deepEqual(validateOverlay(next), []);
+});
+
+test('a release date appearing CAN be held back, because absent is a real value', () => {
+  // The exception to the rule above: for a date, "none" is a value the site can
+  // legitimately show, and null in the overlay means exactly that.
+  const NEW_ID = 'ffff000000000002';
+  const after = DB
+    .replace('export const AMIIBO_NAMES = Object.freeze({\n',
+      `export const AMIIBO_NAMES = Object.freeze({\n  '${NEW_ID}': "Invented",\n`)
+    .replace('export const AMIIBO_RELEASE = Object.freeze({\n',
+      `export const AMIIBO_RELEASE = Object.freeze({\n  '${NEW_ID}': '2026-01-01',\n`);
+
+  const d = diffDatabases(DB, after);
+  const [release] = d.changes.filter((c) => c.group === 'release');
+  assert.equal(release.before, null);
+  assert.ok(release.choices.includes('skip'), 'holding "no date" is meaningful');
+
+  const { overlay: next } = applyDecisions(EMPTY_OVERLAY, d, { [release.key]: 'skip' });
+  assert.equal(next.amiibos[NEW_ID].release, null, 'pinned to no date');
+  assert.deepEqual(validateOverlay(next), []);
 });

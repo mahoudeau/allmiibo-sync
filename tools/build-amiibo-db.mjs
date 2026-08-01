@@ -27,7 +27,7 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import {
   parseFirmwareTable,
@@ -94,7 +94,7 @@ export function generate({ firmware, api = null, previous = '', overlay = EMPTY_
   // to the same disambiguation and collision checks as an upstream one, with no
   // special-casing further down. A curated name cannot bypass the gate.
   const merged = applyOverlay(upstream, overlay);
-  const { names, series, types, releases, notices, authored, upstreamWas } = merged;
+  const { names, series, types, releases, notices, authored, upstreamWas, excluded } = merged;
 
   const fatal = notices.filter((n) => n.level === 'error');
   if (fatal.length) {
@@ -227,7 +227,7 @@ ${[...fileNames].map(([id, n]) => `  '${id}': ${JSON.stringify(n)},`).join('\n')
 export const AMIIBO_SHORT_NAMES = Object.freeze({
 ${[...shortNames].map(([id, n]) => `  '${id}': ${JSON.stringify(n)},`).join('\n')}
 });
-${curatedTables({ categories, paths: pins.paths, notes: pins.notes, faces: pins.seriesFace, authored, upstreamWas })}`;
+${curatedTables({ categories, paths: pins.paths, notes: pins.notes, faces: pins.seriesFace, authored, upstreamWas, excluded })}`;
 
   return {
     contents,
@@ -259,7 +259,7 @@ ${curatedTables({ categories, paths: pins.paths, notes: pins.notes, faces: pins.
  * can import them by name without every importer having to cope with a database
  * built before the overlay existed.
  */
-function curatedTables({ categories, paths, notes, faces, authored, upstreamWas }) {
+function curatedTables({ categories, paths, notes, faces, authored, upstreamWas, excluded }) {
   const idTable = (name, map, comment) => `
 // ${comment}
 export const ${name} = Object.freeze({${map.size ? `
@@ -290,7 +290,8 @@ export const AMIIBO_AUTHORED = Object.freeze([${authored.length ? `
 ${authored.slice().sort().map((id) => `  '${id}',`).join('\n')}
 ` : ''}]);
 ${idTable('AMIIBO_UPSTREAM', upstreamWas,
-  'amiibo ID -> the upstream value an override replaced. Not for display: it is\n// how update-db notices upstream changing underneath a correction.')}`;
+  'amiibo ID -> the upstream value an override replaced. Not for display: it is\n// how update-db notices upstream changing underneath a correction.')}${idTable('AMIIBO_EXCLUDED', excluded,
+  'amiibo ID -> the name upstream gives an entry this database deliberately does\n// not carry. Kept rather than merely omitted so the next update can offer it\n// again: declining an addition means "not this time", not "never".')}`;
 }
 
 // ---- CLI ----------------------------------------------------------------
@@ -298,18 +299,27 @@ ${idTable('AMIIBO_UPSTREAM', upstreamWas,
 const isCli = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
 
 if (isCli) {
-  const [firmwareSrc, apiSrc] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  // --out lets a caller build somewhere other than the live database, which is
+  // what a dry run needs: the candidate has to exist to be compared against,
+  // and writing it over the real one first would defeat the point.
+  const outAt = argv.indexOf('--out');
+  const outPath = outAt === -1 ? null : argv[outAt + 1];
+  const [firmwareSrc, apiSrc] = argv.filter((a, i) => !a.startsWith('--') && i !== outAt + 1);
   if (!firmwareSrc) {
-    console.error('usage: node tools/build-amiibo-db.mjs <db_amiibo.c> [amiibo.json]');
+    console.error('usage: node tools/build-amiibo-db.mjs <db_amiibo.c> [amiibo.json] [--out <path>]');
     process.exit(1);
   }
 
   const root = fileURLToPath(new URL('..', import.meta.url));
-  const dest = join(root, DB_PATH);
+  const live = join(root, DB_PATH);
+  const dest = outPath ? resolve(outPath) : live;
   const firmware = await readFile(firmwareSrc, 'utf8');
   const api = apiSrc ? await readFile(apiSrc, 'utf8') : null;
   // Missing on a first run, or when there is no database yet.
-  const previous = await readFile(dest, 'utf8').catch(() => '');
+  // Always the live database: it is where the stable series tokens live, and
+  // a candidate built against an empty 'previous' would re-mint every one.
+  const previous = await readFile(live, 'utf8').catch(() => '');
 
   // Absent is fine and means "no curated data"; present but malformed is not,
   // and says exactly what is wrong rather than being quietly skipped.

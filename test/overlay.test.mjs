@@ -243,6 +243,42 @@ test('applying an overlay never mutates its input', () => {
   assert.deepEqual([...before.names], snapshot);
 });
 
+// ---- declining an addition ----------------------------------------------
+
+test('an excluded ID is not in the database, and is refused as a list', () => {
+  rejects(overlay({ excluded: ID }), /excluded must be an array/);
+  rejects(overlay({ excluded: ['NOPE'] }), /not a 16-character lowercase hex ID/);
+  rejects(overlay({ excluded: [ID, ID] }), /listed twice/);
+  ok(overlay({ excluded: [ID] }));
+
+  const merged = applyOverlay(upstream(), overlay({ excluded: [ID] }));
+  assert.equal(merged.names.has(ID), false, 'gone from the names');
+  assert.equal(merged.releases.has(ID), false, 'and from the dates with it');
+  assert.equal(merged.names.has(ID2), true, 'the rest are untouched');
+});
+
+test('what an excluded entry WAS called is kept, so it can be offered again', () => {
+  // Without this the exclusion would be silent forever: the generated database
+  // omits the ID, so the next update would find no difference to report and the
+  // "not this time" promise would quietly become "never".
+  const merged = applyOverlay(upstream(), overlay({ excluded: [ID] }));
+  assert.equal(merged.excluded.get(ID), 'Mario');
+});
+
+test('excluding an ID upstream dropped anyway is not an error', () => {
+  const merged = applyOverlay(upstream(), overlay({ excluded: [NEW_ID] }));
+  assert.equal(merged.excluded.size, 0, 'nothing to exclude, nothing to report');
+  assert.deepEqual(merged.notices, []);
+});
+
+test('an excluded amiibo takes no part in naming or collision checks', () => {
+  // ID and ID2 are both "Mario" and would normally disambiguate against each
+  // other. Removing one before anything is derived means the other is simply
+  // Mario — which is the whole reason the removal happens first.
+  const merged = applyOverlay(upstream(), overlay({ excluded: [ID2] }));
+  assert.deepEqual([...merged.names.values()], ['Mario']);
+});
+
 // ---- pins ---------------------------------------------------------------
 
 test('pins are collected per kind', () => {

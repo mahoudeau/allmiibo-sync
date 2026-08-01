@@ -64,8 +64,13 @@ test('every element the script reaches for actually exists', () => {
     // CLEAR FILTERS button inside the empty state, for instance. Those are not
     // in the markup and should not be: what matters is that every id is either
     // on the page or created by the module, and never simply invented.
-    const created = new Set(
-      [...source.matchAll(/\bid=["']([A-Za-z0-9_-]+)["']/g)].map((m) => m[1]));
+    // Both ways a script gives an element an id: inside a markup string, and
+    // as a property assignment. Knowing only the first flags the second as
+    // missing, which is a false alarm about correct code.
+    const created = new Set([
+      ...[...source.matchAll(/\bid=["']([A-Za-z0-9_-]+)["']/g)].map((m) => m[1]),
+      ...[...source.matchAll(/\.id\s*=\s*['"`]([A-Za-z0-9_-]+)['"`]/g)].map((m) => m[1]),
+    ]);
 
     const missing = [...new Set(ids)].filter((id) => !page.byId(id) && !created.has(id));
     assert.deepEqual(missing, [], 'ids used by adminui.js but absent from the page');

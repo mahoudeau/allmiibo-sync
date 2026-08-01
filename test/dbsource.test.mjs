@@ -259,8 +259,12 @@ test('the committed database has no collisions, checked through this function', 
     fileNames: new Map(Object.entries(AMIIBO_FILE_NAMES)),
     shortNames: new Map(Object.entries(AMIIBO_SHORT_NAMES)),
   });
-  assert.deepEqual(clashes, [], 'all 946 entries are uniquely named within their series');
-  assert.equal(entries.length, 946, 'and the check actually ran over the whole table');
+  assert.deepEqual(clashes, [], 'every entry is uniquely named within its series');
+  // Not a fixed number: the database grows with upstream, and a count written
+  // down here would fail on the next update while proving nothing. What the
+  // guard is for is that the check ran over the real table rather than an empty
+  // one, so it is stated as a floor.
+  assert.ok(entries.length > 900, `the check ran over the whole table (${entries.length})`);
 });
 
 test('the series byte is byte 6 of the ID', () => {

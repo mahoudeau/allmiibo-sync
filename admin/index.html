@@ -81,6 +81,69 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
   .preview .facts h1 { font-size: 1rem; }
   .preview .idRow { margin-bottom: 0; }
 
+  /* ---- the upstream review ---------------------------------------------- */
+
+  .reviewHead { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap;
+                margin-bottom: 1rem; }
+  .reviewHead .grow { margin-left: auto; }
+  .reviewHead .idLine { margin: 0; }
+
+  .summaryLine { font-size: 1rem; color: #fff; margin: 0 0 .2rem; }
+  .summaryRisk { font-size: .9rem; color: var(--muted); margin: 0 0 1.2rem; }
+  .summaryRisk.warn { color: var(--warn); }
+  .summaryRisk.err { color: var(--err); }
+
+  /* The stepper. Steps with nothing in them are not rendered at all, so the
+     numbering is over what there is to look at. */
+  .stepper { display: flex; gap: .5rem; flex-wrap: wrap; list-style: none;
+             margin: 0 0 1rem; padding: 0; }
+  .stepper button { font-size: .45rem; min-height: 2rem; box-shadow: none;
+                    border-color: var(--border); background: none; }
+  .stepper .on button { background: var(--panel2); border-color: var(--accent); color: #fff; }
+  .stepper .done button { color: var(--ok); }
+  .stepper .n { color: var(--muted); margin-right: .35rem; }
+
+  /* The box comes from .panel in app.css; only the spacing is particular. */
+  .stepBody { padding: 1rem 1.1rem; margin-bottom: 1rem; }
+  .stepBody h3 { font-family: var(--pixel); font-size: .5rem; color: var(--muted);
+                 margin: 1.2rem 0 .5rem; display: flex; align-items: center; gap: .5rem; }
+  .stepBody h3:first-child { margin-top: 0; }
+  .stepBody h3 .bulk { margin-left: auto; display: flex; gap: .4rem; }
+  .stepBody h3 button { min-height: 1.7rem; padding: .2rem .5rem; font-size: .4rem;
+                        box-shadow: none; }
+
+  /* One row per entity. Its changed fields are lines inside it, never siblings
+     of it — an amiibo that arrives with a name and a date is one arrival. */
+  .entity { border: 2px solid var(--border); background: var(--bg);
+            padding: .6rem .7rem; margin-bottom: .5rem; }
+  .entity .top { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+  .entity .name { font-size: .95rem; color: #fff; }
+  .entity .ref { font: 12.5px/1.7 var(--mono); color: var(--muted); margin-left: auto; }
+  .entity .fields { display: grid; grid-template-columns: auto auto 1fr;
+                    gap: .1rem .7rem; margin: .5rem 0 .1rem;
+                    font: 12.5px/1.7 var(--mono); }
+  .entity .fields .k { color: var(--muted); }
+  .entity .fields .from { color: var(--muted); }
+  .entity .fields .to { color: var(--fg); }
+  .entity.danger .fields .to { color: var(--err); }
+  .entity .fields .yours { color: var(--warn); }
+  .entity .acts { display: flex; gap: .5rem; margin-top: .5rem; align-items: center; }
+  .entity .acts button { min-height: 2rem; font-size: .45rem; }
+  .entity .why { font: 12.5px/1.7 var(--mono); color: var(--muted); margin-top: .4rem; }
+
+  /* The decided state is what to show, since undecided is now the default and
+     means "accepted". */
+  .entity.accepted { border-color: var(--ok); }
+  .entity.declined { border-color: var(--err); opacity: .7; }
+  .entity .verdict { font-family: var(--pixel); font-size: .42rem; }
+  .entity.accepted .verdict { color: var(--ok); }
+  .entity.declined .verdict { color: var(--err); }
+
+  .reviewFoot { display: flex; align-items: center; gap: .7rem; }
+  .reviewFoot .grow { margin-left: auto; }
+  .confirmList { font: 12.5px/1.7 var(--mono); color: var(--fg); margin: .5rem 0; }
+  .confirmList li { margin-bottom: .2rem; }
+
   /* The series header carries its tally pill and an edit button together. */
   .seriesActions { display: inline-flex; align-items: center; gap: .5rem; flex: none; }
 
@@ -151,6 +214,7 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
          without a second header to keep in step. Its actions live here and are
          handed to the builder. -->
     <span id="adminActions" hidden>
+      <button id="refresh"><span class="ico" data-ico="sync"></span>UPDATE</button>
       <button id="save" class="primary" disabled>
         <span class="ico" data-ico="upload"></span>SAVE &amp; PUBLISH</button>
       <button id="export"><span class="ico" data-ico="download"></span>EXPORT</button>
@@ -208,7 +272,36 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
       </div>
     </div>
 
-    <div class="cols">
+    <!-- The upstream review. Replaces the grid while it is open rather than
+         being a dialog (there can be hundreds of rows) or a page (navigating
+         away would lose the in-memory overlay). -->
+    <section id="review" hidden>
+      <div class="reviewHead">
+        <h2 class="cap">REVIEW UPDATE</h2>
+        <p class="idLine" id="reviewWhen"></p>
+        <span class="grow"></span>
+        <button id="reviewClose">CANCEL</button>
+      </div>
+
+      <!-- The headline, in the shape Terraform uses: named counts over the
+           things on screen, zeros intact. The second line is the only part
+           that ever changes colour, because it is the only part that says
+           whether this update deserves care. -->
+      <p id="reviewSummary" class="summaryLine"></p>
+      <p id="reviewRisk" class="summaryRisk"></p>
+
+      <ol id="reviewSteps" class="stepper"></ol>
+      <div id="reviewPanel"></div>
+
+      <div class="reviewFoot">
+        <button id="reviewBack">&lsaquo; BACK</button>
+        <span class="grow"></span>
+        <button id="reviewNext" class="primary">NEXT &rsaquo;</button>
+        <button id="reviewApply" class="primary" hidden>APPLY UPDATE</button>
+      </div>
+    </section>
+
+    <div class="cols" id="library">
       <div>
         <section id="series" class="cards"></section>
         <div id="emptyState" hidden></div>

@@ -54,7 +54,7 @@ and 2.16.0 (January 2026) added on-device emulation for v3 amiibo.
 - **Interface**: an 8-bit skin with three themes, an original pirate mascot
   in twelve colourways, and an Advanced toggle that keeps the expert layer out
   of the way until asked for. ✅
-- **Tests**: 523 across twenty-three files; the protocol suite runs against a
+- **Tests**: 595 across twenty-six files; the protocol suite runs against a
   simulated device, the admin suite against a real HTTP server on an ephemeral
   port, the UI suites against a real DOM, the rest are pure. ✅
 
@@ -357,12 +357,20 @@ Precedence, highest first:
 | `AMIIBO_FILE_NAMES` / `_SHORT_NAMES` | overlay pin | derived | omitted |
 | device path | a filename you chose on disk | overlay `path` | the ladder above |
 
-Five more generated tables carry it: `AMIIBO_CATEGORIES`, `AMIIBO_PATHS`,
-`AMIIBO_NOTES`, `AMIIBO_AUTHORED` and `AMIIBO_UPSTREAM` (what an override
+Six more generated tables carry it: `AMIIBO_CATEGORIES`, `AMIIBO_PATHS`,
+`AMIIBO_NOTES`, `AMIIBO_AUTHORED`, `AMIIBO_UPSTREAM` (what an override
 replaced, which is how `update-db` notices upstream moving underneath a
 correction, since the generated file alone cannot show a value an override was
-masking). All are emitted whether or not anything is curated, so importers need
-no fallback.
+masking) and `AMIIBO_EXCLUDED` (an entry upstream has that this database
+deliberately does not carry, kept by name rather than merely omitted so the next
+update can offer it again). All are emitted whether or not anything is curated,
+so importers need no fallback.
+
+The overlay's `excluded` list is removed **before anything is derived**, so an
+excluded amiibo takes part in no naming, no disambiguation and no collision
+check: it simply is not there. Note that an excluded ID you own a dump of reads
+as "not in the database" on the collection page, which is the cost of holding an
+addition out.
 
 **Upstream can only warn; the overlay author can fail.** A routine refresh must
 not break because a third party edited their repository, so an override for an ID
@@ -616,6 +624,110 @@ Regeneration calls the same `generate()` the command line calls, and is tried as
 a dry run before anything is written. A save that would put two amiibos on one
 device path is refused with the reason, and neither file is touched.
 
+### Updating from upstream
+
+**UPDATE** in the admin bar fetches the two sources and shows what they would
+change, before anything is published. `npm run update-db -- --dry-run` prints
+the same report on the command line and writes nothing.
+
+The model is **Track Changes**: every modification is individually **ACCEPT** or
+**DECLINE**, walked through in steps that run coarse to fine.
+
+```
+  ① SERIES     ② TYPES     ③ AMIIBO     ④ ON YOUR DEVICE     ⑤ CONFIRM
+```
+
+Steps with nothing in them are not shown, so the numbering counts what there is
+to look at. Within a step, sections are **added · removed · changed**, each with
+ACCEPT ALL / DECLINE ALL.
+
+**The unit is the entity, not the field.** An amiibo arriving with a name, a
+series and a release date is one arrival and one row, with those values nested
+inside it. This matters more than it sounds: the previous version counted fields
+as peers, so the summary and the list of rows described different populations
+and none of the numbers agreed. The headline is now derived from the same array
+the steps render, which makes disagreeing impossible.
+
+```
+Update: 2 amiibo to add, 0 to change, 0 to remove · 1 series to add
+Nothing you have curated is affected · No files move on your device
+```
+
+Named counts, zeros intact — Terraform's `Plan: N to add, N to change, N to
+destroy`. The second line is the only part that changes colour, because it is
+the only part that says whether the update needs care.
+
+**What DECLINE does** depends on what is being declined, and is always "not this
+time" rather than "never":
+
+| | ACCEPT | DECLINE |
+|---|---|---|
+| a name, date, filename or folder token changed | upstream wins — writes nothing | pins the published value |
+| an amiibo upstream dropped | drops your overlay entry for it | keeps it, as an authored entry |
+| an amiibo upstream added | it is added | held out by `excluded`, and **offered again next update** |
+
+Accepting is free: re-applying the overlay is what the build already does, so it
+writes nothing at all. Only declining grows the overlay, and only by what is
+needed to hold the line. A declined change also records `upstreamWas` — what
+upstream said at the moment the line was drawn — so a later update can tell a
+pin still doing its job from one upstream has come round to. A record with no
+pin beside it is a validation error, which is what makes dropping a pin
+self-checking.
+
+**Some changes have no second answer, and say so instead of pretending.** A
+brand-new series has no previous name to fall back to, and the generator refuses
+a series byte without one — so it is shown as a consequence of accepting the
+amiibo that need it, with no buttons. Declining every amiibo in a new series
+declines the series with them.
+
+**Nothing blocks APPLY.** Anything left untouched is accepted, and the confirm
+step says how many that is (`3 left untouched, and will be accepted`). The
+previous version refused to proceed until every row had been clicked, including
+rows whose only possible answer was yes — which is the failure NN/g describes as
+*"do not use confirmation dialogs for routine actions"*. Renames on the device
+keep their own confirmation, with the actual paths
+(`E:/amiibo/SSB/Mario.bin`), because that is the one consequence that reaches
+hardware.
+
+#### Why a fetch does not take effect
+
+A refresh writes into `tools/.cache/pending/` and never over the live pair. That
+is the one structural decision here and it earns its keep three times: a bad
+fetch cannot destroy a working cache; a `generate()` that fails afterwards needs
+no rollback; and — the one that actually matters — an ordinary save regenerates
+from the live cache, so a refresh that overwrote it would make **the next
+unrelated save publish unreviewed upstream data**.
+
+Each source is refused unless it parses to at least 500 entries. That check
+protects the cache far more than atomicity does: GitHub answers 200 with an HTML
+error page more often than it 404s, and such a page would be written perfectly
+atomically.
+
+The apply order is the safety story, and one part of it looks wrong until it is
+said out loud — the cache is promoted **before** the database is written. If the
+rebuild then fails, the cache is new and the database is old, and a retry
+produces the same reviewed result. The other order would leave the database
+ahead of the cache, so the next ordinary save would silently *revert* published
+data. Reverting is the worse failure.
+
+Four gates, each covered by a test that fails when it is removed:
+
+- **Undecided** — a change you did not look at cannot publish as if accepted.
+- **Fingerprint** — the preview is stamped with what it was computed from. If a
+  second tab saved, or someone re-fetched, apply is refused rather than applied
+  to a world that moved.
+- **Post-decision build** — the decisions are applied and the result built
+  before anything is written. Two amiibo landing on one device path is refused
+  with the reason. The only shape that reaches this gate is a rotation: upstream
+  swaps two names in one series, which is self-consistent upstream, and keeping
+  only half of it collides.
+- **Promote on apply, never on refresh.**
+
+The same comparison runs on the command line. `npm run update-db` prints the
+identical groups from the same module ([`web/js/dbdiff.js`](web/js/dbdiff.js)),
+because two reports of what upstream changed would drift, and the drift would be
+invisible until one of them called a device-wide rename harmless.
+
 ### Backups, restore and export
 
 The BACKUPS drawer lists those timestamped copies, newest first, and offers each
@@ -730,7 +842,7 @@ real work.
 npm test
 ```
 
-523 tests, no hardware needed:
+595 tests, no hardware needed:
 
 - `protocol.test.mjs`: against a simulated device: framing,
   multi-notification reassembly, command serialisation, chunked writes,
@@ -790,6 +902,25 @@ npm test
   tokens present and unique, the delta tables carrying only real deltas, and no
   filename over the device's 47-byte limit.
 
+- `dbdiff.test.mjs`: what an upstream refresh would change, and what each answer
+  writes. Built by mutating a real generated database rather than a fixture,
+  because the thing under test parses that exact format. Covers the two silent
+  bugs it inherited from the CLI — release dates read as none at all, and a
+  delta row appearing for an existing ID read as a new filename rather than a
+  device-side rename. Also the full life of a declined addition: an exclusion is
+  written, both databases then omit the entry so a names-only comparison would
+  see nothing, and the next update offers it once more until it is accepted.
+- `upstream.test.mjs`: the fetcher, against a local origin rather than the
+  network, so the real fetch path including abort is exercised. Nearly every
+  test asserts the same thing from a different angle: the live cache is not
+  touched. Also the plausibility gate, which is what stops a 200 carrying an
+  HTML error page from being written perfectly atomically over a working cache.
+- `server-upstream.test.mjs`: the refresh over real HTTP, with its own COPY of
+  the cache — applying promotes the pending sources over the live ones, and the
+  repository's `tools/.cache` is what every other test and `npm run update-db`
+  depend on. Each of the four apply gates is covered by a test that fails when
+  the gate is removed.
+
 The last seven run the interface itself, against a real DOM from `linkedom`.
 They exist because every UI bug in this project's history lived in a gap
 `ui-modules.test.mjs` cannot see: a selector matching nothing, a container
@@ -807,7 +938,11 @@ module failed to load. `npm test` said everything passed each time.
   place rather than once per page.
 - `admin-boot.test.mjs`: the admin actually run — `adminui.js` imported against
   the real page with a stubbed API, then driven: sign in, search, filter, edit,
-  revert, publish. This is the file that would have caught the white screen.
+  revert, publish. This is the file that would have caught the white screen. Its
+  review section is driven step by step against a preview `dbdiff` generates
+  from a mutated real database, so the screen and the fixture cannot drift: the
+  headline count is asserted to equal the number of rows the steps render, which
+  is the arithmetic the previous screen got wrong.
 - `admin-style.test.mjs`: the CSS as text, since there is no layout engine. Its
   centrepiece is a class-clash detector — every class the admin borrows checked
   against every class `app.css` styles unqualified. It exists because `.fRow`
@@ -874,6 +1009,8 @@ web/js/bytes.js           little-endian codecs, string and metadata TLV
 web/js/ble.js             Web Bluetooth transport (Nordic UART Service)
 web/js/protocol.js        framing, reassembly, command queue, VFS commands
 web/js/planner.js         reconciliation logic + path assignment (pure, no I/O)
+web/js/dbdiff.js          what an upstream refresh would change, and what each
+                          answer writes; shared by the CLI and the admin
 web/js/dbsource.js        upstream parsers + name derivation, shared by the
                           generator, the admin server and the browser
 web/js/devicepath.js      device byte limits and safe names, with no DB import
@@ -915,13 +1052,14 @@ server/index.mjs          the admin service: routing, sessions, static UI
 server/auth.mjs           scrypt password, signed cookie, rate limit, CSRF
 server/store.mjs          atomic overlay writes and backups
 server/regen.mjs          rebuild the site database after an edit
+server/upstream.mjs       fetch the sources into pending/, promote, discard
 admin/                    the admin UI (not part of the public site)
 
 tools/build-amiibo-db.mjs regenerate the database; also importable as generate()
 tools/update-db.mjs        fetch upstream sources + regenerate + report the diff
 tools/fetch-amiibo-images.mjs  download artwork, build the three tiers
 
-test/                     twenty-three files, see Tests above
+test/                     twenty-six files, see Tests above
 ```
 
 ## Hosting

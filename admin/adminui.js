@@ -67,6 +67,7 @@ const state = {
   fields: new Map(),  // the open editor's field key -> its .field wrapper
   preview: null,      // the open editor's previewed parts, updated in place
   bad: new Set(),     // ids whose entry would not validate; SAVE waits on this
+  review: null,       // the open upstream review: { pending, diff, decisions, fingerprint }
 };
 
 // What a CMS filters by. Not the collection page's owned/missing, which mean
@@ -94,9 +95,20 @@ async function api(path, { method = 'GET', body } = {}) {
   let parsed = null;
   try { parsed = text ? JSON.parse(text) : null; } catch { /* non-JSON, e.g. the export */ }
   if (!res.ok) {
-    const err = new Error(parsed?.error ?? `HTTP ${res.status}`);
+    // A route this page knows about that the server does not is not a missing
+    // feature — it is a version mismatch, and always in the same direction.
+    // The server serves this file fresh from disk on every request but runs
+    // its own routes from the module graph it loaded at startup, so editing
+    // server/ gives you a new interface talking to an old API. "No such
+    // endpoint" is the least useful way to say that.
+    const stale = res.status === 404 && parsed?.error === 'no such endpoint';
+    const err = new Error(stale
+      ? `the admin service does not have ${path}. It is running older code than `
+        + 'this page — restart it (npm run admin:local) and reload.'
+      : parsed?.error ?? `HTTP ${res.status}`);
     err.details = parsed?.details ?? [];
     err.status = res.status;
+    err.stale = stale;
     throw err;
   }
   return parsed;
@@ -539,6 +551,450 @@ async function restore(name) {
     state.dirty = false;
     await boot();
   } catch (err) {
+    say([err.message, ...(err.details ?? [])].join(' · '), 'err');
+  }
+}
+
+// ---- the upstream review -------------------------------------------------
+//
+// Track Changes, arranged by entity. Every modification is individually
+// ACCEPT or DECLINE, and DECLINE means "not this time" — the change is not
+// applied and the next update offers it again.
+//
+// Two rules the previous version broke, both worth stating because both are
+// what made it unreadable:
+//
+//   The unit is the ENTITY, not the field. An amiibo arriving with a name and
+//   a release date is one arrival, one row. Counting fields as peers is why the
+//   old summary and the old row list disagreed.
+//
+//   Nothing is required. Anything left alone is accepted, and the confirm step
+//   says how many that is. A row whose only possible answer is "yes" is not a
+//   question, and the old screen had them — and blocked on them.
+//
+// Steps run coarse to fine: a series is decided before the amiibo inside it,
+// so the cascade resolves in the order you meet it.
+
+const STEPS = [
+  { key: 'series', title: 'SERIES', of: (e) => e.kind === 'series' },
+  { key: 'type', title: 'TYPES', of: (e) => e.kind === 'type' },
+  { key: 'amiibo', title: 'AMIIBO', of: (e) => e.kind === 'amiibo' && !e.device },
+  { key: 'device', title: 'ON YOUR DEVICE', of: (e) => Boolean(e.device) },
+  { key: 'confirm', title: 'CONFIRM', of: () => false },
+];
+
+// Sections within a step, in a fixed order.
+const OPS = [
+  { op: 'add', title: 'ADDED' },
+  { op: 'remove', title: 'REMOVED' },
+  { op: 'edit', title: 'CHANGED' },
+];
+
+const FIELD_LABEL = {
+  name: 'name', released: 'released', folder: 'device folder',
+  fileName: 'filename', shortName: 'short name',
+};
+
+async function openReview() {
+  if (state.dirty) {
+    const ok = await confirmDialog({
+      title: 'SAVE YOUR EDITS FIRST?',
+      body: 'Applying a refresh writes the overlay, so it cannot run alongside '
+        + 'unsaved edits. Save or revert them, then try again.',
+      confirmLabel: 'OK',
+      cancelLabel: 'CLOSE',
+    });
+    return void ok;
+  }
+
+  say('Checking for updates…');
+  el('refresh').disabled = true;
+  try {
+    await api('/upstream/refresh', { method: 'POST' });
+    // Deliberately NOT short-circuiting on "the sources are byte-identical to
+    // what is cached". That answers a different question. The sources can be
+    // unchanged while the published database is still behind them — a cache
+    // fetched but never applied, or a database regenerated from an older pair
+    // — and there is plenty to review in that case. What matters is whether
+    // the DATABASE would change, which only the preview knows.
+    await loadPreview();
+  } catch (err) {
+    say([err.message, ...(err.details ?? [])].join(' · '), 'err');
+  } finally {
+    el('refresh').disabled = false;
+  }
+}
+
+async function loadPreview() {
+  const preview = await api('/upstream/preview');
+  if (!preview.pending) {
+    say('There is no pending refresh.', 'warn');
+    return;
+  }
+  if (!preview.ok) {
+    // The new sources introduce something the build refuses. There is no
+    // candidate to diff, so say that plainly rather than showing an empty
+    // review.
+    say(`This refresh will not build: ${preview.errors.join(' · ')}`, 'err');
+    return;
+  }
+  if (preview.diff.counts.total === 0) {
+    // Nothing to decide. Worth one line rather than an empty review screen —
+    // and the fetch is thrown away so it does not sit there looking pending.
+    say('No update available: the site already matches upstream.', 'ok');
+    await api('/upstream/pending', { method: 'DELETE' }).catch(() => {});
+    return;
+  }
+
+  // Verdicts are per ENTITY — the thing on screen — and expanded to the flat
+  // change keys the server names only when the update is applied.
+  state.review = { ...preview, verdicts: {}, steps: [], step: 0 };
+  renderReview();
+  say('');
+}
+
+function renderReview() {
+  const r = state.review;
+  el('library').hidden = true;
+  el('review').hidden = false;
+
+  el('reviewWhen').textContent = `fetched ${readableStamp(r.pending.fetchedAt)}`;
+
+  // Only steps that have something in them, so the numbering counts what there
+  // actually is to look at rather than promising empty screens.
+  r.steps = STEPS.filter((s) => s.key === 'confirm' || r.diff.entities.some(s.of));
+  r.step = 0;
+
+  renderSummary();
+  renderStepper();
+  renderStep();
+}
+
+function closeReview() {
+  state.review = null;
+  el('review').hidden = true;
+  el('library').hidden = false;
+  el('refresh').disabled = false;
+}
+
+/**
+ * The headline: named counts over the rows on screen, zeros intact.
+ *
+ * Counted from `diff.summary`, which is derived from the same entity array the
+ * steps render — so the number here and the number of rows cannot disagree.
+ * That is the specific failure being fixed.
+ */
+function renderSummary() {
+  const s = state.review.diff.summary;
+  const part = (n, noun, verb) => `${n} ${noun}${n === 1 ? '' : n && noun.endsWith('s') ? '' : ''} to ${verb}`;
+
+  const bits = [];
+  if (s.amiibo.add || s.amiibo.edit || s.amiibo.remove) {
+    bits.push(`${part(s.amiibo.add, 'amiibo', 'add')}, ${s.amiibo.edit} to change, `
+      + `${s.amiibo.remove} to remove`);
+  }
+  for (const [kind, noun] of [['series', 'series'], ['type', 'type']]) {
+    const k = s[kind];
+    if (k.add) bits.push(`${k.add} ${noun} to add`);
+    if (k.edit) bits.push(`${k.edit} ${noun} to change`);
+    if (k.remove) bits.push(`${k.remove} ${noun} to remove`);
+  }
+  el('reviewSummary').textContent = `Update: ${bits.join(' · ')}`;
+
+  // The only line that changes colour, because it is the only one that says
+  // whether this update needs care.
+  const risk = el('reviewRisk');
+  const notes = [];
+  notes.push(s.yours
+    ? `${s.yours} of these collide with something you curated`
+    : 'Nothing you have curated is affected');
+  notes.push(s.device
+    ? `${s.device} would rename files on your device`
+    : 'No files move on your device');
+  risk.textContent = notes.join(' · ');
+  risk.className = `summaryRisk${s.device ? ' err' : s.yours ? ' warn' : ''}`;
+}
+
+function renderStepper() {
+  const r = state.review;
+  const box = el('reviewSteps');
+  box.textContent = '';
+  r.steps.forEach((step, i) => {
+    const li = document.createElement('li');
+    li.className = i === r.step ? 'on' : i < r.step ? 'done' : '';
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.innerHTML = `<span class="n">${i + 1}</span>`;
+    b.append(document.createTextNode(step.title));
+    b.addEventListener('click', () => gotoStep(i));
+    li.append(b);
+    box.append(li);
+  });
+}
+
+function gotoStep(i) {
+  const r = state.review;
+  r.step = Math.max(0, Math.min(i, r.steps.length - 1));
+  renderStepper();
+  renderStep();
+}
+
+function renderStep() {
+  const r = state.review;
+  const step = r.steps[r.step];
+  const panel = el('reviewPanel');
+  panel.textContent = '';
+
+  const last = r.step === r.steps.length - 1;
+  el('reviewBack').disabled = r.step === 0;
+  el('reviewNext').hidden = last;
+  el('reviewApply').hidden = !last;
+
+  if (step.key === 'confirm') return renderConfirm(panel);
+
+  const rows = r.diff.entities.filter(step.of);
+  const body = document.createElement('div');
+  body.className = 'stepBody panel';
+
+  for (const { op, title } of OPS) {
+    const inOp = rows.filter((e) => e.op === op);
+    if (!inOp.length) continue;
+
+    const h = document.createElement('h3');
+    h.append(document.createTextNode(`${title} (${inOp.length})`));
+
+    // Bulk answers only where there is something to answer.
+    const decidable = inOp.filter((e) => e.decidable);
+    if (decidable.length > 1) {
+      const bulk = document.createElement('span');
+      bulk.className = 'bulk';
+      for (const [verdict, label] of [['keep', 'ACCEPT ALL'], ['skip', 'DECLINE ALL']]) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = label;
+        b.addEventListener('click', () => {
+          for (const e of decidable) decide(e, verdict);
+          renderStep();
+        });
+        bulk.append(b);
+      }
+      h.append(bulk);
+    }
+    body.append(h);
+    for (const e of inOp) body.append(renderEntityRow(e));
+  }
+
+  panel.append(body);
+}
+
+function renderEntityRow(entity) {
+  const r = state.review;
+  const verdict = r.verdicts[entity.key];
+
+  const row = document.createElement('div');
+  row.className = `entity${entity.danger ? ' danger' : ''}`
+    + (verdict === 'keep' ? ' accepted' : verdict === 'skip' ? ' declined' : '');
+  row.dataset.key = entity.key;
+
+  const top = document.createElement('div');
+  top.className = 'top';
+  const name = document.createElement('span');
+  name.className = 'name';
+  name.textContent = entity.label;
+  top.append(name);
+  if (entity.kind === 'amiibo' && entity.series) {
+    const s = document.createElement('span');
+    s.className = 'ref';
+    s.textContent = entity.series;
+    top.append(s);
+  }
+  if (verdict) {
+    const v = document.createElement('span');
+    v.className = 'verdict';
+    v.textContent = verdict === 'keep' ? '✓ ACCEPTED' : '✕ DECLINED';
+    top.append(v);
+  }
+  row.append(top);
+
+  // The fields, old on the left and new on the right. Where you have an
+  // override there are three values, not two, because two cannot say which is
+  // yours — the same reason git's diff3 shows the base.
+  const fields = document.createElement('div');
+  fields.className = 'fields';
+  for (const f of entity.fields) {
+    const k = document.createElement('span');
+    k.className = 'k';
+    k.textContent = FIELD_LABEL[f.field] ?? f.field;
+    const from = document.createElement('span');
+    from.className = 'from';
+    from.textContent = f.published ?? '—';
+    const to = document.createElement('span');
+    to.className = 'to';
+    to.textContent = `→  ${f.upstream ?? '—'}`;
+    fields.append(k, from, to);
+
+    if (f.yours !== null) {
+      const yk = document.createElement('span');
+      yk.className = 'k';
+      const yv = document.createElement('span');
+      yv.className = 'yours';
+      yv.textContent = f.yours;
+      const note = document.createElement('span');
+      note.className = 'yours';
+      note.textContent = '← yours';
+      fields.append(yk, yv, note);
+    }
+  }
+  row.append(fields);
+
+  if (entity.device) {
+    const dev = document.createElement('div');
+    dev.className = 'why';
+    dev.textContent = `${entity.device.before}  →  ${entity.device.after}`;
+    row.append(dev);
+  }
+
+  if (!entity.decidable) {
+    // Shown so you know it happened, with no buttons, because there is only one
+    // possible outcome. A brand-new series has no previous name to fall back
+    // to, and the build refuses a series byte without one.
+    const why = document.createElement('div');
+    why.className = 'why';
+    why.textContent = entity.op === 'add' && entity.kind !== 'amiibo'
+      ? 'Comes with the amiibo that need it — nothing to decide.'
+      : 'No previous value to keep, so this cannot be declined.';
+    row.append(why);
+    return row;
+  }
+
+  const acts = document.createElement('div');
+  acts.className = 'acts';
+  for (const [v, label, title] of [
+    ['keep', '✓ ACCEPT', 'Take this change.'],
+    ['skip', '✕ DECLINE', entity.op === 'add'
+      ? 'Leave it out for now. The next update will offer it again.'
+      : 'Keep what the site shows today.'],
+  ]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.title = title;
+    if (verdict === v) b.className = 'primary';
+    b.addEventListener('click', () => { decide(entity, v); renderStep(); });
+    acts.append(b);
+  }
+  row.append(acts);
+  return row;
+}
+
+/**
+ * Record a verdict, and carry it to whatever depends on it.
+ *
+ * Declining an amiibo whose series is also new leaves the series with nothing
+ * in it; accepting one requires its series. The step order puts series first,
+ * but a decision taken later still has to reach back.
+ */
+function decide(entity, verdict) {
+  const r = state.review;
+  r.verdicts[entity.key] = verdict;
+
+  if (entity.needs) {
+    const needed = r.diff.entities.find((e) => e.key === entity.needs);
+    if (needed) {
+      const users = r.diff.entities.filter((e) => e.needs === entity.needs);
+      // The series follows its amiibo: kept if any of them is, dropped if none.
+      r.verdicts[needed.key] = users.some((e) => r.verdicts[e.key] !== 'skip') ? 'keep' : 'skip';
+    }
+  }
+}
+
+function renderConfirm(panel) {
+  const r = state.review;
+  const body = document.createElement('div');
+  body.className = 'stepBody panel';
+
+  const decided = Object.keys(r.verdicts).length;
+  const declined = r.diff.entities.filter((e) => r.verdicts[e.key] === 'skip');
+  const accepted = r.diff.entities.filter((e) => r.verdicts[e.key] !== 'skip');
+  const renames = r.diff.entities.filter(
+    (e) => e.device && r.verdicts[e.key] !== 'skip');
+
+  const h = document.createElement('h3');
+  h.textContent = 'WHAT WILL HAPPEN';
+  body.append(h);
+
+  const list = document.createElement('ul');
+  list.className = 'confirmList';
+  const say_ = (text) => {
+    const li = document.createElement('li');
+    li.textContent = text;
+    list.append(li);
+  };
+
+  say_(`${accepted.length} change${accepted.length === 1 ? '' : 's'} applied.`);
+  if (declined.length) {
+    say_(`${declined.length} declined — left out for now, offered again next update.`);
+  }
+  if (renames.length) {
+    say_(`${renames.length} file${renames.length === 1 ? '' : 's'} renamed on every device you sync.`);
+  }
+  if (decided < r.diff.entities.length) {
+    // Said out loud rather than left implicit: this is the trade for not
+    // blocking on rows nobody can act on.
+    say_(`${r.diff.entities.length - decided} left untouched, and will be accepted.`);
+  }
+  body.append(list);
+  panel.append(body);
+}
+
+/** Verdicts per entity, expanded to the flat change keys the server names. */
+function reviewDecisions() {
+  const r = state.review;
+  const out = {};
+  for (const e of r.diff.entities) {
+    const verdict = r.verdicts[e.key] ?? 'keep';
+    for (const key of e.changeKeys) out[key] = verdict;
+  }
+  return out;
+}
+
+async function applyReview() {
+  const r = state.review;
+  const renames = r.diff.entities.filter((e) => e.device && r.verdicts[e.key] !== 'skip');
+
+  if (renames.length) {
+    const ok = await confirmDialog({
+      title: `RENAME ${renames.length === 1 ? 'A FILE' : `${renames.length} FILES`} ON EVERY DEVICE?`,
+      body: 'The next sync moves them. This is what the review is for.',
+      detail: renames.slice(0, 20).map((e) => `${e.device.before} → ${e.device.after}`),
+      confirmLabel: 'RENAME THEM',
+      danger: true,
+    });
+    if (!ok) return;
+  }
+
+  el('reviewApply').disabled = true;
+  say('Applying and rebuilding the site…');
+  try {
+    const result = await api('/upstream/apply', {
+      method: 'POST',
+      body: { fingerprint: r.fingerprint, decisions: reviewDecisions() },
+    });
+    closeReview();
+    say(`Applied. The site now has ${result.entries} amiibo`
+      + (result.applied.pinsWritten ? `, holding ${result.applied.pinsWritten} value(s) back` : '')
+      + (result.renames.length ? `, renaming ${result.renames.length} file(s) on the device` : '')
+      + '.', 'ok');
+    await boot();
+  } catch (err) {
+    el('reviewApply').disabled = false;
+    if (err.status === 409) {
+      // The world moved underneath the preview. Reload it rather than trying
+      // to reconcile decisions against a diff that no longer exists.
+      say('Something changed while you were reviewing. Reloading the preview.', 'warn');
+      await loadPreview();
+      return;
+    }
     say([err.message, ...(err.details ?? [])].join(' · '), 'err');
   }
 }
@@ -1336,6 +1792,11 @@ el('save').addEventListener('click', save);
 el('export').addEventListener('click', () => download('/export', 'amiibo-overrides.json'));
 el('newAmiibo').addEventListener('click', renderNewForm);
 el('newSeries').addEventListener('click', renderNewSeries);
+el('refresh').addEventListener('click', openReview);
+el('reviewClose').addEventListener('click', closeReview);
+el('reviewApply').addEventListener('click', applyReview);
+el('reviewBack').addEventListener('click', () => gotoStep(state.review.step - 1));
+el('reviewNext').addEventListener('click', () => gotoStep(state.review.step + 1));
 
 let filterTimer = null;
 el('q').addEventListener('input', () => {

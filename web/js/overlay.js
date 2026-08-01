@@ -28,13 +28,14 @@ export const EMPTY_OVERLAY = Object.freeze({
   types: {},
   categories: {},
   amiibos: {},
+  excluded: [],
 });
 
 const ID_RE = /^[0-9a-f]{16}$/;
 const CATEGORY_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-const ROOT_KEYS = new Set(['schema', 'series', 'types', 'categories', 'amiibos']);
+const ROOT_KEYS = new Set(['schema', 'series', 'types', 'categories', 'amiibos', 'excluded']);
 const AMIIBO_KEYS = new Set([
   'kind', 'name', 'release', 'fileName', 'shortName', 'path', 'blurb', 'note',
   'upstreamWas', 'decidedAt',
@@ -183,6 +184,26 @@ export function validateOverlay(overlay) {
     }
   }
 
+  // Amiibo upstream lists that this database deliberately does not.
+  //
+  // The database is regenerated from the sources, so an entry upstream has WILL
+  // appear unless something says otherwise — declining a newly added amiibo has
+  // nowhere else to live. Deliberately not permanent: the review offers an
+  // excluded entry again on the next update, so this is "not this time" rather
+  // than a blocklist.
+  if (overlay.excluded !== undefined) {
+    if (!Array.isArray(overlay.excluded)) bad('excluded must be an array');
+    else {
+      const seen = new Set();
+      for (const id of overlay.excluded) {
+        if (typeof id !== 'string' || !ID_RE.test(id)) {
+          bad(`excluded: ${JSON.stringify(id)} is not a 16-character lowercase hex ID`);
+        } else if (seen.has(id)) bad(`excluded: ${id} listed twice`);
+        seen.add(id);
+      }
+    }
+  }
+
   if (overlay.amiibos !== undefined) {
     if (!isPlainObject(overlay.amiibos)) bad('amiibos must be an object');
     else for (const [id, entry] of Object.entries(overlay.amiibos)) {
@@ -315,6 +336,18 @@ export function applyOverlay({ names, series, types, releases }, overlay = EMPTY
   const authored = [];
   const upstreamWas = new Map();
 
+  // Entries this database deliberately does not carry. Removed before anything
+  // is derived, so an excluded amiibo takes part in no naming, no
+  // disambiguation and no collision check — it simply is not there. What it
+  // WAS called is kept, because the review has to be able to offer it again.
+  const excluded = new Map();
+  for (const id of overlay.excluded ?? []) {
+    if (!out.names.has(id)) continue;   // upstream dropped it anyway
+    excluded.set(id, out.names.get(id));
+    out.names.delete(id);
+    out.releases.delete(id);
+  }
+
   for (const [b, v] of Object.entries(overlay.series ?? {})) {
     if (v.label !== undefined) out.series[b] = v.label;
   }
@@ -365,7 +398,7 @@ export function applyOverlay({ names, series, types, releases }, overlay = EMPTY
     }
   }
 
-  return { ...out, notices, authored, upstreamWas };
+  return { ...out, notices, authored, upstreamWas, excluded };
 }
 
 /** The pins the generator applies after deriving names. */
