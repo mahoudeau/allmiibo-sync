@@ -274,3 +274,52 @@ test('parsing rejects bad JSON and bad shape with a useful message', () => {
   assert.throws(() => parseOverlay('{"schema":1,"nope":{}}'), /unknown top-level key/);
   assert.deepEqual(parseOverlay('{"schema":1}').amiibos, {});
 });
+
+// ---- series curation ----------------------------------------------------
+
+test('a series face must be an amiibo in that series', () => {
+  // Otherwise the series header shows a character from somewhere else, which
+  // looks like a bug in the artwork rather than a bad pin.
+  const ok = validateOverlay({
+    ...EMPTY_OVERLAY,
+    series: { 0: { face: '0000000000000002' } },   // series byte 00
+  });
+  assert.deepEqual(ok, []);
+
+  const wrong = validateOverlay({
+    ...EMPTY_OVERLAY,
+    series: { 1: { face: '0000000000000002' } },   // claims series 01
+  });
+  assert.equal(wrong.length, 1);
+  assert.match(wrong[0], /is not in that series/);
+
+  for (const face of ['nothex', '', 'ABCDEF0000000002', 42]) {
+    const bad = validateOverlay({ ...EMPTY_OVERLAY, series: { 0: { face } } });
+    assert.ok(bad.length > 0, `${JSON.stringify(face)} is refused`);
+  }
+});
+
+test('a folder token is one folder name, held to the device\'s rules', () => {
+  assert.deepEqual(validateOverlay({ ...EMPTY_OVERLAY, series: { 0: { short: 'SSB' } } }), []);
+
+  const path = validateOverlay({ ...EMPTY_OVERLAY, series: { 0: { short: 'a/b' } } });
+  assert.match(path[0], /one folder name, not a path/);
+
+  const backslash = validateOverlay({ ...EMPTY_OVERLAY, series: { 0: { short: 'a\\b' } } });
+  assert.match(backslash[0], /one folder name, not a path/);
+
+  // Something the sanitiser would rewrite is a lie about what lands on disk.
+  const unsafe = validateOverlay({ ...EMPTY_OVERLAY, series: { 0: { short: 'a:b' } } });
+  assert.ok(unsafe.length > 0);
+});
+
+test('series pins reach the generator', async () => {
+  const { overlayPins } = await import('../web/js/overlay.js');
+  const pins = overlayPins({
+    ...EMPTY_OVERLAY,
+    series: { 0: { short: 'SMASH', face: '0000000000000002', label: 'Smash' } },
+  });
+  assert.equal(pins.seriesShort[0], 'SMASH');
+  assert.equal(pins.seriesFace[0], '0000000000000002');
+  assert.equal('label' in pins.seriesShort, false, 'the label is applied, not pinned');
+});

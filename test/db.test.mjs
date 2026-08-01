@@ -187,3 +187,17 @@ test('an override records a value that actually differs', () => {
     assert.notEqual(was, AMIIBO_NAMES[id], `${id}: the override matches upstream, so it does nothing`);
   }
 });
+
+test('every curated series face is an amiibo of the series it represents', async () => {
+  const { AMIIBO_SERIES_FACE, AMIIBO_NAMES } = await import('../web/data/amiibo-db.js');
+  // The overlay refuses one that is not, but this is the committed artefact —
+  // and the header showing a character from another series would read as an
+  // artwork bug rather than a bad pin.
+  for (const [byte, id] of Object.entries(AMIIBO_SERIES_FACE)) {
+    assert.match(id, /^[0-9a-f]{16}$/, `face for series ${byte} is an ID`);
+    assert.ok(AMIIBO_NAMES[id], `face ${id} is a real amiibo`);
+    assert.equal(parseInt(id.slice(12, 14), 16), Number(byte),
+      `face ${id} belongs to series ${byte}`);
+  }
+});
+

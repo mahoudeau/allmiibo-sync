@@ -227,7 +227,7 @@ ${[...fileNames].map(([id, n]) => `  '${id}': ${JSON.stringify(n)},`).join('\n')
 export const AMIIBO_SHORT_NAMES = Object.freeze({
 ${[...shortNames].map(([id, n]) => `  '${id}': ${JSON.stringify(n)},`).join('\n')}
 });
-${curatedTables({ categories, paths: pins.paths, notes: pins.notes, authored, upstreamWas })}`;
+${curatedTables({ categories, paths: pins.paths, notes: pins.notes, faces: pins.seriesFace, authored, upstreamWas })}`;
 
   return {
     contents,
@@ -259,7 +259,7 @@ ${curatedTables({ categories, paths: pins.paths, notes: pins.notes, authored, up
  * can import them by name without every importer having to cope with a database
  * built before the overlay existed.
  */
-function curatedTables({ categories, paths, notes, authored, upstreamWas }) {
+function curatedTables({ categories, paths, notes, faces, authored, upstreamWas }) {
   const idTable = (name, map, comment) => `
 // ${comment}
 export const ${name} = Object.freeze({${map.size ? `
@@ -273,6 +273,12 @@ export const AMIIBO_CATEGORIES = Object.freeze({${Object.keys(categories).length
 ${Object.entries(categories).map(([id, c]) =>
   `  ${JSON.stringify(id)}: Object.freeze({ label: ${JSON.stringify(c.label)}, order: ${c.order}, members: Object.freeze([${c.members.map((m) => `'${m}'`).join(', ')}]) }),`
 ).join('\n')}
+` : ''}});
+
+// Series byte -> the amiibo whose artwork stands for the series, when the
+// curated choice differs from the one seriesRepresentative() would guess.
+export const AMIIBO_SERIES_FACE = Object.freeze({${Object.keys(faces).length ? `
+${Object.entries(faces).sort((a, b) => a[0] - b[0]).map(([b, id]) => `  ${b}: '${id}',`).join('\n')}
 ` : ''}});
 ${idTable('AMIIBO_PATHS', paths,
   'amiibo ID -> a curated device-relative path, tried before the generated name.')}${idTable('AMIIBO_NOTES', notes,

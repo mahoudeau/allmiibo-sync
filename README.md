@@ -54,7 +54,7 @@ and 2.16.0 (January 2026) added on-device emulation for v3 amiibo.
 - **Interface**: an 8-bit skin with three themes, an original pirate mascot
   in twelve colourways, and an Advanced toggle that keeps the expert layer out
   of the way until asked for. ✅
-- **Tests**: 497 across twenty-three files; the protocol suite runs against a
+- **Tests**: 523 across twenty-three files; the protocol suite runs against a
   simulated device, the admin suite against a real HTTP server on an ephemeral
   port, the UI suites against a real DOM, the rest are pure. ✅
 
@@ -381,6 +381,53 @@ Authored entries appear behind the same Settings switch as the fan-made card set
 Neither is an official product, so with it off the headline completion figure
 stays comparable.
 
+**NEW AMIIBO** in the admin creates one, for something upstream does not list
+yet. It asks for the 16-hex ID and a name, and shows what the ID decodes to as
+you type — the series and the type are what those bytes *mean*, and typing them
+blind is how an amiibo ends up filed under the wrong series. It refuses an ID
+upstream already has, one already in the overlay, and one whose series or type
+byte has no name, because the generator hard-fails on that and the error would
+otherwise arrive at save time talking about the build rather than about the ID.
+
+A newly authored amiibo appears in the grid immediately, before it is saved:
+`buildCollection` takes an `extra` map for entries a view knows about that the
+published table does not. Without it the one screen whose job is creating them
+would not show them until after publishing.
+
+Deleting an authored entry says DELETE rather than REVERT, and asks. Reverting
+an override falls back to upstream; an authored entry has nothing to fall back
+to and simply ceases to exist.
+
+### Curating a series
+
+A series is a byte in the amiibo ID, not a record: it exists because amiibo
+carry it. The cog on a series header opens its editor, where three things are
+curated.
+
+**The name.** Replaces the upstream label everywhere, including in the search
+index — a renamed series has to be findable by what it is now called.
+
+**The folder on the device.** This is the expensive one. The token names a real
+directory (`E:/amiibo/SSB/`), so changing it renames that folder on every
+device already synced and the next sync moves every file inside. The field says
+so as you type, in before-and-after device paths, and publishing a token change
+asks separately from the ordinary save — with the paths and the file count on
+the dialog. It is validated as one folder name, held to the same rules a
+filename is.
+
+**The image.** There is no series logo anywhere and no public dataset of one, so
+the site picks a representative amiibo by name-matching a hardcoded table. The
+editor lets that be chosen instead, from the amiibo in that series and only
+those — a face from elsewhere would read as an artwork bug rather than a bad
+pin. It is emitted as `AMIIBO_SERIES_FACE` and `seriesRepresentative()` prefers
+it over the guess. Uploading bespoke artwork is a separate matter and waits on
+the image pipeline.
+
+**NEW SERIES** names a byte upstream has not named. That is the whole of
+"creating" one, and its purpose is to unblock authoring an amiibo into a series
+the database does not know yet — which the authoring form refuses until the byte
+has a name, and says so.
+
 ### Naming a file for an amiibo
 
 Sync normally moves files whose names you chose, and folder names are never
@@ -683,7 +730,7 @@ real work.
 npm test
 ```
 
-497 tests, no hardware needed:
+523 tests, no hardware needed:
 
 - `protocol.test.mjs`: against a simulated device: framing,
   multi-notification reassembly, command serialisation, chunked writes,

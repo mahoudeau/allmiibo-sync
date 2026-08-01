@@ -702,3 +702,419 @@ test('EXPORT fetches rather than navigating, so a failure is a message', async (
     page.restore();
   }
 });
+
+// ---- authoring a new amiibo ---------------------------------------------
+//
+// The schema, applyOverlay and the generator have supported kind:'new' since
+// the overlay existed; there was simply no way to create one, so the AUTHORED
+// filter could never be anything but zero.
+
+const FREE_ID = 'ffff000000000002';        // decodes cleanly, upstream has it not
+const UNLABELLED_SERIES_ID = 'ffff000000000802'; // series byte 08 has no name
+
+/** Open the create form and return its fields. */
+function openNewForm(page) {
+  page.byId('newAmiibo').dispatchEvent(new page.window.Event('click'));
+  return {
+    id: page.byId('n-id'),
+    name: page.byId('n-name'),
+    create: [...page.$$('#editor button')].find((b) => b.textContent === 'CREATE'),
+    cancel: [...page.$$('#editor button')].find((b) => b.textContent === 'CANCEL'),
+    problem: (input) => {
+      const why = input.closest('.field').querySelector('.why');
+      return why.hidden ? null : why.textContent;
+    },
+  };
+}
+
+const type = (input, value, page) => {
+  input.value = value;
+  input.dispatchEvent(new page.window.Event('input'));
+};
+
+test('an authored amiibo appears in the grid before it is ever saved', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const before = page.$$('.item').length;
+    assert.equal(page.$(`.item[data-id="${FREE_ID}"]`), null, 'not there to begin with');
+
+    const form = openNewForm(page);
+    type(form.id, FREE_ID, page);
+    type(form.name, 'Invented Fighter', page);
+    assert.equal(form.create.disabled, false);
+    form.create.dispatchEvent(new page.window.Event('click'));
+
+    const cell = page.$(`.item[data-id="${FREE_ID}"]`);
+    assert.ok(cell, 'the new amiibo has a cell immediately');
+    assert.equal(cell.querySelector('.nm').textContent, 'Invented Fighter');
+    assert.equal(cell.querySelector('.tag').textContent, 'AUTHORED');
+    assert.equal(page.$$('.item').length, before + 1);
+
+    // It landed in the series its ID names, not in a bucket of its own.
+    assert.equal(Number(cell.closest('details.series').dataset.series), 0);
+
+    assert.equal(page.byId('save').disabled, false, 'and there is something to save');
+    assert.equal(cell.getAttribute('aria-pressed'), 'true', 'and it is selected');
+  } finally {
+    page.restore();
+  }
+});
+
+test('the AUTHORED filter finally counts something', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const count = () => Number(
+      page.$('#filters input[value="authored"]').closest('.pill').querySelector('.n').textContent);
+    assert.equal(count(), 0);
+
+    const form = openNewForm(page);
+    type(form.id, FREE_ID, page);
+    type(form.name, 'Invented Fighter', page);
+    form.create.dispatchEvent(new page.window.Event('click'));
+
+    assert.equal(count(), 1, 'the filter is no longer permanently zero');
+  } finally {
+    page.restore();
+  }
+});
+
+test('an ID that cannot work is refused with the reason, before saving', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const form = openNewForm(page);
+    const upstreamId = Object.keys(AMIIBO_NAMES)[0];
+
+    type(form.name, 'Something', page);
+
+    type(form.id, 'nothex', page);
+    assert.match(form.problem(form.id), /16 lowercase hex/);
+    assert.equal(form.create.disabled, true);
+
+    type(form.id, upstreamId, page);
+    assert.match(form.problem(form.id), /Upstream already has this ID/);
+    assert.equal(form.create.disabled, true);
+
+    // The one that would otherwise fail at save time with an error about the
+    // build rather than about the ID.
+    type(form.id, UNLABELLED_SERIES_ID, page);
+    assert.match(form.problem(form.id), /Series byte 08 has no name/);
+    assert.equal(form.create.disabled, true);
+
+    type(form.id, FREE_ID, page);
+    assert.equal(form.problem(form.id), null);
+    assert.equal(form.create.disabled, false);
+  } finally {
+    page.restore();
+  }
+});
+
+test('the form shows what the ID means as it is typed', async () => {
+  // Typing sixteen hex characters blind is how an amiibo ends up in the wrong
+  // series, and the bytes are the only thing that decides it.
+  const { page } = await bootAdmin();
+  try {
+    const form = openNewForm(page);
+    const decoded = () => form.id.closest('.field').querySelector('.was').textContent;
+
+    assert.equal(decoded(), '', 'nothing to say yet');
+    type(form.id, FREE_ID, page);
+    assert.match(decoded(), /Super Smash Bros\./, 'the series the bytes name');
+    assert.match(decoded(), /Figure/, 'and the type');
+  } finally {
+    page.restore();
+  }
+});
+
+test('an authored amiibo needs a name, and says so', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const form = openNewForm(page);
+    type(form.id, FREE_ID, page);
+    assert.equal(form.create.disabled, true, 'an ID alone is not enough');
+    assert.match(form.problem(form.name), /needs a name/);
+
+    type(form.name, 'Named', page);
+    assert.equal(form.create.disabled, false);
+    assert.equal(form.problem(form.name), null);
+  } finally {
+    page.restore();
+  }
+});
+
+test('CANCEL leaves the overlay alone', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const before = page.$$('.item').length;
+    const form = openNewForm(page);
+    type(form.id, FREE_ID, page);
+    type(form.name, 'Never Created', page);
+    form.cancel.dispatchEvent(new page.window.Event('click'));
+
+    assert.equal(page.$$('.item').length, before, 'nothing was added');
+    assert.equal(page.byId('save').disabled, true, 'and nothing to save');
+    assert.equal(page.byId('n-id'), null, 'the form is gone');
+  } finally {
+    page.restore();
+  }
+});
+
+test('deleting an authored amiibo removes it, and asks first', async () => {
+  // Reverting an override falls back to upstream. An authored entry has
+  // nothing to fall back to, so the button says DELETE and confirms.
+  const { page } = await bootAdmin();
+  try {
+    const before = page.$$('.item').length;
+    const form = openNewForm(page);
+    type(form.id, FREE_ID, page);
+    type(form.name, 'Short Lived', page);
+    form.create.dispatchEvent(new page.window.Event('click'));
+    assert.equal(page.$$('.item').length, before + 1);
+
+    const button = [...page.$$('#editor button')].find((b) => b.textContent.includes('DELETE'));
+    assert.ok(button, 'the button says DELETE, not REVERT');
+    assert.equal(button.classList.contains('danger'), true);
+
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+    button.dispatchEvent(new page.window.Event('click'));
+    await settle();
+    page.$('dialog.nesDialog .dCancel').dispatchEvent(new page.window.Event('click'));
+    await settle();
+    assert.equal(page.$$('.item').length, before + 1, 'declining keeps it');
+
+    button.dispatchEvent(new page.window.Event('click'));
+    await settle();
+    page.$('dialog.nesDialog .dConfirm').dispatchEvent(new page.window.Event('click'));
+    await settle();
+    assert.equal(page.$$('.item').length, before, 'accepting removes it entirely');
+    assert.equal(page.$(`.item[data-id="${FREE_ID}"]`), null);
+  } finally {
+    page.restore();
+  }
+});
+
+test('an existing amiibo still says REVERT, not DELETE', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const id = page.$('.item').dataset.id;
+    page.$(`.item[data-id="${id}"]`).dispatchEvent(new page.window.Event('click'));
+    const button = [...page.$$('#editor button')].find((b) => b.textContent.includes('AMIIBO'));
+    assert.match(button.textContent, /REVERT/);
+    assert.equal(button.classList.contains('danger'), false);
+  } finally {
+    page.restore();
+  }
+});
+
+// ---- series --------------------------------------------------------------
+//
+// A series is a byte in the amiibo ID, not a record. So "creating" one means
+// naming a byte upstream has not named, and editing one covers the three
+// things a curator controls: the label, the folder token that names a
+// directory on every synced device, and which amiibo's artwork stands for it.
+
+/** Open the series editor from a series header. */
+function openSeries(page, byte = 0) {
+  const head = page.$(`details.series[data-series="${byte}"] .seriesEdit`);
+  head.dispatchEvent(new page.window.Event('click'));
+  return {
+    label: page.byId('s-label'),
+    token: page.byId('s-short'),
+    face: page.byId('s-face'),
+    cost: page.$('#editor .tokenCost'),
+    problem: (input) => {
+      const why = input.closest('.field').querySelector('.why:not(.tokenCost)');
+      return why?.hidden ? null : why?.textContent;
+    },
+  };
+}
+
+test('a series header opens its editor without toggling the group', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const group = page.$('details.series[data-series="0"]');
+    const wasOpen = group.open;
+
+    const form = openSeries(page);
+    assert.ok(form.label, 'the editor is on screen');
+    assert.ok(form.token);
+    assert.ok(form.face);
+    assert.equal(group.open, wasOpen,
+      'clicking inside a <summary> would otherwise expand it as well');
+  } finally {
+    page.restore();
+  }
+});
+
+test('renaming a series updates its header as it is typed', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const headText = () => page.$('details.series[data-series="0"] .seriesHead')
+      .textContent.trim();
+    const before = headText();
+
+    const form = openSeries(page);
+    form.label.value = 'Smash Bros';
+    form.label.dispatchEvent(new page.window.Event('input'));
+
+    assert.match(headText(), /Smash Bros/);
+    assert.notEqual(headText(), before);
+    assert.equal(page.byId('save').disabled, false);
+  } finally {
+    page.restore();
+  }
+});
+
+test('changing the folder token says what it costs, in device paths', async () => {
+  // The most expensive thing this screen can do, and invisible in a list of
+  // edited names: it renames a directory on every device already synced.
+  const { page } = await bootAdmin();
+  try {
+    const form = openSeries(page);
+    assert.equal(form.cost.hidden, true, 'nothing said until it changes');
+
+    form.token.value = 'SMASH';
+    form.token.dispatchEvent(new page.window.Event('input'));
+
+    assert.equal(form.cost.hidden, false);
+    assert.match(form.cost.textContent, /E:\/amiibo\/SSB\//, 'the path it is now');
+    assert.match(form.cost.textContent, /E:\/amiibo\/SMASH\//, 'and the path it becomes');
+    assert.match(form.cost.textContent, /files move on the next sync/);
+  } finally {
+    page.restore();
+  }
+});
+
+test('publishing a folder rename asks for it separately, and CANCEL stops it', async () => {
+  const { page, fetch } = await bootAdmin();
+  try {
+    const form = openSeries(page);
+    form.token.value = 'SMASH';
+    form.token.dispatchEvent(new page.window.Event('input'));
+
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+    const puts = () => fetch.calls.filter((c) => c.method === 'PUT').length;
+
+    page.byId('save').dispatchEvent(new page.window.Event('click'));
+    await settle();
+    const dialog = page.$('dialog.nesDialog');
+    assert.match(dialog.textContent, /RENAME/, 'the rename is asked about first');
+    assert.match(dialog.textContent, /E:\/amiibo\/SSB\/ → E:\/amiibo\/SMASH\//);
+    assert.equal(puts(), 0);
+
+    dialog.querySelector('.dCancel').dispatchEvent(new page.window.Event('click'));
+    await settle();
+    assert.equal(puts(), 0, 'declining publishes nothing');
+  } finally {
+    page.restore();
+  }
+});
+
+test('a folder token that is not one folder is refused', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const form = openSeries(page);
+    form.token.value = 'a/b';
+    form.token.dispatchEvent(new page.window.Event('input'));
+
+    assert.match(form.problem(form.token), /one folder name, not a path/);
+    assert.equal(page.byId('save').disabled, true, 'and SAVE waits');
+
+    form.token.value = 'SMASH';
+    form.token.dispatchEvent(new page.window.Event('input'));
+    assert.equal(form.problem(form.token), null);
+    assert.equal(page.byId('save').disabled, false);
+  } finally {
+    page.restore();
+  }
+});
+
+test('the series image is picked from that series, and only that series', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const form = openSeries(page, 0);
+    const options = [...form.face.options].map((o) => o.value).filter(Boolean);
+    assert.ok(options.length > 1, 'there are amiibo to choose from');
+    for (const id of options) {
+      assert.equal(parseInt(id.slice(12, 14), 16), 0,
+        'every option belongs to this series, so the header cannot show a stranger');
+    }
+    assert.equal(form.face.options[0].value, '', 'and the default is the automatic pick');
+
+    const chosen = options[1];
+    form.face.value = chosen;
+    form.face.dispatchEvent(new page.window.Event('change'));
+
+    const headArt = page.$('details.series[data-series="0"] img.seriesArt');
+    assert.match(headArt.getAttribute('src'), new RegExp(chosen),
+      'the header shows the chosen amiibo');
+    assert.equal(page.$('.facePreview').getAttribute('src').includes(chosen), true,
+      'and so does the preview beside the picker');
+  } finally {
+    page.restore();
+  }
+});
+
+test('REVERT THIS SERIES drops every override on it at once', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const headText = () => page.$('details.series[data-series="0"] .seriesHead').textContent.trim();
+    const before = headText();
+
+    const form = openSeries(page);
+    form.label.value = 'Renamed';
+    form.label.dispatchEvent(new page.window.Event('input'));
+    form.token.value = 'REN';
+    form.token.dispatchEvent(new page.window.Event('input'));
+    assert.match(headText(), /Renamed/);
+
+    const revert = [...page.$$('#editor button')].find((b) => b.textContent.includes('REVERT'));
+    assert.equal(revert.disabled, false);
+    revert.dispatchEvent(new page.window.Event('click'));
+
+    assert.equal(headText(), before, 'the header is back to upstream');
+    assert.equal(page.byId('s-label').value, '', 'and the fields are empty again');
+    assert.equal(page.byId('s-short').value, '');
+  } finally {
+    page.restore();
+  }
+});
+
+test('a series can be named where upstream has none, which unblocks authoring there', async () => {
+  const { page } = await bootAdmin();
+  try {
+    // Authoring into an unnamed series is refused, and says what to do.
+    let form = openNewForm(page);
+    type(form.id, UNLABELLED_SERIES_ID, page);
+    type(form.name, 'Pioneer', page);
+    assert.match(form.problem(form.id), /has no name\. Name it first/);
+    assert.equal(form.create.disabled, true);
+
+    // Name the byte.
+    page.byId('newSeries').dispatchEvent(new page.window.Event('click'));
+    const byteSel = page.byId('ns-byte');
+    assert.ok([...byteSel.options].some((o) => Number(o.value) === 0x08),
+      'the unnamed byte is offered');
+    byteSel.value = '8';
+    const nameIn = page.byId('ns-label');
+    nameIn.value = 'Invented Series';
+    nameIn.dispatchEvent(new page.window.Event('input'));
+    const create = [...page.$$('#editor button')].find((b) => b.textContent === 'CREATE');
+    assert.equal(create.disabled, false);
+    create.dispatchEvent(new page.window.Event('click'));
+
+    // Now the amiibo can be authored into it.
+    form = openNewForm(page);
+    type(form.id, UNLABELLED_SERIES_ID, page);
+    type(form.name, 'Pioneer', page);
+    assert.equal(form.problem(form.id), null, 'the series now has a name');
+    assert.equal(form.create.disabled, false);
+    form.create.dispatchEvent(new page.window.Event('click'));
+
+    const cell = page.$(`.item[data-id="${UNLABELLED_SERIES_ID}"]`);
+    assert.ok(cell, 'and it lands in the grid');
+    assert.match(cell.closest('details.series').textContent, /Invented Series/,
+      'under the series that was just named');
+  } finally {
+    page.restore();
+  }
+});

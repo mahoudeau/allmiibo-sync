@@ -32,6 +32,7 @@ import {
   AMIIBO_NOTES,
   AMIIBO_AUTHORED,
   AMIIBO_RELEASE,
+  AMIIBO_SERIES_FACE,
 } from '../data/amiibo-db.js';
 
 export const AMIIBO_ID_OFFSET = 84;
@@ -344,8 +345,15 @@ const SERIES_FACE = {
 
 let faceIndex = null;
 
-/** Representative amiibo ID for a series byte, or null. */
+/**
+ * Representative amiibo ID for a series byte, or null.
+ *
+ * A curated choice wins outright: no public series-logo dataset exists, so the
+ * table below is a guess by name-match, and a curator picking the figure that
+ * actually reads as the series is better information than the guess.
+ */
 export function seriesRepresentative(series) {
+  if (AMIIBO_SERIES_FACE[series]) return AMIIBO_SERIES_FACE[series];
   if (!faceIndex) {
     faceIndex = new Map();
     const bySeries = new Map();
@@ -424,7 +432,12 @@ export function buildCollection(
   // `hideHhd` is the fan-made switch. It covers the Happy Home Designer cards
   // and anything authored in the overlay alike: neither is an official product,
   // so with it off the headline completion figure stays comparable.
-  { nameHints = null, dumpCounts = null, hideHhd = false } = {}
+  // `extra` is a Map of id -> name to include as if the database held them.
+  // The admin uses it for amiibo authored in the overlay but not yet
+  // published: without it a newly created entry would be invisible until after
+  // a save and a rebuild, which is backwards for the one screen whose job is
+  // creating them.
+  { nameHints = null, dumpCounts = null, hideHhd = false, extra = null } = {}
 ) {
   const isFanmade = (id) => isHhdItemCards(id) || isAuthored(id);
   const localSet = ownedLocal instanceof Map ? new Set(ownedLocal.keys()) : new Set(ownedLocal);
@@ -479,6 +492,9 @@ export function buildCollection(
   };
 
   for (const [id, name] of Object.entries(AMIIBO_NAMES)) add(id, name, true);
+  // Entries this view knows about that the published table does not. Counted
+  // as known, because the name is curated rather than guessed at.
+  if (extra) for (const [id, name] of extra) if (!AMIIBO_NAMES[id]) add(id, name, true);
   // Anything owned but absent from the table — typically newer releases.
   for (const id of localSet) if (!AMIIBO_NAMES[id]) add(id, null, false);
   if (deviceSet) for (const id of deviceSet) if (!AMIIBO_NAMES[id] && !localSet.has(id)) add(id, null, false);

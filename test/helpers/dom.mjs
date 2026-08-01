@@ -71,6 +71,32 @@ export function mountHtml(html, { url = 'http://localhost/', storage = {} } = {}
     elProto.scrollIntoView = function scrollIntoView() {};
   }
 
+  // linkedom's <select>.value is `querySelector('option[selected]')?.value` with
+  // no setter at all, and `option.selected` is a plain property that never
+  // reaches that attribute. So reading a select returns undefined and writing
+  // one throws — which would mean contorting every <select> in the application
+  // to be testable, rather than fixing the double. This is the browser's own
+  // behaviour: the selected option's value, falling back to the first, and a
+  // setter that selects by value.
+  const selectProto = dom.window.HTMLSelectElement?.prototype;
+  const existing = selectProto && Object.getOwnPropertyDescriptor(selectProto, 'value');
+  if (selectProto && existing && !existing.set) {
+    Object.defineProperty(selectProto, 'value', {
+      configurable: true,
+      get() {
+        const opts = [...this.querySelectorAll('option')];
+        const chosen = opts.find((o) => o.hasAttribute('selected'));
+        return (chosen ?? opts[0])?.value ?? '';
+      },
+      set(v) {
+        for (const o of this.querySelectorAll('option')) {
+          if (o.value === String(v)) o.setAttribute('selected', '');
+          else o.removeAttribute('selected');
+        }
+      },
+    });
+  }
+
   const proto = dom.window.HTMLElement?.prototype;
   if (proto && !proto.showModal) {
     proto.showModal = function showModal() {

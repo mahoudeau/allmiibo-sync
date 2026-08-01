@@ -38,7 +38,7 @@ const ROOT_KEYS = new Set(['schema', 'series', 'types', 'categories', 'amiibos']
 const AMIIBO_KEYS = new Set([
   'kind', 'name', 'release', 'fileName', 'shortName', 'path', 'blurb', 'note',
 ]);
-const SERIES_KEYS = new Set(['label', 'short', 'note']);
+const SERIES_KEYS = new Set(['label', 'short', 'face', 'note']);
 const TYPE_KEYS = new Set(['label', 'note']);
 const CATEGORY_KEYS = new Set(['label', 'order', 'members', 'note']);
 
@@ -85,6 +85,26 @@ export function validateOverlay(overlay) {
       }
       if (v.short !== undefined && (typeof v.short !== 'string' || !v.short.trim())) {
         bad(`${name}[${k}].short must be a non-empty string`);
+      }
+      // A folder token is one path segment on the device, so it faces the same
+      // rules a filename does: no separators, and nothing the sanitiser would
+      // rewrite behind your back.
+      if (typeof v.short === 'string' && v.short.trim()) {
+        if (v.short.includes('/') || v.short.includes('\\')) {
+          bad(`${name}[${k}].short ${JSON.stringify(v.short)} must be one folder name, not a path`);
+        } else if (sanitizeLocalName(v.short) !== v.short) {
+          bad(`${name}[${k}].short ${JSON.stringify(v.short)} is not a safe folder name`);
+        }
+      }
+      // The face is the amiibo whose artwork stands for the series. It has to
+      // belong to the series it represents, or the header shows a character
+      // from somewhere else entirely.
+      if (v.face !== undefined) {
+        if (typeof v.face !== 'string' || !ID_RE.test(v.face)) {
+          bad(`${name}[${k}].face must be a 16-character lowercase hex ID`);
+        } else if (parseInt(v.face.slice(12, 14), 16) !== n) {
+          bad(`${name}[${k}].face ${v.face} is not in that series`);
+        }
       }
     }
   };
@@ -302,8 +322,10 @@ export function applyOverlay({ names, series, types, releases }, overlay = EMPTY
 /** The pins the generator applies after deriving names. */
 export function overlayPins(overlay = EMPTY_OVERLAY) {
   const seriesShort = {};
+  const seriesFace = {};
   for (const [b, v] of Object.entries(overlay.series ?? {})) {
     if (v.short !== undefined) seriesShort[b] = v.short;
+    if (v.face !== undefined) seriesFace[b] = v.face;
   }
   const fileNames = new Map();
   const shortNames = new Map();
@@ -315,7 +337,7 @@ export function overlayPins(overlay = EMPTY_OVERLAY) {
     if (entry.path !== undefined) paths.set(id, entry.path);
     if (entry.blurb !== undefined) notes.set(id, entry.blurb);
   }
-  return { seriesShort, fileNames, shortNames, paths, notes };
+  return { seriesShort, seriesFace, fileNames, shortNames, paths, notes };
 }
 
 /**

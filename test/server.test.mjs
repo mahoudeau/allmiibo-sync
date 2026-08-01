@@ -569,3 +569,85 @@ test('backups are pruned to the newest KEEP_BACKUPS', opts, async () => {
   assert.equal(backups.filter((n) => n.startsWith('2019')).length < KEEP_BACKUPS, true,
     'and the oldest were the ones dropped');
 });
+
+test('an authored amiibo reaches the published database', opts, async () => {
+  // The whole point of kind:'new' — an amiibo upstream does not list yet has
+  // to survive the build and appear in the site's own tables.
+  const s = await signIn();
+  const NEW_ID = 'ffff000000000002';
+
+  const res = await fetch(`${base}/api/overlay`, {
+    method: 'PUT',
+    headers: authed(s),
+    body: JSON.stringify({
+      schema: 1,
+      amiibos: { [NEW_ID]: { kind: 'new', name: 'Invented Fighter' } },
+    }),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+  assert.equal(body.authored, 1, 'the report counts it');
+
+  const db = await readFile(join(dir, 'site/data/amiibo-db.js'), 'utf8');
+  assert.match(db, /'ffff000000000002': "Invented Fighter"/, 'it is in AMIIBO_NAMES');
+  assert.match(db, /AMIIBO_AUTHORED = Object\.freeze\(\[[\s\S]*ffff000000000002/,
+    'and listed as authored, so the site can treat it as fan-made');
+});
+
+test('authoring over an ID upstream already has is refused', opts, async () => {
+  // The admin will not offer it, but the overlay is a file and can be edited
+  // by hand — and upstream can claim an invented ID later, which is the same
+  // situation arriving on its own.
+  const s = await signIn();
+  const before = await readFile(join(dir, 'site/data/amiibo-db.js'), 'utf8');
+
+  const res = await fetch(`${base}/api/overlay`, {
+    method: 'PUT',
+    headers: authed(s),
+    body: JSON.stringify({
+      schema: 1,
+      amiibos: { [SAMPLE_ID]: { kind: 'new', name: 'Impostor' } },
+    }),
+  });
+  assert.equal(res.status, 422, 'refused rather than silently shadowing upstream');
+  const { details } = await res.json();
+  assert.ok(details.some((d) => d.includes(SAMPLE_ID)), 'and names the ID');
+  assert.equal(await readFile(join(dir, 'site/data/amiibo-db.js'), 'utf8'), before,
+    'the database is untouched');
+});
+
+test('a curated series label, folder token and face all reach the database', opts, async () => {
+  const s = await signIn();
+  const res = await fetch(`${base}/api/overlay`, {
+    method: 'PUT',
+    headers: authed(s),
+    body: JSON.stringify({
+      schema: 1,
+      series: { 0: { label: 'Smash', short: 'SMASH', face: SAMPLE_ID } },
+    }),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+
+  const db = await readFile(join(dir, 'site/data/amiibo-db.js'), 'utf8');
+  assert.match(db, /0: "Smash"/, 'the label replaces the upstream one');
+  assert.match(db, /AMIIBO_SERIES_SHORT = Object\.freeze\(\{\s*\n\s*0: "SMASH"/,
+    'the folder token is pinned, which is what renames the device folder');
+  assert.match(db, new RegExp(`AMIIBO_SERIES_FACE = Object\\.freeze\\(\\{\\s*\\n\\s*0: '${SAMPLE_ID}'`),
+    'and the chosen face is emitted for the site to read');
+});
+
+test('a series face outside its series is refused before anything is written', opts, async () => {
+  const s = await signIn();
+  const before = await readFile(join(dir, 'site/data/amiibo-db.js'), 'utf8');
+  const res = await fetch(`${base}/api/overlay`, {
+    method: 'PUT',
+    headers: authed(s),
+    body: JSON.stringify({
+      schema: 1,
+      series: { 1: { face: SAMPLE_ID } },   // SAMPLE_ID is series 00
+    }),
+  });
+  assert.equal(res.status, 422);
+  assert.equal(await readFile(join(dir, 'site/data/amiibo-db.js'), 'utf8'), before);
+});

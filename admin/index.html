@@ -81,6 +81,16 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
   .preview .facts h1 { font-size: 1rem; }
   .preview .idRow { margin-bottom: 0; }
 
+  /* The series header carries its tally pill and an edit button together. */
+  .seriesActions { display: inline-flex; align-items: center; gap: .5rem; flex: none; }
+
+  /* The cost of a folder-token change, shown where it is being made. */
+  .field .why.tokenCost { color: var(--warn); }
+  .field select { width: 100%; font: inherit; padding: .45rem .55rem;
+                  border: 2px solid var(--border); background: var(--bg); color: var(--fg); }
+  .facePreview { display: block; margin: .5rem 0 .25rem; max-width: 8rem; max-height: 8rem;
+                 border: 2px solid var(--border); background: var(--bg); }
+
   /* A pencil beside a previewed value, focusing the field that changes it. */
   .editPart { min-height: 0; padding: .1rem .25rem; margin-left: .4rem;
               border: 1px solid var(--border); box-shadow: none;
@@ -187,6 +197,8 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
         <option value="name">By name</option>
         <option value="completion">By curation</option>
       </select>
+      <button id="newAmiibo"><span class="ico" data-ico="folderPlus"></span>NEW AMIIBO</button>
+      <button id="newSeries"><span class="ico" data-ico="grid"></span>NEW SERIES</button>
       <div class="segCtl" id="segView" role="group" aria-label="View">
         <input type="radio" name="view" id="viewCards" value="cards" checked>
         <label for="viewCards"><span class="ico" data-ico="cards"></span>CARDS</label>

@@ -18,7 +18,7 @@ import { buildCollection, seriesRepresentative, describeAmiibo, isHhdItemCards }
 import { AMIIBO_RELEASE } from '/data/amiibo-db.js';
 import { sortSeries, seriesDate } from '/js/collectionview.js';
 import { buildSeriesGrid, applyGridFilter, reorderGroups } from '/js/collectiongrid.js';
-import { validateAmiiboEntry } from '/js/overlay.js';
+import { validateAmiiboEntry, validateOverlay, REFERENCE_ROOT } from '/js/overlay.js';
 import { confirmDialog } from '/js/dialog.js';
 import { mountHeader, mountFooter, currentPirate } from '/js/chrome.js';
 import { makeArt, dropBrokenArt } from '/js/artwork.js';
@@ -220,6 +220,15 @@ function effectiveName(id, fallback) {
   return state.overlay.amiibos[id]?.name ?? fallback;
 }
 
+/** Amiibo authored here that the published database does not have yet. */
+function pendingAuthored() {
+  const extra = new Map();
+  for (const [id, entry] of Object.entries(state.overlay.amiibos)) {
+    if (entry.kind === 'new' && !state.db.names[id]) extra.set(id, entry.name);
+  }
+  return extra;
+}
+
 function sortedSeries() {
   return sortSeries(state.collection.series, el('sortMode').value, AMIIBO_RELEASE);
 }
@@ -237,13 +246,28 @@ function searchTextFor(item, group) {
 
 function buildRows() {
   // Nothing is owned and no device exists, so every entry is drawn the same way
-  // and the grouping is purely the database's.
-  state.collection = buildCollection(new Set(), null, {});
+  // and the grouping is purely the database's — plus anything authored here
+  // that has not been published yet, which would otherwise be invisible until
+  // after a save.
+  state.collection = buildCollection(new Set(), null, { extra: pendingAuthored() });
+
+  // buildCollection names each group from the published database, so a series
+  // renamed here would keep its old name in the header — and, worse, in the
+  // search index, so searching for what is on screen would not find it. The
+  // same reason the cells show the effective amiibo name.
+  for (const group of state.collection.series) {
+    group.seriesName = seriesLabel(group.series);
+  }
 
   const { frag, rows, groupEls } = buildSeriesGrid(sortedSeries(), {
     cell: makeCell,
-    pill: makeSeriesPill,
-    art: (g) => artUrl(seriesRepresentative(g.series) ?? g.items[0].id),
+    pill: (g) => {
+      const wrap = document.createElement('span');
+      wrap.className = 'seriesActions';
+      wrap.append(makeSeriesPill(g), makeSeriesEdit(g));
+      return wrap;
+    },
+    art: (g) => artUrl(seriesFace(g) ?? g.items[0].id),
     year: (g) => seriesDate(g, AMIIBO_RELEASE)?.slice(0, 4) ?? null,
     isOpen: () => false,
     chevron: ICONS.chevronRight,
@@ -299,6 +323,27 @@ function makeCell(item) {
 }
 
 /** One pill per series: how many of its entries have been curated. */
+/**
+ * The edit affordance on a series header.
+ *
+ * A <summary> toggles its <details> on any click inside it, so this has to stop
+ * the event as well as handle it — otherwise editing a series would always
+ * expand or collapse it at the same time.
+ */
+function makeSeriesEdit(group) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'editPart seriesEdit';
+  b.title = `Edit ${group.seriesName}`;
+  b.innerHTML = ICONS.cog ?? '';
+  b.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    renderSeriesEditor(group.series);
+  });
+  return b;
+}
+
 function makeSeriesPill(group) {
   const curated = group.items.filter((i) => state.overlay.amiibos[i.id]).length;
   const pill = document.createElement('span');
@@ -498,6 +543,431 @@ async function restore(name) {
   }
 }
 
+// ---- series --------------------------------------------------------------
+//
+// A series is a byte in the amiibo ID, not a record: it exists because amiibo
+// carry it. So "creating" one means naming a byte upstream has not named —
+// which is what unblocks authoring an amiibo into it — and everything else is
+// editing the three things a curator controls: the label, the folder token
+// that names a directory on every device, and which amiibo's artwork stands
+// for it.
+
+/** The effective values for a series byte, overlay first. */
+function seriesLabel(byte) {
+  return state.overlay.series?.[byte]?.label ?? state.db.series[byte] ?? `Series 0x${byte.toString(16)}`;
+}
+function seriesToken(byte) {
+  return state.overlay.series?.[byte]?.short ?? state.db.seriesShort[byte] ?? '';
+}
+function seriesFace(group) {
+  const pinned = state.overlay.series?.[group.series]?.face;
+  if (pinned && group.items.some((i) => i.id === pinned)) return pinned;
+  return seriesRepresentative(group.series);
+}
+
+/** Set one field on a series, dropping the entry when nothing is left on it. */
+function editSeries(byte, key, value) {
+  const table = state.overlay.series ?? (state.overlay.series = {});
+  const entry = table[byte] ?? {};
+  const trimmed = typeof value === 'string' ? value.trim() : value;
+  if (trimmed === '' || trimmed == null) delete entry[key];
+  else entry[key] = trimmed;
+
+  if (Object.keys(entry).length === 0) delete table[byte];
+  else table[byte] = entry;
+  markDirty();
+}
+
+function renderSeriesEditor(byte) {
+  state.selected = null;
+  state.fields = new Map();
+  state.preview = null;
+  for (const r of state.rows) r.el.setAttribute('aria-pressed', 'false');
+
+  const group = state.collection.series.find((s) => s.series === byte);
+  // Declared up here because the field handlers below keep it in step, and
+  // they are wired before it is built.
+  let revert = null;
+  const box = el('editor');
+  box.textContent = '';
+
+  const cap = document.createElement('h2');
+  cap.className = 'cap';
+  cap.textContent = 'EDITING SERIES';
+  const name = document.createElement('div');
+  name.className = 'eName';
+  name.textContent = seriesLabel(byte);
+  const idLine = document.createElement('p');
+  idLine.className = 'idLine';
+  idLine.textContent = `byte 0x${byte.toString(16).padStart(2, '0')} · `
+    + `${group ? group.items.length : 0} amiibo`;
+  box.append(cap, name, idLine);
+
+  const field = (key, label, value, hint) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'field';
+    const lab = document.createElement('label');
+    lab.htmlFor = `s-${key}`;
+    lab.textContent = label;
+    const input = document.createElement('input');
+    input.id = `s-${key}`;
+    input.type = 'text';
+    input.value = value;
+    const was = document.createElement('div');
+    was.className = 'was';
+    was.textContent = hint ?? '';
+    const why = document.createElement('div');
+    why.className = 'why';
+    why.hidden = true;
+    wrap.append(lab, input, was, why);
+    box.append(wrap);
+    return { wrap, input, why, was };
+  };
+
+  const labelF = field('label', 'SERIES NAME', state.overlay.series?.[byte]?.label ?? '',
+    state.db.series[byte] ? `upstream: ${state.db.series[byte]}` : 'upstream has no name for this byte');
+
+  const token = seriesToken(byte);
+  const tokenF = field('short', 'FOLDER ON THE DEVICE', state.overlay.series?.[byte]?.short ?? '',
+    state.db.seriesShort[byte] ? `derived: ${state.db.seriesShort[byte]}` : '');
+
+  // The one field with a cost attached. Say it where it is being changed.
+  const cost = document.createElement('div');
+  cost.className = 'why tokenCost';
+  cost.hidden = true;
+  tokenF.wrap.append(cost);
+
+  const sampleName = group?.items[0] ? effectiveName(group.items[0].id, group.items[0].name) : 'Amiibo';
+  const showCost = () => {
+    const next = tokenF.input.value.trim() || state.db.seriesShort[byte] || '';
+    const changed = next && next !== token;
+    cost.hidden = !changed;
+    if (changed) {
+      cost.textContent = `${REFERENCE_ROOT}/${token}/${sampleName}.bin`
+        + ` → ${REFERENCE_ROOT}/${next}/${sampleName}.bin`
+        + ` · ${group?.items.length ?? 0} files move on the next sync.`;
+    }
+  };
+
+  // Whether there is anything to revert changes with every edit, so it cannot
+  // be decided once at render time — the same staleness that left the preview
+  // showing an old name.
+  const syncRevert = () => { if (revert) revert.disabled = !state.overlay.series?.[byte]; };
+
+  const problems = () => {
+    const errs = validateOverlay({ ...state.overlay, amiibos: {} })
+      .filter((m) => m.startsWith(`series[${byte}]`));
+    for (const [f, wrap] of [['label', labelF], ['short', tokenF]]) {
+      const mine = errs.filter((m) => m.includes(`.${f} `) || m.includes(`.${f} must`));
+      wrap.wrap.classList.toggle('bad', mine.length > 0);
+      wrap.why.hidden = mine.length === 0;
+      wrap.why.textContent = mine.join(' · ');
+    }
+    const blocked = errs.length > 0;
+    if (blocked) state.bad.add(`series:${byte}`); else state.bad.delete(`series:${byte}`);
+    refreshSaveState();
+  };
+
+  labelF.input.addEventListener('input', () => {
+    editSeries(byte, 'label', labelF.input.value);
+    name.textContent = seriesLabel(byte);
+    problems();
+    syncRevert();
+    refreshSeriesHeader(byte);
+  });
+  tokenF.input.addEventListener('input', () => {
+    editSeries(byte, 'short', tokenF.input.value);
+    showCost();
+    problems();
+    syncRevert();
+  });
+
+  // The representative: any amiibo in this series, by name.
+  const faceWrap = document.createElement('div');
+  faceWrap.className = 'field';
+  const faceLab = document.createElement('label');
+  faceLab.htmlFor = 's-face';
+  faceLab.textContent = 'SERIES IMAGE';
+  const faceSel = document.createElement('select');
+  faceSel.id = 's-face';
+  const auto = document.createElement('option');
+  auto.value = '';
+  auto.textContent = '(pick automatically)';
+  faceSel.append(auto);
+  for (const item of [...(group?.items ?? [])].sort((a, b) => a.name.localeCompare(b.name))) {
+    const o = document.createElement('option');
+    o.value = item.id;
+    o.textContent = effectiveName(item.id, item.name);
+    faceSel.append(o);
+  }
+  faceSel.value = state.overlay.series?.[byte]?.face ?? '';
+  const faceHint = document.createElement('div');
+  faceHint.className = 'was';
+  faceHint.textContent = 'The artwork shown on the series header. There is no series '
+    + 'logo anywhere, so this is one of its amiibo.';
+  const facePreview = document.createElement('img');
+  facePreview.className = 'facePreview';
+  facePreview.alt = '';
+  const drawFace = () => {
+    const chosen = faceSel.value || (group ? seriesRepresentative(byte) : null) || group?.items[0]?.id;
+    if (chosen) facePreview.src = artUrl(chosen, 'med');
+  };
+  faceSel.addEventListener('change', () => {
+    editSeries(byte, 'face', faceSel.value);
+    drawFace();
+    syncRevert();
+    refreshSeriesHeader(byte);
+  });
+  faceWrap.append(faceLab, faceSel, facePreview, faceHint);
+  box.append(faceWrap);
+  drawFace();
+
+  const actions = document.createElement('div');
+  actions.className = 'row';
+  actions.style.marginTop = '.8rem';
+  revert = document.createElement('button');
+  revert.textContent = 'REVERT THIS SERIES';
+  revert.addEventListener('click', () => {
+    delete state.overlay.series[byte];
+    markDirty();
+    renderSeriesEditor(byte);
+    refreshSeriesHeader(byte);
+  });
+  actions.append(revert);
+  box.append(actions);
+
+  showCost();
+  problems();
+  syncRevert();
+  labelF.input.focus();
+}
+
+/** Redraw one series header after its label or face changed. */
+function refreshSeriesHeader(byte) {
+  const group = state.collection.series.find((s) => s.series === byte);
+  const node = state.groupEls.get(byte)?.el;
+  if (!group || !node) return;
+  const head = node.querySelector('.seriesHead');
+  const text = [...head.childNodes].find(
+    (n) => n.nodeType === 1 && !n.classList.contains('seriesArt') && !n.classList.contains('year'));
+  if (text) text.textContent = seriesLabel(byte);
+  const img = head.querySelector('img.seriesArt');
+  if (img) img.src = artUrl(seriesFace(group) ?? group.items[0].id);
+}
+
+// ---- authoring a new amiibo ---------------------------------------------
+
+/**
+ * Why an ID cannot be authored, or null if it can.
+ *
+ * The last check is the one that saves a confusing round trip: the generator
+ * hard-fails on a series or type byte it has no label for, so an ID with an
+ * unknown series byte would be refused at save time with an error about the
+ * build rather than about the ID that caused it.
+ */
+function whyNotAuthorable(id) {
+  if (!/^[0-9a-f]{16}$/.test(id)) return 'An amiibo ID is 16 lowercase hex characters.';
+  if (state.db.names[id]) return `Upstream already has this ID: ${state.db.names[id]}.`;
+  if (state.overlay.amiibos[id]) return 'This ID is already in the overlay.';
+  const d = describeAmiibo(id);
+  if (!d) return 'That is not a decodable amiibo ID.';
+  // A byte with no name fails the build. It can be named here, though, which
+  // is what "creating a series" means — so say that rather than just refusing.
+  const sByte = parseInt(id.slice(12, 14), 16);
+  if (!state.db.series[sByte] && !state.overlay.series?.[sByte]?.label) {
+    return `Series byte ${id.slice(12, 14)} has no name. Name it first — NEW SERIES below.`;
+  }
+  if (!state.db.types[parseInt(id.slice(6, 8), 16)]) {
+    return `Type byte ${id.slice(6, 8)} has no name, so the database would not build.`;
+  }
+  return null;
+}
+
+/**
+ * Name a series byte upstream has not named.
+ *
+ * A series is not a record you create — it is a byte amiibo carry — so this is
+ * the whole of "creating" one, and its only real purpose is to unblock
+ * authoring an amiibo into a series the database does not know yet.
+ */
+function renderNewSeries() {
+  state.selected = null;
+  state.fields = new Map();
+  state.preview = null;
+
+  const box = el('editor');
+  box.textContent = '';
+  const cap = document.createElement('h2');
+  cap.className = 'cap';
+  cap.textContent = 'NEW SERIES';
+  const blurb = document.createElement('p');
+  blurb.className = 'idLine';
+  blurb.textContent = 'A series is a byte in the amiibo ID, so this names one the '
+    + 'database has no name for yet. Amiibo can then be authored into it.';
+  box.append(cap, blurb);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'field';
+  const lab = document.createElement('label');
+  lab.htmlFor = 'ns-byte';
+  lab.textContent = 'UNNAMED SERIES BYTE';
+  const sel = document.createElement('select');
+  sel.id = 'ns-byte';
+  for (let b = 0; b < 256; b++) {
+    if (state.db.series[b] || state.overlay.series?.[b]?.label) continue;
+    const o = document.createElement('option');
+    o.value = String(b);
+    o.textContent = `0x${b.toString(16).padStart(2, '0')}`;
+    sel.append(o);
+  }
+  wrap.append(lab, sel);
+  box.append(wrap);
+
+  const nameWrap = document.createElement('div');
+  nameWrap.className = 'field';
+  const nameLab = document.createElement('label');
+  nameLab.htmlFor = 'ns-label';
+  nameLab.textContent = 'SERIES NAME';
+  const nameIn = document.createElement('input');
+  nameIn.id = 'ns-label';
+  nameIn.type = 'text';
+  nameWrap.append(nameLab, nameIn);
+  box.append(nameWrap);
+
+  const actions = document.createElement('div');
+  actions.className = 'row';
+  const create = document.createElement('button');
+  create.className = 'primary';
+  create.textContent = 'CREATE';
+  create.disabled = true;
+  const cancel = document.createElement('button');
+  cancel.textContent = 'CANCEL';
+  cancel.addEventListener('click', () => renderEditor());
+  actions.append(create, cancel);
+  box.append(actions);
+
+  nameIn.addEventListener('input', () => { create.disabled = !nameIn.value.trim(); });
+  create.addEventListener('click', () => {
+    const byte = Number(sel.value);
+    editSeries(byte, 'label', nameIn.value);
+    // A series with no amiibo in it has no group in the grid yet, so there is
+    // nothing to redraw — it appears when something is authored into it.
+    say(`Named series 0x${byte.toString(16).padStart(2, '0')} "${nameIn.value.trim()}". `
+      + 'Author an amiibo into it with NEW AMIIBO.', 'ok');
+    renderSeriesEditor(byte);
+  });
+
+  if (!sel.options.length) {
+    create.disabled = true;
+    say('Every series byte already has a name.', 'warn');
+  }
+}
+
+/**
+ * The create form, rendered into the editor column.
+ *
+ * Not a dialog: it reuses the field styling, the validation vocabulary and the
+ * same column the editor occupies, so creating and editing look like one
+ * screen rather than two.
+ */
+function renderNewForm() {
+  state.selected = null;
+  state.fields = new Map();
+  state.preview = null;
+  for (const r of state.rows) r.el.setAttribute('aria-pressed', 'false');
+
+  const box = el('editor');
+  box.textContent = '';
+
+  const cap = document.createElement('h2');
+  cap.className = 'cap';
+  cap.textContent = 'NEW AMIIBO';
+  const blurb = document.createElement('p');
+  blurb.className = 'idLine';
+  blurb.textContent = 'For an amiibo upstream does not list yet. It rides the '
+    + 'fan-made toggle on the site, alongside the HHD cards.';
+  box.append(cap, blurb);
+
+  const field = (key, label, placeholder) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'field';
+    const lab = document.createElement('label');
+    lab.htmlFor = `n-${key}`;
+    lab.textContent = label;
+    const input = document.createElement('input');
+    input.id = `n-${key}`;
+    input.type = 'text';
+    input.placeholder = placeholder;
+    const why = document.createElement('div');
+    why.className = 'why';
+    why.hidden = true;
+    wrap.append(lab, input, why);
+    box.append(wrap);
+    return { wrap, input, why };
+  };
+
+  const idF = field('id', 'AMIIBO ID (16 HEX)', '0000000000000002');
+  const decoded = document.createElement('div');
+  decoded.className = 'was';
+  idF.wrap.insertBefore(decoded, idF.why);
+  const nameF = field('name', 'NAME', 'What it is called');
+
+  const actions = document.createElement('div');
+  actions.className = 'row';
+  const create = document.createElement('button');
+  create.className = 'primary';
+  create.textContent = 'CREATE';
+  create.disabled = true;
+  const cancel = document.createElement('button');
+  cancel.textContent = 'CANCEL';
+  cancel.addEventListener('click', () => renderEditor());
+  actions.append(create, cancel);
+  box.append(actions);
+
+  const check = () => {
+    const id = idF.input.value.trim().toLowerCase();
+    const name = nameF.input.value.trim();
+
+    // Show what the ID decodes to as it is typed: the series and type are the
+    // whole meaning of those bytes, and typing them blind is how you author an
+    // amiibo into the wrong series.
+    const d = /^[0-9a-f]{16}$/.test(id) ? describeAmiibo(id) : null;
+    decoded.textContent = d
+      ? `${state.db.series[d.series] ?? `series ${d.series}`} · ${d.typeName}`
+      : '';
+
+    const problem = id ? whyNotAuthorable(id) : null;
+    idF.wrap.classList.toggle('bad', !!problem);
+    idF.why.hidden = !problem;
+    idF.why.textContent = problem ?? '';
+
+    const needsName = !name;
+    nameF.wrap.classList.toggle('bad', needsName && !!id);
+    nameF.why.hidden = !(needsName && !!id);
+    nameF.why.textContent = needsName ? 'An authored amiibo needs a name.' : '';
+
+    create.disabled = !id || !!problem || needsName;
+  };
+
+  idF.input.addEventListener('input', check);
+  nameF.input.addEventListener('input', check);
+
+  create.addEventListener('click', () => {
+    const id = idF.input.value.trim().toLowerCase();
+    if (whyNotAuthorable(id)) return;
+    state.overlay.amiibos[id] = { kind: 'new', name: nameF.input.value.trim() };
+    markDirty();
+    // The grid is built from the published database plus pending authored
+    // entries, so it has to be rebuilt rather than patched.
+    buildRows();
+    applyFilter();
+    select(id);
+    say(`Created ${state.overlay.amiibos[id].name}. It is not published until you save.`, 'ok');
+  });
+
+  idF.input.focus();
+}
+
 // ---- the editor ---------------------------------------------------------
 
 // Which field each previewed part is edited by. The pencil on a part focuses
@@ -614,15 +1084,39 @@ function renderEditor() {
   const actions = document.createElement('div');
   actions.className = 'row';
   actions.style.marginTop = '.8rem';
+  // For an override, dropping the entry falls back to upstream. For an
+  // authored one there is nothing to fall back to — the amiibo ceases to
+  // exist — so the button says that, and asks.
+  const authored = entry.kind === 'new';
   const revert = document.createElement('button');
-  revert.textContent = 'REVERT THIS AMIIBO';
+  revert.textContent = authored ? 'DELETE THIS AMIIBO' : 'REVERT THIS AMIIBO';
+  revert.className = authored ? 'danger' : '';
   revert.disabled = !state.overlay.amiibos[id];
-  revert.addEventListener('click', () => {
+  revert.addEventListener('click', async () => {
+    if (authored) {
+      const ok = await confirmDialog({
+        title: 'DELETE THIS AMIIBO?',
+        body: 'It exists only in the overlay, so this removes it entirely rather than '
+          + 'restoring an upstream value.',
+        detail: [effectiveName(id, id), id],
+        confirmLabel: 'DELETE',
+        danger: true,
+      });
+      if (!ok) return;
+    }
     delete state.overlay.amiibos[id];
     markDirty();
-    renderEditor();
-    markCell(id);
-    renderFilters();
+    if (authored) {
+      // Its cell only existed because the overlay did.
+      state.selected = null;
+      buildRows();
+      applyFilter();
+      renderEditor();
+    } else {
+      renderEditor();
+      markCell(id);
+      renderFilters();
+    }
   });
   actions.append(revert);
   box.append(actions);
@@ -756,10 +1250,52 @@ function markClean() {
   updateStats();
 }
 
+/**
+ * Folder tokens this save would change, with what it costs.
+ *
+ * Renaming one renames a directory on every device already synced, and the
+ * next sync then moves every file inside it. That is the most expensive thing
+ * this screen can do, and it is invisible in a list of edited names.
+ */
+function pendingRenames() {
+  const out = [];
+  for (const [byte, entry] of Object.entries(state.overlay.series ?? {})) {
+    if (entry.short === undefined) continue;
+    const b = Number(byte);
+    const was = state.db.seriesShort[b];
+    if (!was || was === entry.short) continue;
+    const group = state.collection.series.find((s) => s.series === b);
+    out.push({
+      label: seriesLabel(b),
+      from: was,
+      to: entry.short,
+      files: group?.items.length ?? 0,
+    });
+  }
+  return out;
+}
+
 async function save() {
   // Publishing rewrites the live database, so it asks first. Every other
   // mutating action in this project already does.
   const edited = Object.keys(state.overlay.amiibos);
+  const renames = pendingRenames();
+
+  // A folder rename is a different order of consequence from a name change, so
+  // it gets its own dialog rather than a line inside the ordinary one.
+  if (renames.length) {
+    const moved = renames.reduce((n, r) => n + r.files, 0);
+    const ok = await confirmDialog({
+      title: `RENAME ${renames.length === 1 ? 'A FOLDER' : `${renames.length} FOLDERS`} ON EVERY DEVICE?`,
+      body: 'The next sync moves every file inside them.',
+      detail: renames.map((r) =>
+        `${REFERENCE_ROOT}/${r.from}/ → ${REFERENCE_ROOT}/${r.to}/  (${r.label}, ${r.files} files)`),
+      confirmLabel: `RENAME AND MOVE ${moved} FILES`,
+      danger: true,
+    });
+    if (!ok) return;
+  }
+
   const ok = await confirmDialog({
     title: 'PUBLISH?',
     body: 'The site\'s database is rebuilt immediately and visitors see the change on their next load.',
@@ -798,6 +1334,8 @@ el('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') signIn(); }
 el('signOut').addEventListener('click', signOut);
 el('save').addEventListener('click', save);
 el('export').addEventListener('click', () => download('/export', 'amiibo-overrides.json'));
+el('newAmiibo').addEventListener('click', renderNewForm);
+el('newSeries').addEventListener('click', renderNewSeries);
 
 let filterTimer = null;
 el('q').addEventListener('input', () => {

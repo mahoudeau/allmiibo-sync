@@ -2080,6 +2080,10 @@ export const AMIIBO_SHORT_NAMES = Object.freeze({
 // Curated groupings, from content/amiibo-overrides.json. Nothing upstream has these.
 export const AMIIBO_CATEGORIES = Object.freeze({});
 
+// Series byte -> the amiibo whose artwork stands for the series, when the
+// curated choice differs from the one seriesRepresentative() would guess.
+export const AMIIBO_SERIES_FACE = Object.freeze({});
+
 // amiibo ID -> a curated device-relative path, tried before the generated name.
 export const AMIIBO_PATHS = Object.freeze({});
 
