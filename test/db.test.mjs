@@ -7,6 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   AMIIBO_NAMES,
@@ -201,3 +202,57 @@ test('every curated series face is an amiibo of the series it represents', async
   }
 });
 
+
+test('the site survives a database that predates a curated table', async () => {
+  // This shipped and broke the whole page. The admin regenerates
+  // web/data/amiibo-db.js from a SEPARATE process, which can be running older
+  // code than the site: a long-lived admin server holds the generator it
+  // imported at startup. One save from a stale server wrote a database without
+  // AMIIBO_SERIES_FACE, and because the site named that export in its import
+  // list, the browser refused to link the module at all:
+  //
+  //   SyntaxError: The requested module '../data/amiibo-db.js'
+  //   does not provide an export named 'AMIIBO_SERIES_FACE'
+  //
+  // Not a degraded page — no page. So the curated tables must be reached
+  // through the namespace, where a missing one is undefined rather than fatal.
+  const src = await readFile(new URL('../web/js/amiibo.js', import.meta.url), 'utf8');
+  const named = src.match(/import \{([\s\S]*?)\} from '\.\.\/data\/amiibo-db\.js'/)?.[1] ?? '';
+
+  const ADDITIVE = [
+    'AMIIBO_CATEGORIES', 'AMIIBO_PATHS', 'AMIIBO_NOTES',
+    'AMIIBO_AUTHORED', 'AMIIBO_SERIES_FACE', 'AMIIBO_UPSTREAM',
+  ];
+  for (const table of ADDITIVE) {
+    assert.equal(named.includes(table), false,
+      `${table} is additive and must not be a named import: a database written `
+      + 'before it existed would fail to link and take the page with it');
+  }
+
+  // And each is defaulted, so a missing one behaves as "nothing curated".
+  for (const table of ADDITIVE.filter((t) => src.includes(t))) {
+    assert.match(src, new RegExp(`${table} = db\\.${table} \\?\\?`),
+      `${table} falls back to an empty value`);
+  }
+
+  // The core tables stay named: without them there is no app, and failing at
+  // the import is the honest outcome.
+  for (const table of ['AMIIBO_NAMES', 'AMIIBO_SERIES', 'AMIIBO_TYPES']) {
+    assert.ok(named.includes(table), `${table} is required and stays a named import`);
+  }
+});
+
+test('the generator emits every table the site reads', async () => {
+  // The other half: the site tolerating a missing table does not make it
+  // acceptable for the generator to stop emitting one.
+  const emitted = await readFile(new URL('../web/data/amiibo-db.js', import.meta.url), 'utf8');
+  for (const table of [
+    'AMIIBO_NAMES', 'AMIIBO_SERIES', 'AMIIBO_TYPES', 'AMIIBO_RELEASE',
+    'AMIIBO_SERIES_SHORT', 'AMIIBO_FILE_NAMES', 'AMIIBO_SHORT_NAMES',
+    'AMIIBO_CATEGORIES', 'AMIIBO_PATHS', 'AMIIBO_NOTES', 'AMIIBO_AUTHORED',
+    'AMIIBO_UPSTREAM', 'AMIIBO_SERIES_FACE',
+  ]) {
+    assert.match(emitted, new RegExp(`^export const ${table} = `, 'm'),
+      `${table} is emitted`);
+  }
+});

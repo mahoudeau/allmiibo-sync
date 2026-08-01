@@ -248,21 +248,30 @@ test('prev and next follow the collection order, and appear only where they can'
 
 // ---- the snapshot itself ------------------------------------------------
 
-test('the page renders byte-for-byte what it rendered before the refactor', async () => {
+test('the page renders byte-for-byte what it rendered before the refactor', async (t) => {
   // The acceptance test for the whole extraction. The fixture was captured from
   // the page as it stood; if this passes after the renderer moves into a shared
   // module, the public page draws exactly what it drew.
   //
   // A diff here means one of two things, and it is worth being honest about
-  // which: the refactor changed the output, or the output was changed on
-  // purpose and the fixture needs regenerating. It is never "just update it".
+  // which: the code changed the output, or the DATA did. Curating a series name
+  // legitimately changes this page — the subtitle carries it — so a rename in
+  // the admin will land here. That is the snapshot doing its job, not a false
+  // alarm, and the remedy is to look at the diff and then accept it:
+  //
+  //   npm run snapshots
+  //
+  // It is never "just update it" without reading what moved.
   assert.deepEqual([...SNAPSHOTS.keys()].sort(), ['hhd', 'kirby', 'mario'],
     'all three fixtures were rendered by the tests above');
 
   for (const [name, html] of SNAPSHOTS) {
     assert.ok(EXPECTED[name], `${name} has a committed snapshot`);
-    assert.equal(html, EXPECTED[name].content, `${name} renders identically`);
     assert.ok(html.length > 400, `${name} is a real page, not an empty div`);
+    assert.equal(html, EXPECTED[name].content,
+      `${name} renders differently than the committed snapshot. If the database `
+      + 'changed (a curated series or amiibo name), read the diff and then run '
+      + '`npm run snapshots` to accept it.');
   }
 });
 

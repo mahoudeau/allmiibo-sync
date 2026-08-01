@@ -12,7 +12,13 @@ import { fileURLToPath } from 'node:url';
 
 import { detectFca, splitFca, FCA_TYPES } from '../web/js/fca.js';
 import { expandBundles } from '../web/js/bundlesource.js';
-import { AMIIBO_ID_OFFSET, VEHICLE_CODE_OFFSET, VEHICLE_FLAG_OFFSET } from '../web/js/amiibo.js';
+import { AMIIBO_ID_OFFSET, VEHICLE_CODE_OFFSET, VEHICLE_FLAG_OFFSET, seriesFolder } from '../web/js/amiibo.js';
+import { sanitizeLocalName } from '../web/js/devicepath.js';
+
+// The device folder an amiibo lands in, derived rather than written out: a
+// series name is curated and can be renamed, which changes the path — so the
+// expectation has to come from the same table the code reads.
+const dir = (id) => sanitizeLocalName(seriesFolder(parseInt(id.slice(12, 14), 16)));
 
 const ROOT = 'E:/amiibo';
 const MARIO = '0000000000000002';
@@ -207,12 +213,8 @@ test('four vehicles of one character survive as four separate amiibo', async () 
   const r = await expand('riders.fca', bytes);
   assert.equal(r.report.bundles[0].unique, 4, 'four distinct items');
   assert.equal(r.virtual.size, 4);
-  assert.deepEqual([...r.virtual.keys()].sort(), [
-    'Kirby Air Riders/Kirby (Shadow).bin',
-    'Kirby Air Riders/Kirby (Tank).bin',
-    'Kirby Air Riders/Kirby (Warp).bin',
-    'Kirby Air Riders/Kirby (Winged).bin',
-  ]);
+  assert.deepEqual([...r.virtual.keys()].sort(),
+    ['Shadow', 'Tank', 'Warp', 'Winged'].map((v) => `${dir(KIRBY_AR)}/Kirby (${v}).bin`).sort());
   for (const e of r.virtual.values()) assert.equal(e.size, 2048, 'the full dump is kept');
 });
 

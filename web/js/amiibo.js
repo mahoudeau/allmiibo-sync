@@ -20,6 +20,8 @@
 // and 476 when *generating* a tag. In retail dumps 476 falls inside encrypted
 // data and reads as noise, so 84 is the one to use.
 
+// The core tables, named: without these there is no app, so failing at the
+// import is the honest outcome.
 import {
   AMIIBO_NAMES,
   AMIIBO_SERIES,
@@ -27,13 +29,28 @@ import {
   AMIIBO_SERIES_SHORT,
   AMIIBO_FILE_NAMES,
   AMIIBO_SHORT_NAMES,
-  AMIIBO_CATEGORIES,
-  AMIIBO_PATHS,
-  AMIIBO_NOTES,
-  AMIIBO_AUTHORED,
   AMIIBO_RELEASE,
-  AMIIBO_SERIES_FACE,
 } from '../data/amiibo-db.js';
+
+// The curated tables, through the namespace, with an empty default each.
+//
+// These are additive: each one appeared after the site shipped, and the file
+// they live in is rewritten by a SEPARATE process — the admin — which can be
+// running older code than the site is. A named import of a missing export is a
+// link error, so one stale table took the entire page down with
+//
+//   SyntaxError: The requested module '../data/amiibo-db.js'
+//   does not provide an export named 'AMIIBO_SERIES_FACE'
+//
+// A namespace import cannot fail that way. A database that predates a table
+// simply behaves as though nothing is curated in it, which is exactly right.
+import * as db from '../data/amiibo-db.js';
+
+const AMIIBO_CATEGORIES = db.AMIIBO_CATEGORIES ?? {};
+const AMIIBO_PATHS = db.AMIIBO_PATHS ?? {};
+const AMIIBO_NOTES = db.AMIIBO_NOTES ?? {};
+const AMIIBO_AUTHORED = db.AMIIBO_AUTHORED ?? [];
+const AMIIBO_SERIES_FACE = db.AMIIBO_SERIES_FACE ?? {};
 
 export const AMIIBO_ID_OFFSET = 84;
 export const AMIIBO_ID_SIZE = 8;

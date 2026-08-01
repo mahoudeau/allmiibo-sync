@@ -24,6 +24,15 @@ import { expandBundles, ownedKey } from '../web/js/bundlesource.js';
 import { amiiboRelPath } from '../web/js/planner.js';
 import { AMIIBO_ID_OFFSET, HHD_ID, vehicleTag, VEHICLE_CODE_OFFSET, VEHICLE_FLAG_OFFSET } from '../web/js/amiibo.js';
 import { AMIIBO_NAMES } from '../web/data/amiibo-db.js';
+import { seriesFolder } from '../web/js/amiibo.js';
+import { sanitizeLocalName } from '../web/js/devicepath.js';
+
+// The device folder an amiibo lands in, derived the way the planner derives it
+// rather than written out. Series names are curated: they come from upstream
+// and can be renamed in the overlay, and a rename must not fail tests about
+// path assignment. It changes the expected path — which is the point — so the
+// expectation has to be computed from the same table the code reads.
+const dir = (id) => sanitizeLocalName(seriesFolder(parseInt(id.slice(12, 14), 16)));
 
 const ROOT = 'E:/amiibo';
 
@@ -288,7 +297,8 @@ test('a bundle is excluded and its amiibos take its place', async () => {
   });
   assert.deepEqual(r.excludes, ['all-in-one.bin'], 'the container never goes to the device');
   assert.equal(r.virtual.size, 2);
-  assert.deepEqual([...r.virtual.keys()].sort(), ['Super Mario Bros/Mario - Wedding.bin', 'Super Smash Bros/Mario.bin']);
+  assert.deepEqual([...r.virtual.keys()].sort(),
+    [`${dir(LINK)}/Mario - Wedding.bin`, `${dir(MARIO)}/Mario.bin`].sort());
   for (const [p, e] of r.virtual) {
     assert.equal(e.virtual, true, `${p} is marked virtual`);
     assert.equal(e.fromBundle, 'all-in-one.bin');
@@ -378,10 +388,10 @@ test('a path already used by a real file is not stolen', async () => {
   const bytes = bundle([{ id: MARIO, n: 1 }, { id: LINK, n: 2 }]);
   const r = await expand({
     // Occupies exactly the path Mario would be given, but is not Mario.
-    'Super Smash Bros/Mario.bin': { amiiboId: LINK },
+    [`${dir(MARIO)}/Mario.bin`]: { amiiboId: LINK },
     'all-in-one.bin': { size: bytes.length, bundle: { recordSize: 572, count: 2 }, bytes },
   });
-  assert.equal(r.virtual.has('Super Smash Bros/Mario.bin'), false);
+  assert.equal(r.virtual.has(`${dir(MARIO)}/Mario.bin`), false);
   assert.equal(r.report.bundles[0].blocked.length, 1);
   assert.match(r.report.bundles[0].blocked[0].reason, /already taken/);
 });
@@ -479,26 +489,26 @@ test('the four vehicles of one character get four distinct paths', () => {
     }
   }
   assert.equal(amiiboRelPath(KIRBY_AR, { deviceRoot: ROOT, vehicle: 'Warp Star' }),
-    'Kirby Air Riders/Kirby (Warp).bin');
+    `${dir(KIRBY_AR)}/Kirby (Warp).bin`);
 });
 
 test('a bundle member, which has no vehicle, is named exactly as before', () => {
-  assert.equal(amiiboRelPath(KIRBY_AR, { deviceRoot: ROOT }), 'Kirby Air Riders/Kirby.bin');
+  assert.equal(amiiboRelPath(KIRBY_AR, { deviceRoot: ROOT }), `${dir(KIRBY_AR)}/Kirby.bin`);
 });
 
 test('a picked file keeps the name you gave it and gains a series folder', () => {
   assert.equal(
     amiiboRelPath(KIRBY_AR, { deviceRoot: ROOT, keepName: 'K+WarpStar.bin' }),
-    'Kirby Air Riders/K+WarpStar.bin'
+    `${dir(KIRBY_AR)}/K+WarpStar.bin`
   );
   // The extension is optional, and the name is sanitised for the filesystem.
   assert.equal(
     amiiboRelPath(MARIO, { deviceRoot: ROOT, keepName: 'my mario' }),
-    'Super Smash Bros/my mario.bin'
+    `${dir(MARIO)}/my mario.bin`
   );
   assert.equal(
     amiiboRelPath(MARIO, { deviceRoot: ROOT, keepName: 'bad:name?.bin' }),
-    'Super Smash Bros/bad_name_.bin'
+    `${dir(MARIO)}/bad_name_.bin`
   );
 });
 
@@ -523,13 +533,11 @@ test('picked files are indexed under Series/their own name', async () => {
     fakeFile('mario.bin', dump(MARIO, { uid: uidFor(2) })),
   ], { deviceRoot: ROOT });
 
-  assert.deepEqual([...index.keys()].sort(), [
-    'Kirby Air Riders/K+WarpStar.bin',
-    'Super Smash Bros/mario.bin',
-  ]);
+  assert.deepEqual([...index.keys()].sort(),
+    [`${dir(KIRBY_AR)}/K+WarpStar.bin`, `${dir(MARIO)}/mario.bin`].sort());
   assert.deepEqual(skipped, []);
   assert.equal(byPath.size, 2, 'every entry can be read back');
-  assert.equal(index.get('Super Smash Bros/mario.bin').amiiboId, MARIO);
+  assert.equal(index.get(`${dir(MARIO)}/mario.bin`).amiiboId, MARIO);
 });
 
 test('four Air Riders dumps picked together do not overwrite each other', async () => {

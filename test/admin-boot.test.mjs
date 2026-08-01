@@ -818,8 +818,10 @@ test('the form shows what the ID means as it is typed', async () => {
 
     assert.equal(decoded(), '', 'nothing to say yet');
     type(form.id, FREE_ID, page);
-    assert.match(decoded(), /Super Smash Bros\./, 'the series the bytes name');
-    assert.match(decoded(), /Figure/, 'and the type');
+    // Read from the table, not written out: a series name is curated data and
+    // renaming one must not fail a test about decoding bytes.
+    assert.ok(decoded().includes(AMIIBO_SERIES[0]), 'the series the bytes name');
+    assert.ok(decoded().includes(AMIIBO_TYPES[0]), 'and the type');
   } finally {
     page.restore();
   }

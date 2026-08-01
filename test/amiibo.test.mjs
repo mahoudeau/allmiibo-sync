@@ -18,6 +18,10 @@ import {
   VEHICLE_CODE_OFFSET,
   VEHICLE_FLAG_OFFSET,
 } from '../web/js/amiibo.js';
+// Series names are curated data: they come from upstream and can be renamed in
+// the overlay. Asserting the literal here tests the database, not the decoder —
+// and a legitimate rename would fail a test about byte parsing.
+import { AMIIBO_SERIES } from '../web/data/amiibo-db.js';
 
 // A minimal stand-in for a dump: 540 bytes with an ID at offset 84.
 function dump(idHex, size = 540) {
@@ -47,13 +51,13 @@ test('the documented field layout decodes', () => {
   assert.equal(d.type, 0x01);
   assert.equal(d.typeName, 'Card');
   assert.equal(d.series, 0x05);
-  assert.equal(d.seriesName, 'Animal Crossing');
+  assert.equal(d.seriesName, AMIIBO_SERIES[0x05]);
 });
 
 test('a figure decodes as a figure', () => {
   const d = decodeAmiiboId('0000000000000002');
   assert.equal(d.typeName, 'Figure');
-  assert.equal(d.seriesName, 'Super Smash Bros.');
+  assert.equal(d.seriesName, AMIIBO_SERIES[0x00]);
 });
 
 test('names come from the vendored database', () => {
@@ -63,7 +67,7 @@ test('names come from the vendored database', () => {
 
 test('the collection marks owned and missing per series', () => {
   const c = buildCollection(new Set(['0181000100440502']));
-  const ac = c.series.find((s) => s.seriesName === 'Animal Crossing');
+  const ac = c.series.find((s) => s.series === 0x05);
   const isabelle = ac.items.find((i) => i.id === '0181000100440502');
 
   assert.equal(isabelle.hasLocal, true);

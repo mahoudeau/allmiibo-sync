@@ -10,7 +10,8 @@
     "update-db": "node tools/update-db.mjs",
     "fetch-images": "node tools/fetch-amiibo-images.mjs",
     "admin": "node --env-file=.env server/index.mjs",
-    "admin:local": "INSECURE_COOKIES=1 node --env-file=.env server/index.mjs"
+    "admin:local": "INSECURE_COOKIES=1 node --env-file=.env server/index.mjs",
+    "snapshots": "node tools/update-snapshots.mjs"
   },
   "license": "MIT AND GPL-2.0-only",
   "devDependencies": {
