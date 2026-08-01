@@ -21,7 +21,8 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
-import { OVERLAY_PATH, parseOverlay } from '../web/js/overlay.js';
+import { OVERLAY_PATH, parseOverlay, EMPTY_OVERLAY } from '../web/js/overlay.js';
+import { parseGenerated, diffDatabases } from '../web/js/dbdiff.js';
 
 const run = promisify(execFile);
 
@@ -38,42 +39,11 @@ const SOURCES = {
 
 const skipImages = process.argv.includes('--no-images');
 
-// One `export const NAME = Object.freeze({...})` block, or '' if absent.
-function block(text, name) {
-  return text.split(`${name} = Object.freeze({`)[1]?.split('});')[0] ?? '';
-}
-
-function parseIds(text) {
-  const out = new Map();
-  for (const m of text.matchAll(/'([0-9a-f]{16})': ("(?:[^"\\]|\\.)*")/g)) {
-    out.set(m[1], JSON.parse(m[2]));
-  }
-  return out;
-}
-
-function parseBytes(text) {
-  const out = new Map();
-  for (const m of text.matchAll(/(\d+): ("(?:[^"\\]|\\.)*")/g)) out.set(m[1], JSON.parse(m[2]));
-  return out;
-}
-
-// Everything that decides where an amiibo lands on a device. Tracked separately
-// from the names because a change here means device-side renames, not just a
-// different label in the UI.
-function parseNaming(text) {
-  return {
-    short: parseBytes(block(text, 'AMIIBO_SERIES_SHORT')),
-    files: parseIds(block(text, 'AMIIBO_FILE_NAMES')),
-    abbrev: parseIds(block(text, 'AMIIBO_SHORT_NAMES')),
-  };
-}
-
 // ---- snapshot what we have, fetch sources, regenerate ---------------------
 
 const beforeText = await readFile(DB_FILE, 'utf8');
-const before = parseIds(block(beforeText, 'AMIIBO_NAMES'));
-const beforeNaming = parseNaming(beforeText);
-console.log(`current database: ${before.size} entries`);
+const before = parseGenerated(beforeText);
+console.log(`current database: ${before.names.size} entries`);
 
 await mkdir(CACHE, { recursive: true });
 for (const [name, url] of Object.entries(SOURCES)) {
@@ -103,61 +73,66 @@ try {
 }
 
 // ---- report the difference -------------------------------------------------
+//
+// The comparison itself is web/js/dbdiff.js, shared with the admin's review
+// screen. Two reports of what upstream changed would drift, and the drift would
+// be invisible until one of them said a device-wide rename was harmless.
 
 const afterText = await readFile(DB_FILE, 'utf8');
-const after = parseIds(block(afterText, 'AMIIBO_NAMES'));
-const afterNaming = parseNaming(afterText);
-const added = [...after].filter(([id]) => !before.has(id));
-const removed = [...before].filter(([id]) => !after.has(id));
-const renamed = [...after].filter(([id, name]) => before.has(id) && before.get(id) !== name);
+const after = parseGenerated(afterText);
 
-console.log(`\ndatabase: ${before.size} -> ${after.size} entries`);
+const overlayForDiff = await readFile(join(ROOT, OVERLAY_PATH), 'utf8')
+  .then(parseOverlay)
+  .catch(() => EMPTY_OVERLAY);
+const diff = diffDatabases(beforeText, afterText, { overlay: overlayForDiff });
+
+const of = (group) => diff.changes.filter((c) => c.group === group);
+const list = (rows, fmt) => { for (const c of rows) console.log(`  ${fmt(c)}`); };
+
+console.log(`\ndatabase: ${before.names.size} -> ${after.names.size} entries`);
+
+const added = of('added');
 if (added.length) {
   console.log(`added (${added.length}):`);
-  for (const [id, name] of added) console.log(`  ${id}  ${name}`);
+  list(added, (c) => `${c.subject}  ${c.after}`);
 }
+const renamed = of('renamed');
 if (renamed.length) {
   console.log(`renamed (${renamed.length}):`);
-  for (const [id, name] of renamed) console.log(`  ${id}  ${before.get(id)} -> ${name}`);
+  list(renamed, (c) => `${c.subject}  ${c.before} -> ${c.after}`);
 }
+const removed = of('removed');
 if (removed.length) {
   console.log(`REMOVED (${removed.length}) — upstream dropping entries is unusual, review before committing:`);
-  for (const [id, name] of removed) console.log(`  ${id}  ${name}`);
+  list(removed, (c) => `${c.subject}  ${c.before}`);
 }
-if (!added.length && !removed.length && !renamed.length) console.log('no changes');
+const released = of('release');
+if (released.length) {
+  console.log(`release dates (${released.length}):`);
+  list(released, (c) => `${c.subject}  ${c.before ?? '(none)'} -> ${c.after ?? '(none)'}  ${c.label}`);
+}
+const labels = of('label');
+if (labels.length) {
+  console.log(`series/type labels (${labels.length}):`);
+  list(labels, (c) => `${c.kind} ${c.subject}  ${c.before ?? '(none)'} -> ${c.after}`);
+}
+if (!diff.counts.total) console.log('no changes');
 
 // ---- naming: where these amiibos will land on a device ---------------------
 //
-// A new short token or filename is routine. A *changed* one is not: it renames a
-// folder or a file on the device, and the next sync then moves everything inside
-// it. So changes are reported as loudly as a removal.
+// A changed folder token or filename renames something on the device, and the
+// next sync then moves everything inside it. Reported as loudly as a removal.
 
-const naming = [
-  ['series folder', beforeNaming.short, afterNaming.short],
-  ['filename', beforeNaming.files, afterNaming.files],
-  ['abbreviated name', beforeNaming.abbrev, afterNaming.abbrev],
-];
-
-const churn = [];
-for (const [label, was, now] of naming) {
-  const fresh = [...now].filter(([k]) => !was.has(k));
-  const gone = [...was].filter(([k]) => !now.has(k));
-  const changed = [...now].filter(([k, v]) => was.has(k) && was.get(k) !== v);
-
-  if (fresh.length) {
-    console.log(`\nnew ${label}s (${fresh.length}):`);
-    for (const [k, v] of fresh) console.log(`  ${k}  ${v}`);
-  }
-  for (const [k, v] of changed) churn.push(`${label} ${k}: ${was.get(k)} -> ${v}`);
-  for (const [k, v] of gone) churn.push(`${label} ${k}: ${v} -> (dropped, back to the display name)`);
-}
-
+const churn = of('naming');
 if (churn.length) {
   console.log(
     `\nNAMING CHANGED (${churn.length}) — each of these renames a folder or file on every ` +
       'device already synced, and the next sync will move its contents. Review before committing:'
   );
-  for (const c of churn) console.log(`  ${c}`);
+  for (const c of churn) {
+    console.log(`  ${c.kind} ${c.subject}: ${c.before} -> ${c.after}`);
+    if (c.device) console.log(`      ${c.device.before} -> ${c.device.after}`);
+  }
 } else {
   console.log('\nnaming: unchanged (no device-side renames)');
 }
@@ -186,30 +161,27 @@ if (overlayText !== null) {
       `${Object.keys(overlay.categories ?? {}).length} categories, ${pinnedPaths} pinned paths`
   );
 
-  const wasUpstream = parseIds(block(beforeText, 'AMIIBO_UPSTREAM'));
-  const nowUpstream = parseIds(block(afterText, 'AMIIBO_UPSTREAM'));
+  const wasUpstream = before.upstream;
+  const nowUpstream = after.upstream;
   const problems = [];
 
+  // Orphans come from the shared diff, which also checks category members.
+  for (const o of diff.orphans) {
+    problems.push(o.kind === 'category'
+      ? `ORPHANED  ${o.id}: ${o.why}.`
+      : `ORPHANED  ${o.id}: ${o.why}. The override does nothing.`);
+  }
+
   for (const [id, entry] of amiibos) {
-    if (entry.kind !== 'override') continue;
-    if (!after.has(id)) {
-      problems.push(`ORPHANED  ${id}: upstream no longer has this ID. The override does nothing.`);
-      continue;
-    }
-    if (entry.name === undefined) continue;
+    if (entry.kind !== 'override' || entry.name === undefined) continue;
+    if (!after.names.has(id)) continue;   // already reported as orphaned
     if (!nowUpstream.has(id)) {
-      problems.push(`REDUNDANT ${id}: upstream now says "${after.get(id)}" itself. Delete the override.`);
+      problems.push(`REDUNDANT ${id}: upstream now says "${after.names.get(id)}" itself. Delete the override.`);
     } else if (wasUpstream.has(id) && wasUpstream.get(id) !== nowUpstream.get(id)) {
       problems.push(
         `STALE     ${id}: upstream renamed "${wasUpstream.get(id)}" -> "${nowUpstream.get(id)}". ` +
           `Your override still says "${entry.name}". Confirm it is still the correction you want.`
       );
-    }
-  }
-
-  for (const [catId, cat] of Object.entries(overlay.categories ?? {})) {
-    for (const m of cat.members ?? []) {
-      if (!after.has(m)) problems.push(`ORPHANED  ${m}: category "${catId}" lists an ID upstream dropped.`);
     }
   }
 
