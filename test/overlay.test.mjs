@@ -323,3 +323,67 @@ test('series pins reach the generator', async () => {
   assert.equal(pins.seriesFace[0], '0000000000000002');
   assert.equal('label' in pins.seriesShort, false, 'the label is applied, not pinned');
 });
+
+// ---- the record a skip-pin leaves --------------------------------------
+
+test('upstreamWas records only pinnable fields, and only beside a pin', () => {
+  const ok = validateOverlay({
+    ...EMPTY_OVERLAY,
+    amiibos: {
+      '0000000000000002': {
+        kind: 'override', name: 'Mine',
+        upstreamWas: { name: 'Theirs' },
+        decidedAt: '2026-08-01',
+      },
+    },
+  });
+  assert.deepEqual(ok, []);
+
+  // A record with no pin beside it is dangling. This is what makes dropping a
+  // pin self-checking: the drop has to take the record with it.
+  const dangling = validateOverlay({
+    ...EMPTY_OVERLAY,
+    amiibos: { '0000000000000002': { kind: 'override', upstreamWas: { name: 'Theirs' } } },
+  });
+  assert.equal(dangling.length, 1);
+  assert.match(dangling[0], /no pin beside it/);
+
+  const unknown = validateOverlay({
+    ...EMPTY_OVERLAY,
+    amiibos: { '0000000000000002': { kind: 'override', name: 'x', upstreamWas: { nope: 'y' } } },
+  });
+  assert.match(unknown[0], /not a pinnable field/);
+
+  // null is meaningful: upstream produced nothing for that field.
+  assert.deepEqual(validateOverlay({
+    ...EMPTY_OVERLAY,
+    amiibos: { '0000000000000002': { kind: 'override', release: '2014-11-21', upstreamWas: { release: null } } },
+  }), []);
+
+  const badDate = validateOverlay({
+    ...EMPTY_OVERLAY,
+    amiibos: { '0000000000000002': { kind: 'override', name: 'x', decidedAt: 'yesterday' } },
+  });
+  assert.match(badDate[0], /decidedAt must be YYYY-MM-DD/);
+});
+
+test('a series pin carries the same record', () => {
+  assert.deepEqual(validateOverlay({
+    ...EMPTY_OVERLAY,
+    series: { 0: { short: 'SSB', upstreamWas: { short: 'SMASH' }, decidedAt: '2026-08-01' } },
+  }), []);
+
+  const dangling = validateOverlay({
+    ...EMPTY_OVERLAY,
+    series: { 0: { label: 'Smash', upstreamWas: { short: 'SMASH' } } },
+  });
+  assert.match(dangling[0], /no pin beside it/);
+});
+
+test('the schema version does not move: the keys are additive', () => {
+  // Every file written before these keys existed still validates, so bumping
+  // would buy nothing — and the key set is closed either way, so an older
+  // checkout rejects a newer file regardless of the number.
+  assert.deepEqual(validateOverlay({ ...EMPTY_OVERLAY }), []);
+  assert.equal(SCHEMA_VERSION, 1);
+});

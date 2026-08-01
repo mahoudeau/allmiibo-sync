@@ -37,8 +37,9 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ROOT_KEYS = new Set(['schema', 'series', 'types', 'categories', 'amiibos']);
 const AMIIBO_KEYS = new Set([
   'kind', 'name', 'release', 'fileName', 'shortName', 'path', 'blurb', 'note',
+  'upstreamWas', 'decidedAt',
 ]);
-const SERIES_KEYS = new Set(['label', 'short', 'face', 'note']);
+const SERIES_KEYS = new Set(['label', 'short', 'face', 'note', 'upstreamWas', 'decidedAt']);
 const TYPE_KEYS = new Set(['label', 'note']);
 const CATEGORY_KEYS = new Set(['label', 'order', 'members', 'note']);
 
@@ -50,6 +51,49 @@ const SERIES_KIRBY_AIR_RIDERS = 0x1e;
 const HHD_HEAD = '026a0001';
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * Check the record of what upstream said when a pin was written.
+ *
+ * `upstreamWas[field]` is what the build produced for that field at the moment
+ * the line was drawn — upstream's own value where upstream has one, the derived
+ * value where the build derives it, and null where it produced nothing. It is
+ * what lets a later refresh tell a pin that is still holding from one upstream
+ * has come round to, or moved past.
+ *
+ * The invariant that earns its keep: a record with no pin beside it is
+ * dangling. That is what makes dropping a pin self-checking — the drop has to
+ * remove the record too, and a half-applied one fails validation instead of
+ * quietly rotting.
+ */
+function checkUpstreamWas(entry, pinnable, where, bad) {
+  if (entry.upstreamWas === undefined) return;
+  if (!isPlainObject(entry.upstreamWas)) {
+    return bad(`${where}.upstreamWas must be an object`);
+  }
+  for (const [field, value] of Object.entries(entry.upstreamWas)) {
+    if (!pinnable.has(field)) {
+      bad(`${where}.upstreamWas: ${JSON.stringify(field)} is not a pinnable field`);
+      continue;
+    }
+    if (value !== null && typeof value !== 'string') {
+      bad(`${where}.upstreamWas.${field} must be a string or null`);
+    }
+    if (entry[field] === undefined) {
+      bad(`${where}.upstreamWas.${field} records a value with no pin beside it`);
+    }
+  }
+}
+
+const checkDecidedAt = (entry, where, bad) => {
+  if (entry.decidedAt !== undefined && !ISO_DATE_RE.test(entry.decidedAt)) {
+    bad(`${where}.decidedAt must be YYYY-MM-DD`);
+  }
+};
+
+/** Fields a pin can be written for, per table. */
+const PINNABLE_AMIIBO = new Set(['name', 'release', 'fileName', 'shortName', 'path', 'blurb']);
+const PINNABLE_SERIES = new Set(['label', 'short', 'face']);
 
 /**
  * Check an overlay's shape. Returns a list of human-readable problems; empty
@@ -106,6 +150,8 @@ export function validateOverlay(overlay) {
           bad(`${name}[${k}].face ${v.face} is not in that series`);
         }
       }
+      checkUpstreamWas(v, PINNABLE_SERIES, `${name}[${k}]`, bad);
+      checkDecidedAt(v, `${name}[${k}]`, bad);
     }
   };
   byteTable('series', overlay.series, SERIES_KEYS);
@@ -212,6 +258,9 @@ export function validateAmiiboEntry(id, entry) {
       bad('path', message.startsWith(`${id}: `) ? message.slice(id.length + 2) : message);
     }
   }
+  checkUpstreamWas(entry, PINNABLE_AMIIBO, 'entry', (m) =>
+    bad(null, m.replace(/^entry\./, '')));
+  checkDecidedAt(entry, 'entry', (m) => bad(null, m.replace(/^entry\./, '')));
   return problems;
 }
 
