@@ -21,6 +21,7 @@ accepts one BLE connection at a time.
 | <http://localhost:8080/collection.html> | the app: collection tracker + everyday sync (scan folder/device, send/download selections, two-way sync) |
 | <http://localhost:8080/sync.html> | Advanced sync: every operation and option (backup, replace, match, check) |
 | <http://localhost:8080/help.html> | how-to: every feature explained |
+| <http://localhost:8080/changelog.html> | what's new: every release, newest first |
 | <http://localhost:8080/debug.html> | device internals: read-only probe + sandboxed write test |
 | <http://localhost:8080/design-lab.html> | the design moodboard the NES skin was chosen from (not deployed) |
 
@@ -57,6 +58,19 @@ git commit ...                   # commit the reviewed database
 ```
 
 Downloaded sources land in `tools/.cache/` (gitignored).
+
+## The changelog
+
+Entries live in `web/data/changelog.js` and nowhere else. The site's What's New
+page renders that file directly; `CHANGELOG.md` is generated from it.
+
+```sh
+npm run build-changelog      # rewrite CHANGELOG.md from the data
+```
+
+Add a release to the top of `RELEASES`, run the command, and commit both files.
+`npm test` fails if the markdown is out of date with the data, so the two cannot
+drift. Anything under `internal` reaches `CHANGELOG.md` only, never the page.
 
 ## Artwork
 

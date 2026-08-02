@@ -1,6 +1,6 @@
 {
   "name": "allmiibo-sync",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Folder sync for Allmiibo / PIXL NFC emulator devices over Bluetooth LE",
   "type": "module",
   "private": true,
@@ -9,6 +9,7 @@
     "test": "node --test",
     "update-db": "node tools/update-db.mjs",
     "fetch-images": "node tools/fetch-amiibo-images.mjs",
+    "build-changelog": "node tools/build-changelog.mjs",
     "admin": "node --env-file=.env server/index.mjs",
     "admin:local": "INSECURE_COOKIES=1 node --env-file=.env server/index.mjs",
     "snapshots": "node tools/update-snapshots.mjs"

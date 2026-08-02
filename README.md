@@ -15,6 +15,8 @@ full amiibo database while it is at it.
 > catalogues the files already present on a connected device. See
 > [Legal and licensing](#legal-and-licensing).
 
+Currently **1.0.0**. What changed, and when: [CHANGELOG.md](CHANGELOG.md).
+
 ## Self-contained by design
 
 No CDNs, no build step, no telemetry. Everything the tool needs lives in this
@@ -54,7 +56,7 @@ and 2.16.0 (January 2026) added on-device emulation for v3 amiibo.
 - **Interface**: an 8-bit skin with three themes, an original pirate mascot
   in twelve colourways, and an Advanced toggle that keeps the expert layer out
   of the way until asked for. ✅
-- **Tests**: 766 across thirty-two files; the protocol suite runs against a
+- **Tests**: 782 across thirty-three files; the protocol suite runs against a
   simulated device, the admin suite against a real HTTP server on an ephemeral
   port, the UI suites against a real DOM, the rest are pure. Nothing reaches the
   network. ✅
@@ -1173,6 +1175,7 @@ web/amiibo.html           per-amiibo detail page
 web/sync.html             Advanced sync (every operation and option)
 web/help.html             HOW TO page: every feature explained in-app
 web/legal.html            legal & licensing, the README's Legal section in-app
+web/changelog.html        what's new: every release, generated from one data file
 web/debug.html            device internals: probe + write test + repair
 web/probe.html            redirect stub -> debug.html (old links keep working)
 web/write-test.html       redirect stub -> debug.html
@@ -1189,6 +1192,8 @@ web/manifest.webmanifest  pinned-to-home-screen metadata (Android/iOS)
 
 web/data/amiibo-db.js     946 amiibo IDs -> name/series/type/date (generated)
 web/data/hhd-cards.js     index of the fan-made HHD card pack (91 UIDs, no tag data)
+web/data/changelog.js     release history; the only place entries are written.
+                          The page renders it, CHANGELOG.md is generated from it
 web/data/images/          artwork tiers + vehicle renders, all gitignored,
                           fetched + deployed
 
@@ -1217,6 +1222,7 @@ web/js/collectiongrid.js  the series/cards grid, shared with the admin
 web/js/amiibopanel.js     one amiibo drawn, shared with the admin
 web/js/amiibodetail.js    detail page: the URL, the scan cache, prev/next
 web/js/artwork.js         where the artwork lives: tiers, URLs, error fallback
+web/js/changelogui.js     renders the release history onto changelog.html
 web/js/chrome.js          the header bar and footer as builders, seeded by the
                           page that mounts them
 web/js/header.js          the site's header contents: nav, Settings sections
@@ -1250,8 +1256,9 @@ tools/build-amiibo-db.mjs regenerate the database; also importable as generate()
 tools/update-db.mjs        fetch upstream sources + regenerate + report the diff
 tools/fetch-amiibo-images.mjs  download artwork, build the three tiers
                           (a module: the admin server calls fetchArtwork() too)
+tools/build-changelog.mjs regenerate CHANGELOG.md from web/data/changelog.js
 
-test/                     twenty-eight files, see Tests above
+test/                     thirty-three files, see Tests above
 ```
 
 ## Hosting

@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 const WEB = fileURLToPath(new URL('../web/', import.meta.url));
 const read = (f) => readFile(new URL(f, `file://${WEB}`), 'utf8');
 
-const PAGES = ['index.html', 'collection.html', 'sync.html', 'debug.html', 'help.html', 'amiibo.html', 'legal.html'];
+const PAGES = ['index.html', 'collection.html', 'sync.html', 'debug.html', 'help.html', 'amiibo.html', 'legal.html', 'changelog.html'];
 
 const HEAD_KIT = [
   'name="viewport"',

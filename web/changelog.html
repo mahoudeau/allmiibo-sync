@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What's new · allmiibo-sync</title>
+<meta name="description" content="Every release of allmiibo-sync, what it added, and what it fixed.">
+<meta name="theme-color" content="#2b2b2a">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="icon" href="./icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="manifest" href="./manifest.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="allmiibo-sync">
+<meta property="og:title" content="What's new — allmiibo-sync">
+<meta property="og:description" content="Every release of allmiibo-sync, what it added, and what it fixed.">
+<meta property="og:url" content="https://allmiibo.mathieu.dev/changelog.html">
+<meta property="og:image" content="https://allmiibo.mathieu.dev/icons/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="./css/app.css">
+<script>
+// First paint honours the stored preferences (header.js manages them after).
+try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmiibo:mode')==='advanced'?'advanced':'default';const t=localStorage.getItem('allmiibo:theme');d.dataset.theme=['a','b','c'].includes(t)?t:'c';}catch{}
+</script>
+<style>
+  .helpSec { border:2px solid var(--border); background:var(--panel);
+             box-shadow:4px 4px 0 var(--shadow); padding:1rem 1.2rem; margin-bottom:1.2rem; }
+  .helpSec h2 { display:flex; align-items:center; gap:.55rem; color:var(--fg);
+                font-size:.65rem; margin-bottom:.7rem; }
+  .helpSec ul { margin:.4rem 0 .4rem 1.2rem; padding:0; font-size:.92rem; }
+  .helpSec li { margin:.35rem 0; }
+  .helpSec b { color:var(--fg); }
+  .helpSec code { font-family:var(--mono); font-size:.8rem; }
+  .helpSec a { color:var(--fg); }
+  .muted { color:var(--muted); }
+
+  /* One release is one panel. The title sits under the version, so scanning
+     down the left edge gives you the numbers and nothing else. */
+  .clTitle { font-family:var(--pixel); font-size:.55rem; color:var(--accent);
+             margin:-.3rem 0 .9rem; }
+  .clCat { display:flex; align-items:center; gap:.4rem; font-family:var(--pixel);
+           font-size:.5rem; color:var(--muted); margin:1rem 0 .3rem;
+           text-transform:uppercase; }
+  .clCat svg { width:.9rem; height:.9rem; }
+  .helpSec h3 { font-family:var(--pixel); font-size:.5rem; color:var(--fg);
+                margin:.8rem 0 .1rem; }
+
+  /* Jump list, built as a plain list. The injected header owns the only
+     navigation element on the page, and pages.test.mjs enforces that. */
+  .clJump { display:flex; flex-wrap:wrap; gap:.4rem 1.1rem; list-style:none;
+            margin:0 0 1.4rem; padding:0; font-size:.85rem; }
+  .clJump a { color:var(--fg); }
+</style>
+</head>
+<body>
+<main>
+  <h1>What's new</h1>
+  <p class="sub">Every release, newest first.</p>
+
+  <div id="clBody"></div>
+
+  <p class="sub muted">The same history, in the repository:
+    <a href="https://github.com/mahoudeau/allmiibo-sync/blob/main/CHANGELOG.md"
+       target="_blank" rel="noreferrer noopener">CHANGELOG.md</a>.</p>
+</main>
+<script type="module" src="./js/header.js"></script>
+<script type="module" src="./js/changelogui.js"></script>
+<script type="module" src="./js/footer.js"></script>
+</body>
+</html>

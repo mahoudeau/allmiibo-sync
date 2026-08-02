@@ -6,6 +6,14 @@
 
 import { mountFooter, ext } from './chrome.js';
 import { VERSION } from './version.js';
+import { RELEASES } from '../data/changelog.js';
+
+// Two different facts, and both stay visible. The release is what a user can
+// quote back at you and links to what changed; the deploy stamp beside it is
+// what says which build they were actually on, since a release ships more than
+// once. Putting the stamp in a tooltip would defeat the point of having it,
+// which is that a screenshot answers the question without being asked.
+const RELEASE = RELEASES[0].version;
 
 const SITE_URL = 'https://mathieu.dev';
 const MAKER = 'Mathieu Mahoudeau';
@@ -28,5 +36,6 @@ mountFooter({
       protocol and name table from ${ext(PIXLJS_URL, 'pixl.js')} (GPL) ·
       not affiliated with Nintendo ·
       <a href="./legal.html">legal &amp; licensing</a> ·
-      <span class="fVer" title="Deployed build">${VERSION}</span>`,
+      <a href="./changelog.html" title="What changed in this release">v${RELEASE}</a>
+      <span class="fVer" title="Deployed build">(${VERSION})</span>`,
 });
