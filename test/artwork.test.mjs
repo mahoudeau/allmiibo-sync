@@ -13,7 +13,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  fetchArtwork, findResizer, removeArtwork, describeArtwork, artUrl, TIERS,
+  fetchArtwork, findResizer, probeResizer, removeArtwork, describeArtwork,
+  artUrl, TIERS,
 } from '../tools/fetch-amiibo-images.mjs';
 
 const A = '0000000000000002';
@@ -40,22 +41,49 @@ function stubFetch(byId) {
   return fetch;
 }
 
-/** An exec that records what it was asked to run, and pretends every tool works. */
-function stubExec({ has = ['sips'] } = {}) {
+/**
+ * An exec that behaves like a resizer, well enough to be believed.
+ *
+ * It has to be: the capability probe no longer trusts `--version`, it hands the
+ * tool a real PNG and reads the width back out of the output header. A double
+ * that wrote "RESIZED" into a file would be rejected exactly as a broken
+ * ImageMagick is — which is the point of the probe, so the double has to earn
+ * its pass rather than be exempted.
+ *
+ * The IHDR CRC is left stale: nothing reads it here, and recomputing it would
+ * be reimplementing the encoder in the test.
+ */
+function stubExec({ has = ['sips'], resizeWidth = null } = {}) {
   const calls = [];
   const exec = async (cmd, args) => {
     calls.push({ cmd, args });
-    if ((cmd === 'sips' || cmd === 'magick' || cmd === 'convert') && args.some((a) => /version/.test(a))) {
-      if (!has.includes(cmd)) throw new Error(`${cmd}: not found`);
-      return { stdout: '' };
-    }
-    // A resize: write the output files the real tool would have written.
+    // `convert` is driven through its batch sibling `mogrify`, which ships with
+    // it — so a call to mogrify means the convert tool is what was chosen.
+    const tool = cmd === 'magick' ? 'magick' : cmd === 'mogrify' ? 'convert' : cmd;
+    if (!has.includes(tool)) throw new Error(`${tool}: not found`);
+
+    // The target size, from whichever dialect asked for it.
+    const zIdx = args.indexOf('-Z');
+    const rIdx = args.indexOf('-resize');
+    const size = zIdx >= 0 ? Number(args[zIdx + 1])
+      : rIdx >= 0 ? Number(String(args[rIdx + 1]).split('x')[0])
+        : 0;
+
     const destIdx = args.indexOf('--out') >= 0 ? args.indexOf('--out') : args.indexOf('-path');
+    if (destIdx < 0) return { stdout: '' };
     const destDir = args[destIdx + 1];
+
     for (const a of args) {
-      if (a.endsWith('.png')) {
-        await writeFile(join(destDir, a.split('/').pop()), 'RESIZED');
+      if (!a.endsWith('.png')) continue;
+      const src = await readFile(a).catch(() => null);
+      if (!src) continue;
+      const out = Buffer.from(src);
+      const w = resizeWidth ?? size;
+      if (out.length > 24 && w) {
+        out.writeUInt32BE(w, 16);   // IHDR width
+        out.writeUInt32BE(w, 20);   // IHDR height
       }
+      await writeFile(join(destDir, a.split('/').pop()), out);
     }
     return { stdout: '' };
   };
@@ -153,10 +181,13 @@ test('ImageMagick is used where sips does not exist, which is the server', async
   });
 
   assert.equal(report.tiers.tool, 'magick');
-  const resize = exec.calls.find((c) => c.args.includes('-path'));
+  // The tier call, not the capability probe's — the probe runs first and asks
+  // for its own small size.
+  const resize = exec.calls.find((c) => c.args.includes('96x96>'));
+  assert.ok(resize, 'the thumb tier was built through ImageMagick');
   assert.equal(resize.cmd, 'magick');
   assert.equal(resize.args[0], 'mogrify');
-  assert.ok(resize.args.includes('96x96>') || resize.args.includes('256x256>'));
+  assert.ok(exec.calls.some((c) => c.args.includes('256x256>')), 'and the med tier');
 });
 
 test('with no image tool the artwork is still fetched, and the report says so', async () => {
@@ -176,6 +207,54 @@ test('with no image tool the artwork is still fetched, and the report says so', 
   assert.match(describeArtwork(report), /Tiers NOT generated/);
   assert.match(describeArtwork(report), /npm run fetch-images/,
     'and it says what to do about it');
+});
+
+// ---- proving the tool works ---------------------------------------------
+
+test('a tool that runs but cannot resize is rejected, not trusted', async () => {
+  // This is why the check is a real resize rather than `--version`. An
+  // ImageMagick built without the PNG delegate, or one whose policy.xml
+  // forbids the format, exits 0 for --version and fails only when handed an
+  // image. Treating "the binary is on PATH" as "the tiers will build" produces
+  // a site with no thumbnails and a report claiming success.
+  const noOutput = async (cmd) => {
+    if (!['sips', 'magick', 'convert', 'mogrify'].includes(cmd)) throw new Error('nope');
+    return { stdout: '' };   // exits 0, writes nothing
+  };
+  const probe = await probeResizer(noOutput);
+  assert.equal(probe.ok, false);
+  assert.equal(probe.tool, null);
+  assert.equal(probe.tried.length, 3, 'all three were tried and all three failed');
+  assert.match(probe.tried[0].error, /no output file/);
+});
+
+test('a tool that writes something that is not an image is rejected', async () => {
+  const garbage = async (cmd, args) => {
+    if (!['sips', 'magick', 'convert', 'mogrify'].includes(cmd)) throw new Error('nope');
+    const i = args.indexOf('--out') >= 0 ? args.indexOf('--out') : args.indexOf('-path');
+    if (i >= 0) await writeFile(join(args[i + 1], 'probe.png'), 'not a png at all');
+    return { stdout: '' };
+  };
+  const probe = await probeResizer(garbage);
+  assert.equal(probe.ok, false);
+  assert.match(probe.tried[0].error, /not a PNG/);
+});
+
+test('a tool that passes the image through unresized is rejected', async () => {
+  // The subtlest failure: a valid PNG comes back, so anything checking only
+  // "did it produce a file" is satisfied — while every thumbnail is full size.
+  const passthrough = stubExec({ has: ['sips'], resizeWidth: 8 });
+  const probe = await probeResizer(passthrough);
+  assert.equal(probe.ok, false);
+  assert.match(probe.tried[0].error, /8px wide, expected 4/);
+});
+
+test('the probe leaves nothing behind', async () => {
+  const before = (await readdir(tmpdir())).filter((f) => f.startsWith('artprobe-'));
+  await probeResizer(stubExec());
+  await probeResizer(async () => { throw new Error('none'); });
+  const after = (await readdir(tmpdir())).filter((f) => f.startsWith('artprobe-'));
+  assert.deepEqual(after, before, 'no temp directory survives, on success or failure');
 });
 
 test('findResizer prefers sips, then magick, then convert', async () => {

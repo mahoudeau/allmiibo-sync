@@ -42,31 +42,59 @@ const read = (f) => readFileSync(join(REPO, f), 'utf8');
 
 // ---- the hostname -------------------------------------------------------
 
-test('no committed file names a subdomain of the public site', () => {
-  // allmiibo.mathieu.dev legitimately appears in every page's og:url. A
-  // *subdomain* of it does not, and that is what the admin lives on.
-  const SUBDOMAIN = /\b[a-z0-9-]+\.allmiibo\.mathieu\.dev\b/i;
+/**
+ * Every host under the site's domain in a piece of text, as the label(s) in
+ * front of it.
+ *
+ * An ALLOWLIST rather than a pattern describing the admin, for the reason this
+ * file exists: a rule that spells out what it is hiding has published it. So
+ * the names that may appear are named, and anything else is a leak.
+ *
+ * The capture is greedy across dots, so a multi-level host comes back whole —
+ * two labels in front are reported as both, not just the nearest. An earlier
+ * version matched only children of the public site, which described one SHAPE
+ * of admin hostname and stopped protecting anything the moment the admin moved
+ * to a sibling instead. The shape was never the point.
+ *
+ * Note that no example appears in this comment. Written out, one would be
+ * caught by the very rule below — as happened while this was being changed.
+ */
+const HOSTS = /\b([a-z0-9-]+(?:\.[a-z0-9-]+)*)\.mathieu\.dev\b/gi;
+const ALLOWED_HOSTS = new Set(['allmiibo', 'ziip']);
+
+const leakedHosts = (text) => [...text.matchAll(HOSTS)]
+  .map((m) => m[1].toLowerCase())
+  .filter((prefix) => !ALLOWED_HOSTS.has(prefix));
+
+test('no committed file names a host other than the public site', () => {
+  // allmiibo.mathieu.dev legitimately appears in every page's og:url. Any other
+  // host under that domain does not, and that is where the admin lives.
   for (const file of trackedTextFiles()) {
-    const hit = read(file).match(SUBDOMAIN);
-    assert.equal(hit, null, `${file} names the admin subdomain: ${hit?.[0]}`);
+    const hits = leakedHosts(read(file));
+    assert.deepEqual(hits, [], `${file} names a host it must not: ${hits.join(', ')}`);
   }
 });
 
 test('the guard would actually catch a leak', () => {
-  // A guard that cannot fail is not a guard. This pins the pattern's behaviour
-  // in both directions.
+  // A guard that cannot fail is not a guard. This pins the behaviour in both
+  // directions, and specifically over both shapes an admin hostname has taken:
+  // a child of the public site, and a sibling of it.
   //
-  // The example host is assembled at runtime rather than written out, because
-  // this file is checked by the very rule above: a literal subdomain here would
-  // make the guard fail on itself. Exempting this file instead would leave a
-  // blind spot in exactly the file that must not have one.
-  const SUBDOMAIN = /\b[a-z0-9-]+\.allmiibo\.mathieu\.dev\b/i;
-  const site = ['allmiibo', 'mathieu', 'dev'].join('.');
-  const sub = `example.${site}`;
-  assert.match(`https://${sub}/`, SUBDOMAIN);
-  assert.match(`ADMIN_HOST=${sub}`, SUBDOMAIN);
-  assert.doesNotMatch(`https://${site}/help.html`, SUBDOMAIN);
-  assert.doesNotMatch(`see ${site} for details`, SUBDOMAIN);
+  // The examples are assembled at runtime rather than written out, because this
+  // file is checked by the very rule above: a literal would make the guard fail
+  // on itself. Exempting this file instead would leave a blind spot in exactly
+  // the file that must not have one.
+  const domain = ['mathieu', 'dev'].join('.');
+  const site = `allmiibo.${domain}`;
+
+  assert.deepEqual(leakedHosts(`https://example.${site}/`), ['example.allmiibo'],
+    'a child of the public site');
+  assert.deepEqual(leakedHosts(`https://example-allmiibo.${domain}/`), ['example-allmiibo'],
+    'a sibling of it, which the previous pattern missed entirely');
+  assert.deepEqual(leakedHosts(`ADMIN_HOST=secret.${domain}`), ['secret']);
+
+  assert.deepEqual(leakedHosts(`https://${site}/help.html`), [], 'the public site is fine');
+  assert.deepEqual(leakedHosts(`see ${domain} for details`), [], 'so is the bare domain');
 });
 
 // ---- secrets ------------------------------------------------------------
@@ -89,12 +117,34 @@ test('no committed file contains a password hash', () => {
 });
 
 test('deployment and environment files are still ignored', () => {
-  const gitignore = read('.gitignore');
-  for (const line of ['deploy.sh', '.env', 'web/data/images/', '*.bin', '*.fca']) {
-    assert.ok(gitignore.includes(line), `.gitignore no longer covers ${line}`);
+  // Asked of git rather than of .gitignore's text. Matching literal lines
+  // checked the spelling of the rule instead of its effect: it passed on a
+  // mention in a comment, and broke when `deploy.sh` became `deploy*.sh` to
+  // cover the admin's own deploy script — a change that made the protection
+  // STRONGER while failing the test meant to protect it.
+  const ignored = (path) => {
+    try {
+      execFileSync('git', ['check-ignore', '-q', '--', path], { cwd: REPO });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  for (const path of [
+    'deploy.sh', 'deploy-admin.sh', 'deploy-anything.sh',
+    '.env', '.env.local',
+    'web/data/images/full/0000000000000002.png',
+    'dump.bin', 'library.fca',
+  ]) {
+    assert.ok(ignored(path), `git would commit ${path} — it must be ignored`);
   }
+
+  // The example is the deliberate exception: it exists to be committed.
+  assert.equal(ignored('.env.example'), false, '.env.example is meant to be tracked');
+
   const tracked = new Set(trackedTextFiles());
-  for (const f of ['deploy.sh', '.env']) {
+  for (const f of ['deploy.sh', 'deploy-admin.sh', '.env']) {
     assert.equal(tracked.has(f), false, `${f} is tracked and must not be`);
   }
 });

@@ -28,9 +28,10 @@ import { Store, BACKUP_NAME_RE } from './store.mjs';
 import { Regenerator, GenerateError, publicReport } from './regen.mjs';
 import { Upstream } from './upstream.mjs';
 import {
-  fetchArtwork, removeArtwork, describeArtwork, IMAGES_BASE,
+  fetchArtwork, removeArtwork, describeArtwork, probeResizer, IMAGES_BASE,
 } from '../tools/fetch-amiibo-images.mjs';
 import { Artwork } from './artwork.mjs';
+import { Jobs } from './jobs.mjs';
 import {
   verifyPassword, issueSession, readSession, sessionCookie, clearCookie,
   readCookie, checkCsrf, RateLimiter, CSRF_HEADER,
@@ -106,6 +107,25 @@ export function createAdminServer(config = {}) {
     ...(config.manifestUrl ? { manifestUrl: config.manifestUrl } : {}),
     ...(config.fetch ? { fetch: config.fetch } : {}),
   });
+  const jobs = new Jobs();
+
+  /**
+   * Whether this machine can build the resized tiers, proven rather than
+   * assumed — see probeResizer(). Cached because proving it spawns a process
+   * and writes a file, which is not something to do on every request; the
+   * answer only changes when someone installs or removes a tool, so a refresh
+   * is offered rather than a poll.
+   */
+  let resizerProbe = null;
+  async function resizer({ refresh = false } = {}) {
+    if (refresh || !resizerProbe) {
+      resizerProbe = await probeResizer(config.exec).catch((err) => ({
+        tool: null, ok: false, reason: err.message, tried: [],
+      }));
+    }
+    return resizerProbe;
+  }
+
   const limiter = new RateLimiter();
   // Being a polite consumer of someone else's raw endpoint under a stuck retry
   // loop. Keyed by a constant rather than by client: the point is not to defend
@@ -317,8 +337,11 @@ export function createAdminServer(config = {}) {
    * @param {object} verdicts  id -> { verdict: 'keep'|'skip', sha }
    * @param {string[]} [also]  IDs to fetch regardless — the entries an update
    *                           just added, which want pictures either way
+   * @param {object} [opts]
+   * @param {(p: object) => void} [opts.report]  progress, for a job to publish
+   * @param {AbortSignal} [opts.signal]
    */
-  async function applyArtwork(verdicts, also = []) {
+  async function applyArtwork(verdicts, also = [], { report: onProgress, signal } = {}) {
     const entries = Object.entries(verdicts ?? {});
     const declined = new Set(entries.filter(([, v]) => v?.verdict === 'skip').map(([id]) => id));
     const accepted = entries.filter(([, v]) => v?.verdict === 'keep');
@@ -351,7 +374,10 @@ export function createAdminServer(config = {}) {
         ids: toFetch,
         imagesDir: join(cfg.publicSiteDir, 'data/images'),
         base: cfg.imagesBase,
+        signal,
+        onProgress: onProgress ?? (() => {}),
         ...(config.fetch ? { fetch: config.fetch } : {}),
+        ...(config.exec ? { exec: config.exec } : {}),
       }).catch((err) => ({
         considered: toFetch.length, cached: 0, fetched: 0, noArtwork: [],
         failed: [err.message],
@@ -372,6 +398,35 @@ export function createAdminServer(config = {}) {
     report.deleted = deleted;
     report.declined = declined.size;
     return report;
+  }
+
+  /**
+   * Run the artwork verdicts as a background job, or null if there are none.
+   *
+   * Returns the job id immediately; the caller polls /api/jobs/<id>. Only one
+   * artwork job runs at a time — a second request joins the first rather than
+   * racing it over the same files.
+   */
+  function startArtworkJob(verdicts, also = []) {
+    const anything = Object.keys(verdicts ?? {}).length > 0 || also.length > 0;
+    if (!anything) return null;
+
+    // The total is known here, before any work runs, so a poll landing in the
+    // gap between "started" and "first picture" still reports a size rather
+    // than a bar sitting at zero for no visible reason.
+    const upfront = new Set([
+      ...also,
+      ...Object.entries(verdicts ?? {})
+        .filter(([, v]) => v?.verdict === 'keep' && v.op !== 'remove')
+        .map(([id]) => id),
+    ]).size;
+
+    const { id, busy } = jobs.start('artwork', async (report, signal) => {
+      report({ phase: 'fetch', done: 0, total: upfront });
+      const out = await applyArtwork(verdicts, also, { report, signal });
+      return { artwork: out, summary: describeArtwork(out) };
+    });
+    return { id, busy };
   }
 
   /** Artwork verdicts written into the overlay, as a record of what was refused. */
@@ -477,10 +532,16 @@ export function createAdminServer(config = {}) {
 
       // The entries this update added also want pictures, whether or not the
       // artwork step was part of the review. See applyArtwork().
+      //
+      // Started as a JOB rather than awaited. The database is written and
+      // promoted by this point, so the update itself is finished; the pictures
+      // can take as long as they take. Ten thousand of them will not fit in a
+      // response no matter how patient the timeout, and a dropped connection
+      // must not abandon the work halfway.
       const arrived = diff.changes
         .filter((c) => c.group === 'added' && settled[c.key] !== 'skip')
         .map((c) => String(c.subject));
-      const artwork = await applyArtwork(artVerdicts, arrived);
+      const artworkJob = startArtworkJob(artVerdicts, arrived);
 
       return {
         status: 200,
@@ -491,8 +552,7 @@ export function createAdminServer(config = {}) {
           entries: check.report.entries,
           applied,
           renames,
-          artwork,
-          artworkSummary: artwork ? describeArtwork(artwork) : null,
+          artworkJob,
           report: publicReport(check.report),
         },
       };
@@ -740,8 +800,26 @@ export function createAdminServer(config = {}) {
         }
 
         if (path === '/api/upstream/pending' && req.method === 'DELETE') {
+          // Never throw away the ONLY copy of the sources.
+          //
+          // The admin discards a pending fetch when the review turns out to
+          // have nothing in it, so a fetch does not sit there looking pending
+          // forever. On a server whose cache is empty that is destructive: the
+          // fetch is the only copy, and deleting it leaves a server that cannot
+          // regenerate the database at all — every save fails with "the
+          // upstream sources have not been fetched yet", which is true and
+          // baffling, because you just fetched them.
+          //
+          // Adopting is not the same as applying. The caller reached here only
+          // because the candidate produced an identical database, so promoting
+          // these sources cannot publish anything unreviewed — that is exactly
+          // what "no changes" established.
+          if (!(await regen.ready())) {
+            await upstream.promote();
+            return json(res, 200, { ok: true, adopted: true });
+          }
           await upstream.discard();
-          return json(res, 200, { ok: true });
+          return json(res, 200, { ok: true, adopted: false });
         }
 
         // Artwork on its own, with no data update pending.
@@ -831,13 +909,40 @@ export function createAdminServer(config = {}) {
             }
           }
 
-          const report = await applyArtwork(body.artwork ?? {});
-          return json(res, 200, {
+          const job = startArtworkJob(body.artwork ?? {});
+          if (job?.busy) {
+            // Refused, not queued and not merged: these decisions are not the
+            // running job's, and answering with its progress would throw them
+            // away. The id is included so the caller can watch and retry.
+            return json(res, 409, {
+              error: 'an artwork fetch is already running',
+              artworkJob: job,
+            });
+          }
+          return json(res, 202, {
             ok: true,
             backup: saved?.backup ?? null,
-            artwork: report,
-            artworkSummary: describeArtwork(report),
+            artworkJob: job,
           });
+        }
+
+        // Progress on a background job.
+        //
+        // Polled rather than streamed: the client asks a few times a second at
+        // most, the answer is a handful of integers, and an SSE stream would
+        // need its own reconnect story to survive exactly the flaky connection
+        // that made the job necessary in the first place.
+        const jobPath = /^\/api\/jobs\/([0-9a-f-]{36})$/.exec(path);
+        if (jobPath && req.method === 'GET') {
+          const job = jobs.get(jobPath[1]);
+          if (!job) return json(res, 404, { error: 'no such job, or it has been forgotten' });
+          return json(res, 200, job);
+        }
+
+        // What this machine can do to an image, proven rather than assumed.
+        // `?refresh=1` re-runs the probe, for after installing something.
+        if (path === '/api/artwork/capability' && req.method === 'GET') {
+          return json(res, 200, await resizer({ refresh: url.searchParams.get('refresh') === '1' }));
         }
 
         if (path === '/api/upstream/preview' && req.method === 'GET') {
@@ -913,7 +1018,10 @@ export function createAdminServer(config = {}) {
 const isCli = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
 if (isCli) {
   const port = Number(process.env.PORT ?? 8081);
-  const host = process.env.HOST ?? '127.0.0.1';
+  // IP is what a managed host injects alongside PORT; HOST is the local
+  // override. The default stays loopback so an accidental run on a shared
+  // machine is not reachable from it — binding wide has to be asked for.
+  const host = process.env.HOST ?? process.env.IP ?? '127.0.0.1';
   const { server, config } = createAdminServer();
   if (!config.passwordHash || !config.sessionSecret) {
     console.error('ADMIN_PASSWORD_HASH and SESSION_SECRET must be set. Refusing to start unprotected.');

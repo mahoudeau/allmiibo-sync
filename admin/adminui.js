@@ -241,13 +241,77 @@ async function boot() {
   applyFilter();
   markClean();
   loadBackups();
+  checkHealth();
   if (!overlayRes.upstreamReady) {
-    say('The upstream sources have not been fetched yet, so saving cannot rebuild the site.', 'warn');
+    // The state a new server starts in, and the state it stays in until
+    // something fetches. Saying only what is wrong left the one thing that
+    // fixes it to be guessed at — and the button that does it is called
+    // UPDATE, which does not obviously mean "download the sources I build
+    // from". So the message names it.
+    say('The upstream sources have not been fetched yet, so saving cannot rebuild '
+      + 'the site. Press UPDATE to fetch them — this is normal on a new server, '
+      + 'and only needs doing once.', 'warn');
   } else {
     // Last, so a receipt from before a reload is not immediately overwritten by
     // the line above — and so it appears against a list that is already drawn.
     drainHandover();
   }
+}
+
+/**
+ * Whether this machine can do the job, asked on every boot.
+ *
+ * The one thing that silently degrades is thumbnail generation: it needs an
+ * external tool, and which one depends on the machine — `sips` on macOS,
+ * ImageMagick on a Linux server. When it is missing, artwork still downloads
+ * and the site still works, so nothing breaks loudly; the grid just shows
+ * placeholders for anything new, forever, and nobody finds out.
+ *
+ * So the admin asks, rather than waiting to be asked. The answer is a real
+ * resize the server performed on a real image, not a check that a binary
+ * exists — see probeResizer(). Failing to reach the endpoint is not itself
+ * reported: an admin that cannot talk to its own server has louder problems.
+ */
+async function checkHealth() {
+  let cap;
+  try {
+    cap = await api('/artwork/capability');
+  } catch {
+    return;
+  }
+  state.capability = cap;
+
+  const box = el('health');
+  box.textContent = '';
+  if (cap.ok) {
+    box.hidden = true;
+    return;
+  }
+
+  const h = document.createElement('h4');
+  h.textContent = 'THUMBNAILS CANNOT BE GENERATED HERE';
+  box.append(h);
+
+  const what = document.createElement('p');
+  what.textContent = 'Artwork will still download at full size, and the site will '
+    + 'still work — but new amiibo will show a placeholder in the grid instead of '
+    + 'a picture, because the small versions it uses cannot be made.';
+  box.append(what);
+
+  const fix = document.createElement('p');
+  fix.className = 'fix';
+  fix.textContent = 'Fix: install ImageMagick on this server (it provides `magick`), '
+    + 'then reload this page. Until then you can run `npm run fetch-images` on your '
+    + 'own machine and upload web/data/images/.';
+  box.append(fix);
+
+  if (cap.tried?.length) {
+    const tried = document.createElement('p');
+    tried.className = 'tried';
+    tried.textContent = `Tried: ${cap.tried.map((t) => `${t.tool} (${t.error})`).join(' · ')}`;
+    box.append(tried);
+  }
+  box.hidden = false;
 }
 
 /** Every optional container present, so the editor never has to check. */
@@ -714,14 +778,27 @@ const progress = {
     if (step) Object.assign(step, { state, note: note ?? step.note });
     this.draw();
   },
+  /** A step that is itself made of many things — a fetch of N pictures. */
+  within(key, done, total) {
+    const step = this.steps.find((s) => s.key === key);
+    if (step) Object.assign(step, { state: 'now', done, total });
+    this.draw();
+  },
   stop() {
     el('progress').hidden = true;
     this.steps = [];
   },
   draw() {
-    const done = this.steps.filter((s) => s.state === 'done').length;
+    // Whole steps that finished, plus the fraction of one still going. A fetch
+    // of ten thousand pictures is one step and many minutes; leaving the bar
+    // still until it ends would be the silence this panel exists to remove.
+    let progressed = 0;
+    for (const s of this.steps) {
+      if (s.state === 'done') progressed += 1;
+      else if (s.state === 'now' && s.total) progressed += Math.min(1, s.done / s.total);
+    }
     el('pFill').style.width = this.steps.length
-      ? `${Math.round((done / this.steps.length) * 100)}%` : '0';
+      ? `${Math.round((progressed / this.steps.length) * 100)}%` : '0';
 
     const list = el('pSteps');
     list.textContent = '';
@@ -733,16 +810,61 @@ const progress = {
       mark.textContent = { done: '✓', now: '…', fail: '✕', wait: '·' }[s.state];
       li.append(mark);
       li.append(document.createTextNode(s.label));
-      if (s.note) {
+      const detail = s.state === 'now' && s.total
+        ? `${s.done}/${s.total}${s.note ? ` ${s.note}` : ''}`
+        : s.note;
+      if (detail) {
         const note = document.createElement('span');
         note.className = 'note';
-        note.textContent = `— ${s.note}`;
+        note.textContent = `— ${detail}`;
         li.append(note);
       }
       list.append(li);
     }
   },
 };
+
+/**
+ * Follow a background job to the end, reporting progress as it goes.
+ *
+ * Polled rather than streamed. The answer is a handful of integers a few times
+ * a second, and a stream would need its own reconnect handling to survive
+ * exactly the flaky connection that made the job necessary.
+ *
+ * @param {{id: string}} ref
+ * @param {string} stepKey  which progress line to drive
+ */
+async function followJob(ref, stepKey) {
+  const started = Date.now();
+  for (;;) {
+    let job;
+    try {
+      job = await api(`/jobs/${ref.id}`);
+    } catch (err) {
+      // A forgotten or unreachable job is not a failed update: the work may
+      // well have finished. Say what is known rather than inventing a verdict.
+      progress.at(stepKey, 'fail', 'lost track of it — reload to see the result');
+      return null;
+    }
+
+    if (job.state === 'running') {
+      progress.within(stepKey, job.done ?? 0, job.total ?? 0);
+      // Backing off: a fetch of ten thousand runs for minutes, and asking four
+      // times a second for all of it is a lot of requests for a bar that only
+      // needs to look alive.
+      const elapsed = Date.now() - started;
+      await new Promise((r) => setTimeout(r, elapsed < 5_000 ? 250 : 1_000));
+      continue;
+    }
+
+    if (job.state === 'failed') {
+      progress.at(stepKey, 'fail', job.error ?? 'failed');
+      return null;
+    }
+    progress.at(stepKey, 'done', null);
+    return job.result;
+  }
+}
 
 async function loadPreview(scope = 'both') {
   const wantsData = scope !== 'images';
@@ -1116,6 +1238,22 @@ function renderArtworkStep(panel) {
   const body = document.createElement('div');
   body.className = 'stepBody panel';
 
+  // Stated where it matters, not only on the dashboard: this is the screen
+  // where accepting a picture is about to depend on it. Positive as well as
+  // negative — knowing which tool did the work is how you tell "it worked" from
+  // "nothing was checked".
+  const cap = state.capability;
+  if (cap) {
+    const note = document.createElement('p');
+    note.className = 'why';
+    note.textContent = cap.ok
+      ? `Thumbnails will be generated with ${cap.tool}.`
+      : `No image tool on this server, so accepted pictures arrive at full size `
+        + `only and the grid will show placeholders for them. ${cap.reason}.`;
+    if (!cap.ok) note.classList.add('warnNote');
+    body.append(note);
+  }
+
   for (const { op, title } of OPS) {
     const inOp = rows.filter((row) => row.op === op);
     if (!inOp.length) continue;
@@ -1443,20 +1581,36 @@ async function applyReview() {
       });
     closeReview();
 
+    // The data is published the moment that returns. The pictures are a job:
+    // ten thousand of them cannot come back in a response, so the server hands
+    // over an id and the work continues without the request.
+    let artwork = null;
+    let artworkSummary = null;
+    if (result.artworkJob?.id) {
+      progress.start([{ key: 'art', label: 'Fetching artwork' }]);
+      try {
+        const finished = await followJob(result.artworkJob, 'art');
+        artwork = finished?.artwork ?? null;
+        artworkSummary = finished?.summary ?? null;
+      } finally {
+        progress.stop();
+      }
+    }
+
     const receipt = picturesOnly
-      ? result.artworkSummary
+      ? (artworkSummary ?? 'Nothing to do.')
       : `Applied. The site now has ${result.entries} amiibo`
         + (result.applied.pinsWritten ? `, holding ${result.applied.pinsWritten} value(s) back` : '')
         + (result.renames.length ? `, renaming ${result.renames.length} file(s) on the device` : '')
         + '.'
-        + (result.artworkSummary ? ` ${result.artworkSummary}` : '');
+        + (artworkSummary ? ` ${artworkSummary}` : '');
 
     // A reload rather than boot(): the database this page is drawing from is a
     // module the browser has already evaluated, so nothing short of a new
     // document shows the new entries. Pictures are ordinary files rather than a
     // module, but they are cached too, and a reload is the honest way to see
     // them replaced.
-    sayAfterReload(receipt, result.artwork?.tiers?.skipped ? 'warn' : 'ok');
+    sayAfterReload(receipt, artwork?.tiers?.skipped ? 'warn' : 'ok');
   } catch (err) {
     el('reviewApply').disabled = false;
     if (err.status === 409) {

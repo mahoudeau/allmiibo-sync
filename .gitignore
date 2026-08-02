@@ -42,8 +42,15 @@ tools/.cache/
 # files to the repository.
 content/backups/
 
-# Deployment — kept local, never committed (server address + credentials)
-deploy.sh
+# Deployment — kept local, never committed (server address + credentials).
+# A glob rather than the one filename: the site and the admin deploy to
+# different places and so have a script each, and the admin's names a subdomain
+# that must never reach this repository. test/admin.test.mjs enforces that on
+# tracked AND untracked files, so a new deploy script that was not ignored
+# would fail the suite rather than leak quietly — but being ignored in the
+# first place is the actual protection.
+deploy*.sh
+runbook-*.md
 .env
 .env.*
 !.env.example

@@ -117,6 +117,27 @@ const post = (s, path, body) => fetch(`${base}${path}`, {
   method: 'POST', headers: authed(s), body: JSON.stringify(body ?? {}),
 });
 
+/**
+ * Wait for a background job and return what it produced.
+ *
+ * Artwork is fetched outside the request that asked for it — ten thousand
+ * pictures do not fit in a response — so a test that wants the result has to
+ * wait for it the same way the admin does.
+ */
+async function awaitJob(s, ref, { timeoutMs = 10_000 } = {}) {
+  assert.ok(ref?.id, 'the response named a job');
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const job = await (await get(s, `/api/jobs/${ref.id}`)).json();
+    if (job.state !== 'running') {
+      assert.notEqual(job.state, 'failed', `the job failed: ${job.error}`);
+      return job.result;
+    }
+    assert.ok(Date.now() < deadline, 'the job never finished');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 const db = () => readFile(join(dir, 'site/data/amiibo-db.js'), 'utf8');
 const overlayOnDisk = () => readFile(join(dir, 'data/amiibo-overrides.json'), 'utf8').catch(() => null);
 const liveCache = () => readFile(join(dir, 'cache/db_amiibo.c'), 'utf8');
@@ -527,7 +548,8 @@ test('a pictures-only apply fetches what was accepted and nothing else', opts, a
     },
   })).json();
 
-  assert.equal(body.artwork.fetched, 1, 'only the one that was accepted');
+  const done = await awaitJob(s, body.artworkJob);
+  assert.equal(done.artwork.fetched, 1, 'only the one that was accepted');
   assert.equal(await readFile(join(full, `${MARIO_SMB}.png`), 'utf8'), `ART ${MARIO_SMB}`);
   assert.equal(existsSync(join(full, `${MARIO_GOLD}.png`)), false, 'the declined one is absent');
   assert.equal(await readFile(join(full, `${MARIO}.png`), 'utf8'), 'MINE',
@@ -558,15 +580,19 @@ test('a picture upstream dropped is deleted here only if that is accepted', opts
   await writeFile(join(images, 'full', `${MARIO}.png`), 'MINE');
   await writeFile(join(images, 'thumb', `${MARIO}.png`), 'MINE THUMB');
 
-  await post(s, '/api/artwork/apply', {
+  const declined = await (await post(s, '/api/artwork/apply', {
     artwork: { [MARIO]: { verdict: 'skip', sha: null, op: 'remove' } },
-  });
+  })).json();
+  // Waited for, because a second request while this one runs is refused — the
+  // two carry different decisions and merging them would lose one.
+  await awaitJob(s, declined.artworkJob);
   assert.equal(existsSync(join(images, 'full', `${MARIO}.png`)), true, 'declined: kept');
 
   const body = await (await post(s, '/api/artwork/apply', {
     artwork: { [MARIO]: { verdict: 'keep', sha: null, op: 'remove' } },
   })).json();
-  assert.equal(body.artwork.deleted, 2, 'accepted: gone from every tier');
+  const done = await awaitJob(s, body.artworkJob);
+  assert.equal(done.artwork.deleted, 2, 'accepted: gone from every tier');
   assert.equal(existsSync(join(images, 'full', `${MARIO}.png`)), false);
   assert.equal(existsSync(join(images, 'thumb', `${MARIO}.png`)), false);
 });
@@ -584,8 +610,10 @@ test('applying fetches artwork for the entries it added', opts, async () => {
   const body = await (await post(s, '/api/upstream/apply',
     { fingerprint: preview.fingerprint, decisions: {} })).json();
 
-  assert.equal(body.artwork.fetched, 1);
-  assert.match(body.artworkSummary, /Artwork: 1 fetched/);
+  // The update itself is finished the moment it responds; the pictures follow.
+  const done = await awaitJob(s, body.artworkJob);
+  assert.equal(done.artwork.fetched, 1);
+  assert.match(done.summary, /Artwork: 1 fetched/);
   assert.equal(
     await readFile(join(dir, 'site/data/images/full', `${NEW_ID}.png`), 'utf8'),
     'PNGDATA',
@@ -603,7 +631,7 @@ test('artwork is fetched only for what was accepted', opts, async () => {
   const body = await (await post(s, '/api/upstream/apply',
     { fingerprint: preview.fingerprint, decisions })).json();
 
-  assert.equal(body.artwork, null, 'nothing was added, so nothing was fetched');
+  assert.equal(body.artworkJob, null, 'nothing was added, so no job was started');
   assert.equal(existsSync(join(dir, 'site/data/images/full', `${NEW_ID}.png`)), false);
 });
 
@@ -677,7 +705,8 @@ test('accepting a picture replaces it, and clears any older refusal', opts, asyn
     artwork: { [MARIO]: { verdict: 'keep', sha } },
   })).json();
 
-  assert.equal(body.artwork.replaced, 1);
+  const done = await awaitJob(s, body.artworkJob);
+  assert.equal(done.artwork.replaced, 1);
   assert.equal(await readFile(join(full, `${MARIO}.png`), 'utf8'), 'NEW PICTURE');
   const overlay = JSON.parse(await overlayOnDisk());
   assert.equal(overlay.artwork, undefined, 'no refusal is recorded for an acceptance');
@@ -698,12 +727,149 @@ test('artwork that will not download does not fail the update', opts, async () =
 
   assert.equal(res.status, 200, 'the update succeeded');
   assert.equal(body.ok, true);
+  assert.match(await db(), new RegExp(NEW_ID), 'and the entry is in the database');
+
   // The invented entry is among those with no picture. Not the whole set, and
   // not a count: this update adds whatever the cached sources have that the
   // committed database does not, which changes as upstream does — writing that
   // down here would fail on the next real update while proving nothing.
-  assert.ok(body.artwork.noArtwork.includes(NEW_ID));
-  assert.deepEqual(body.artwork.failed, [], 'a missing picture is not a failure');
-  assert.match(body.artworkSummary, /have none upstream yet/);
-  assert.match(await db(), new RegExp(NEW_ID), 'and the entry is in the database');
+  const done = await awaitJob(s, body.artworkJob);
+  assert.ok(done.artwork.noArtwork.includes(NEW_ID));
+  assert.deepEqual(done.artwork.failed, [], 'a missing picture is not a failure');
+  assert.match(done.summary, /have none upstream yet/);
+});
+
+test('a fresh server adopts the fetch it just made instead of deleting it', opts, async () => {
+  // The first run on a new server, exactly as it happened in production. The
+  // cache is empty; UPDATE fetches the sources; the review has nothing in it
+  // because the site is already current; the admin then discards the pending
+  // fetch — and destroys the only copy. Every save afterwards fails with "the
+  // upstream sources have not been fetched yet", which is true, and baffling.
+  const s = await signIn();
+  await rm(join(dir, 'cache/db_amiibo.c'), { force: true });
+  await rm(join(dir, 'cache/amiibo.json'), { force: true });
+  assert.equal(existsSync(join(dir, 'cache/db_amiibo.c')), false, 'a bare cache');
+
+  await post(s, '/api/upstream/refresh');
+  const body = await (await fetch(`${base}/api/upstream/pending`, {
+    method: 'DELETE', headers: authed(s),
+  })).json();
+
+  assert.equal(body.adopted, true, 'kept, not deleted');
+  assert.equal(existsSync(join(dir, 'cache/db_amiibo.c')), true);
+  assert.equal(existsSync(join(dir, 'cache/amiibo.json')), true);
+
+  // And the thing that was broken now works: a save can build.
+  const save = await fetch(`${base}/api/overlay`, {
+    method: 'PUT',
+    headers: authed(s),
+    body: JSON.stringify({ schema: 1, amiibos: { [MARIO]: { kind: 'override', name: 'Renamed' } } }),
+  });
+  assert.equal(save.status, 200, await save.text());
+  assert.match(await db(), /Renamed/);
+});
+
+test('a server that already has sources still discards a pointless fetch', opts, async () => {
+  // The other half: adopting always would leave the live pair replaced by an
+  // unreviewed one on every no-op check. The rule is about the ONLY copy.
+  const s = await signIn();
+  const before = await liveCache();
+
+  await post(s, '/api/upstream/refresh');
+  const body = await (await fetch(`${base}/api/upstream/pending`, {
+    method: 'DELETE', headers: authed(s),
+  })).json();
+
+  assert.equal(body.adopted, false);
+  assert.equal(await liveCache(), before, 'the live pair is untouched');
+  assert.equal(existsSync(join(dir, 'cache/pending/db_amiibo.c')), false, 'and the fetch is gone');
+});
+
+test('a fetch of any size runs outside the request that asked for it', opts, async () => {
+  // The reason this machinery exists. Ten thousand pictures cannot come back in
+  // a response at any timeout worth setting, and a dropped connection must not
+  // abandon the work halfway — so apply answers immediately with a job to poll.
+  const s = await signIn();
+  const full = join(dir, 'site/data/images/full');
+  await mkdir(full, { recursive: true });
+
+  const many = {};
+  for (let i = 0; i < 200; i++) {
+    const id = `ffff${String(i).padStart(4, '0')}00000002`;
+    many[id] = { verdict: 'keep', sha: null, op: 'add' };
+    serving[`/images/icon_${id.slice(0, 8)}-${id.slice(8)}.png`] = { body: `ART ${i}` };
+  }
+
+  const res = await post(s, '/api/artwork/apply', { artwork: many });
+  assert.equal(res.status, 202, 'accepted, not completed');
+  const body = await res.json();
+  assert.ok(body.artworkJob.id, 'with a job to watch');
+
+  const done = await awaitJob(s, body.artworkJob, { timeoutMs: 30_000 });
+  assert.equal(done.artwork.fetched, 200);
+  assert.equal(existsSync(join(full, `ffff019900000002.png`)), true, 'the last one landed');
+});
+
+test('a second artwork request is refused while one is running, not merged', opts, async () => {
+  // Two fetches at once would race on the same files. The refusal is the
+  // important half: the second request's decisions are NOT the first's, so
+  // answering with the first job's progress would silently discard them —
+  // accept a deletion, get back the result of a job that declined one.
+  const s = await signIn();
+  await mkdir(join(dir, 'site/data/images/full'), { recursive: true });
+  const many = {};
+  for (let i = 0; i < 120; i++) {
+    const id = `ffff${String(i).padStart(4, '0')}00000002`;
+    many[id] = { verdict: 'keep', sha: null, op: 'add' };
+    serving[`/images/icon_${id.slice(0, 8)}-${id.slice(8)}.png`] = { body: `ART ${i}` };
+  }
+
+  const first = await (await post(s, '/api/artwork/apply', { artwork: many })).json();
+  const res = await post(s, '/api/artwork/apply', { artwork: many });
+  const second = await res.json();
+
+  assert.equal(res.status, 409);
+  assert.match(second.error, /already running/);
+  assert.equal(second.artworkJob.id, first.artworkJob.id, 'and says which one to watch');
+  await awaitJob(s, first.artworkJob, { timeoutMs: 30_000 });
+});
+
+test('job progress is readable while the work is still running', opts, async () => {
+  const s = await signIn();
+  await mkdir(join(dir, 'site/data/images/full'), { recursive: true });
+  const many = {};
+  for (let i = 0; i < 300; i++) {
+    const id = `ffff${String(i).padStart(4, '0')}00000002`;
+    many[id] = { verdict: 'keep', sha: null, op: 'add' };
+    serving[`/images/icon_${id.slice(0, 8)}-${id.slice(8)}.png`] = { body: `ART ${i}` };
+  }
+
+  const body = await (await post(s, '/api/artwork/apply', { artwork: many })).json();
+  const job = await (await get(s, `/api/jobs/${body.artworkJob.id}`)).json();
+
+  assert.equal(job.kind, 'artwork');
+  assert.equal(job.total, 300, 'the size of the work is known up front');
+  assert.ok(job.done <= job.total);
+  await awaitJob(s, body.artworkJob, { timeoutMs: 30_000 });
+});
+
+test('an unknown job id is a 404, not a crash', opts, async () => {
+  const s = await signIn();
+  const res = await get(s, '/api/jobs/00000000-0000-0000-0000-000000000000');
+  assert.equal(res.status, 404);
+});
+
+test('the resizer capability is proven, and says what it tried', opts, async () => {
+  // Not "is the binary on PATH". The probe hands a real PNG to each candidate
+  // and reads the width back out of the output.
+  const s = await signIn();
+  const body = await (await get(s, '/api/artwork/capability')).json();
+  assert.equal(typeof body.ok, 'boolean');
+  if (body.ok) {
+    assert.ok(['sips', 'magick', 'convert'].includes(body.tool));
+  } else {
+    assert.equal(body.tool, null);
+    assert.match(body.reason, /no working image tool/);
+    assert.ok(Array.isArray(body.tried));
+  }
 });

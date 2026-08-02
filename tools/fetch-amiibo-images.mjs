@@ -23,8 +23,10 @@
 // keep using the table it read at startup, which has already caused two bugs
 // in this project.
 
-import { mkdir, readdir, writeFile, unlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, writeFile, unlink, rm } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
+import { deflateSync } from 'node:zlib';
+import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -50,27 +52,136 @@ export const TIERS = Object.freeze([
 export const artUrl = (id, base = IMAGES_BASE) =>
   `${base}/icon_${id.slice(0, 8)}-${id.slice(8)}.png`;
 
-/**
- * The first image tool on PATH, or null.
- *
- * `sips` ships with macOS and reads the WebP-in-.png files some entries use;
- * ImageMagick covers the Linux server, where `sips` does not exist at all. When
- * none is present the full-size images are still fetched and the caller is told
- * the tiers were skipped — the site steps full -> med -> thumb and falls back
- * to a placeholder, so this degrades rather than breaks.
- */
-export async function findResizer(exec = run) {
-  for (const [cmd, args] of [
-    ['sips', ['--version']],
-    ['magick', ['-version']],
-    ['convert', ['-version']],
-  ]) {
-    try {
-      await exec(cmd, args);
-      return cmd;
-    } catch {}
+/** CRC-32, for writing the probe PNG. Table built once, on first use. */
+let CRC_TABLE = null;
+function crc32(buf) {
+  if (!CRC_TABLE) {
+    CRC_TABLE = new Int32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      CRC_TABLE[n] = c;
+    }
   }
-  return null;
+  let crc = -1;
+  for (const b of buf) crc = CRC_TABLE[(crc ^ b) & 0xff] ^ (crc >>> 8);
+  return (crc ^ -1) >>> 0;
+}
+
+/**
+ * A real PNG, written from scratch: 8x8 RGBA, no dependencies.
+ *
+ * The probe below needs an image it is certain about. Copying one from the
+ * cache would test whatever happened to be there — including the WebP-in-.png
+ * files some entries use, which is a different question — and on a fresh
+ * install there is nothing to copy.
+ */
+function probePng(size = 8) {
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8;    // bit depth
+  ihdr[9] = 6;    // colour type: RGBA
+  // 10..12 = compression, filter, interlace: all 0
+
+  // Each row is a filter byte followed by RGBA pixels. A diagonal, so a resize
+  // that silently returns the input unchanged is still a valid image either
+  // way — the check is on the OUTPUT's dimensions, not on it merely existing.
+  const raw = Buffer.alloc(size * (1 + size * 4));
+  for (let y = 0; y < size; y++) {
+    const row = y * (1 + size * 4);
+    raw[row] = 0;
+    for (let x = 0; x < size; x++) {
+      const p = row + 1 + x * 4;
+      raw[p] = x === y ? 255 : 0;
+      raw[p + 1] = 0;
+      raw[p + 2] = 255;
+      raw[p + 3] = 255;
+    }
+  }
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+/**
+ * Which image tool this machine has, PROVEN by resizing a real image.
+ *
+ * `sips` ships with macOS; ImageMagick covers a Linux server, where `sips` does
+ * not exist at all. Which is present cannot be assumed, and neither can it
+ * working: `--version` exiting 0 says a binary is on PATH, not that it can
+ * decode a PNG — an ImageMagick built without the PNG delegate does exactly
+ * that, and a policy.xml can forbid the format outright. Both fail only when
+ * a real image is handed to them, which is what this does.
+ *
+ * @returns {Promise<{tool: string|null, ok: boolean, reason: string|null,
+ *                    tried: {tool: string, error: string}[]}>}
+ */
+export async function probeResizer(exec = run) {
+  const tried = [];
+  const dir = await mkdtemp(join(tmpdir(), 'artprobe-'));
+  const src = join(dir, 'probe.png');
+  const out = join(dir, 'out');
+
+  try {
+    await mkdir(out, { recursive: true });
+    await writeFile(src, probePng(8));
+
+    for (const tool of ['sips', 'magick', 'convert']) {
+      try {
+        const [cmd, args] = resizeCommand(tool, 4, [src], out);
+        await exec(cmd, args);
+
+        const written = await readFile(join(out, 'probe.png')).catch(() => null);
+        if (!written) throw new Error('ran, but produced no output file');
+        if (written.length === 0) throw new Error('produced an empty file');
+
+        // The header is the proof. A tool that copied the input through, or
+        // wrote an error page, does not come back 4 pixels wide.
+        //
+        // Checked in this order deliberately: reading the width out of a file
+        // too short to have one throws a RangeError about byte offsets, which
+        // tells whoever reads the report nothing about what went wrong.
+        const isPng = written.length >= 24 && written.subarray(0, 8)
+          .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+        if (!isPng) throw new Error('output is not a PNG');
+        const width = written.readUInt32BE(16);
+        if (width !== 4) throw new Error(`output is ${width}px wide, expected 4`);
+
+        return { tool, ok: true, reason: null, tried };
+      } catch (err) {
+        tried.push({ tool, error: err.message });
+        await rm(join(out, 'probe.png'), { force: true }).catch(() => {});
+      }
+    }
+
+    return {
+      tool: null,
+      ok: false,
+      reason: 'no working image tool (tried sips, magick, convert)',
+      tried,
+    };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Backwards-compatible name: the tool only, or null. */
+export async function findResizer(exec = run) {
+  return (await probeResizer(exec)).tool;
 }
 
 /** One batch resize, in whichever dialect the available tool speaks. */
@@ -98,7 +209,11 @@ function resizeCommand(tool, size, files, destDir) {
  * @param {string} [opts.base]      upstream image base URL
  * @param {Function} [opts.fetch]
  * @param {Function} [opts.exec]    child-process runner, so tests need no tools
- * @param {(text: string) => void} [opts.onProgress]
+ * @param {AbortSignal} [opts.signal]  stops between items, never mid-write
+ * @param {(p: {phase: string, done: number, total: number}) => void} [opts.onProgress]
+ *   Structured rather than a string: this drives a progress bar on the other
+ *   side of an HTTP poll, and a caller should not have to parse "fetched 7/10"
+ *   back into numbers.
  */
 export async function fetchArtwork({
   ids,
@@ -106,6 +221,7 @@ export async function fetchArtwork({
   base = IMAGES_BASE,
   fetch: fetchImpl = globalThis.fetch,
   exec = run,
+  signal = null,
   onProgress = () => {},
 } = {}) {
   const wanted = [...new Set(ids)].filter((id) => /^[0-9a-f]{16}$/.test(id));
@@ -127,12 +243,16 @@ export async function fetchArtwork({
     tiers: { built: 0, skipped: false, tool: null, reason: null },
   };
 
+  let settled = 0;
   const queue = [...pending];
   const worker = async () => {
     while (queue.length) {
+      // Between items, never mid-write: a half-written PNG on disk would be
+      // treated as "already have it" by the next run and never repaired.
+      if (signal?.aborted) return;
       const id = queue.shift();
       try {
-        const res = await fetchImpl(artUrl(id, base));
+        const res = await fetchImpl(artUrl(id, base), signal ? { signal } : undefined);
         if (res.status === 404) {
           report.noArtwork.push(id);
           continue;
@@ -140,22 +260,30 @@ export async function fetchArtwork({
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         await writeFile(join(fullDir, `${id}.png`), Buffer.from(await res.arrayBuffer()));
         report.fetched++;
-        onProgress(`fetched ${report.fetched}/${pending.length}`);
       } catch (err) {
         report.failed.push(`${id}: ${err.message}`);
+      } finally {
+        // Counted whatever the outcome, so the bar reaches the end even when
+        // half of upstream has no picture yet.
+        settled++;
+        onProgress({ phase: 'fetch', done: settled, total: pending.length });
       }
     }
   };
+  onProgress({ phase: 'fetch', done: 0, total: pending.length });
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+  report.aborted = Boolean(signal?.aborted);
 
   // ---- resized tiers ------------------------------------------------------
 
-  const tool = await findResizer(exec);
-  if (!tool) {
+  const probe = await probeResizer(exec);
+  report.tiers.probe = probe.tried;
+  if (!probe.ok) {
     report.tiers.skipped = true;
-    report.tiers.reason = 'no image tool on this machine (looked for sips, magick, convert)';
+    report.tiers.reason = probe.reason;
     return report;
   }
+  const tool = probe.tool;
   report.tiers.tool = tool;
 
   for (const tier of TIERS) {
@@ -164,7 +292,9 @@ export async function fetchArtwork({
     const done = new Set(await readdir(destDir));
     const todo = fulls.filter((f) => !done.has(f));
 
+    onProgress({ phase: tier.dir, done: 0, total: todo.length });
     for (let i = 0; i < todo.length; i += 50) {
+      if (signal?.aborted) { report.aborted = true; return report; }
       const batch = todo.slice(i, i + 50).map((f) => join(fullDir, f));
       const [cmd, args] = resizeCommand(tool, tier.size, batch, destDir);
       try {
@@ -181,7 +311,7 @@ export async function fetchArtwork({
           }
         }
       }
-      onProgress(`${tier.dir} ${Math.min(i + 50, todo.length)}/${todo.length}`);
+      onProgress({ phase: tier.dir, done: Math.min(i + 50, todo.length), total: todo.length });
     }
     report.tiers.built += todo.length;
   }
@@ -263,7 +393,9 @@ if (isCli) {
   const report = await fetchArtwork({
     ids,
     imagesDir,
-    onProgress: (text) => process.stdout.write(`\r  ${text}`),
+    onProgress: ({ phase, done, total }) => {
+      if (total) process.stdout.write(`\r  ${phase} ${done}/${total}   `);
+    },
   });
   const vehicles = await fetchVehicles(imagesDir);
 

@@ -118,6 +118,8 @@ async function bootAdmin({
   preview = PREVIEW,
   artwork = ARTWORK,
   artworkRoute = null,
+  jobRoute = null,
+  capability = { tool: 'sips', ok: true, reason: null, tried: [] },
 } = {}) {
   const page = mountPage('admin/index.html');
   const fetch = stubFetch({
@@ -130,6 +132,7 @@ async function bootAdmin({
     'POST /api/upstream/refresh': { ok: true, changed: true, fetchedAt: '2026-08-01T10-00-00-000Z' },
     'DELETE /api/upstream/pending': { ok: true },
     '/api/artwork': artworkRoute ?? { ok: true, artwork },
+    '/api/artwork/capability': capability,
     'POST /api/artwork/apply': {
       ok: true,
       artwork: { fetched: 2, cached: 0, noArtwork: [], failed: [], tiers: { skipped: false } },
@@ -141,8 +144,21 @@ async function bootAdmin({
       entries: 947,
       applied: { pinsWritten: 0 },
       renames: [],
-      artwork: { fetched: 2, cached: 0, noArtwork: [], failed: [], tiers: { skipped: false } },
-      artworkSummary: 'Artwork: 2 fetched.',
+      // Artwork is a background job now: the response names one, and the
+      // client follows it. Ten thousand pictures cannot come back in a
+      // response at any timeout worth setting.
+      artworkJob: { id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', busy: false },
+    },
+    '/api/jobs/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee': jobRoute ?? {
+      id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      kind: 'artwork',
+      state: 'done',
+      done: 2,
+      total: 2,
+      result: {
+        artwork: { fetched: 2, cached: 0, noArtwork: [], failed: [], tiers: { skipped: false } },
+        summary: 'Artwork: 2 fetched.',
+      },
     },
     'POST /api/logout': {},
   });
@@ -1828,6 +1844,145 @@ test('pictures already up to date says so instead of an empty review', async () 
     assert.match(page.byId('status').textContent, /up to date: 948 pictures/);
     assert.match(page.byId('status').textContent, /3 held at the version you chose/,
       'and a decision still in force is visible, not silent');
+  } finally {
+    page.restore();
+  }
+});
+
+test('a server with no sources yet says what to press, not just what is wrong', async () => {
+  // The state every new server starts in. Naming the problem without naming
+  // the cure left the fix to be guessed at, and the button that does it is
+  // called UPDATE — which does not obviously mean "download the sources the
+  // database is built from".
+  const { page } = await bootAdmin({ upstreamReady: false });
+  try {
+    const status = page.byId('status').textContent;
+    assert.match(status, /have not been fetched yet/, 'what is wrong');
+    assert.match(status, /Press UPDATE/, 'and what to do about it');
+    assert.match(status, /normal on a new server/, 'and that it is not a fault');
+  } finally {
+    page.restore();
+  }
+});
+
+test('a server that cannot make thumbnails says so on sight, unprompted', async () => {
+  // The failure this exists for is silent. Artwork downloads, the site works,
+  // nothing errors — and every new amiibo shows a placeholder forever because
+  // the small versions could not be made. Nobody is going to run a command to
+  // find that out, so the admin asks on every boot and puts the answer on
+  // screen where it cannot be missed.
+  const { page, fetch } = await bootAdmin({
+    capability: {
+      tool: null,
+      ok: false,
+      reason: 'no working image tool (tried sips, magick, convert)',
+      tried: [
+        { tool: 'sips', error: 'sips: not found' },
+        { tool: 'magick', error: 'output is not a PNG' },
+        { tool: 'convert', error: 'convert: not found' },
+      ],
+    },
+  });
+  try {
+    assert.ok(fetch.calls.some((c) => c.path === '/api/artwork/capability'),
+      'it asked without being told to');
+
+    const health = page.byId('health');
+    assert.equal(health.hidden, false, 'and it is on screen');
+    assert.match(health.textContent, /THUMBNAILS CANNOT BE GENERATED/);
+    // Actionable, not just alarming.
+    assert.match(health.textContent, /install ImageMagick/);
+    assert.match(health.textContent, /npm run fetch-images/);
+    // And what was actually tried, so it can be diagnosed rather than guessed.
+    assert.match(health.textContent, /magick \(output is not a PNG\)/);
+  } finally {
+    page.restore();
+  }
+});
+
+test('a healthy server shows no banner, and the artwork step names the tool', async () => {
+  // The positive case matters too: "it worked" and "nothing was checked" look
+  // identical when the only output is silence.
+  const { page } = await bootAdmin();
+  try {
+    assert.equal(page.byId('health').hidden, true, 'nothing to warn about');
+
+    const r = await openReview(page);
+    page.$$('#reviewSteps button')[r.steps().indexOf('ARTWORK')]
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+    assert.match(page.byId('reviewPanel').textContent,
+      /Thumbnails will be generated with sips/);
+  } finally {
+    page.restore();
+  }
+});
+
+test('the artwork step warns where it matters, not only on the dashboard', async () => {
+  const { page } = await bootAdmin({
+    capability: { tool: null, ok: false, reason: 'no working image tool', tried: [] },
+  });
+  try {
+    const r = await openReview(page);
+    page.$$('#reviewSteps button')[r.steps().indexOf('ARTWORK')]
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    // This is the screen where accepting a picture is about to depend on it.
+    assert.match(page.byId('reviewPanel').textContent,
+      /full size only and the grid will show placeholders/);
+  } finally {
+    page.restore();
+  }
+});
+
+test('a long artwork fetch is followed to the end, counting as it goes', async () => {
+  // The reason artwork is a job at all. Ten thousand pictures cannot come back
+  // in a response, so apply returns immediately and the screen follows the
+  // work — the bar has to move on the fetch's own count, not sit at one step.
+  const JOB = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const states = [
+    { state: 'running', done: 0, total: 9000 },
+    { state: 'running', done: 4500, total: 9000 },
+    {
+      state: 'done',
+      done: 9000,
+      total: 9000,
+      result: {
+        artwork: { fetched: 9000, cached: 0, noArtwork: [], failed: [], tiers: { skipped: false } },
+        summary: 'Artwork: 9000 fetched.',
+      },
+    },
+  ];
+  let poll = 0;
+  const seen = [];
+
+  const { page } = await bootAdmin({
+    jobRoute: () => {
+      const s = states[Math.min(poll++, states.length - 1)];
+      return { id: JOB, kind: 'artwork', ...s };
+    },
+  });
+  try {
+    const r = await openReview(page);
+    await toConfirm(page, r);
+    r.apply.dispatchEvent(new page.window.Event('click'));
+
+    // Real waits, not settle(): the poll is on a 250ms timer, so flushing
+    // microtasks advances nothing and would leave the loop still running when
+    // the page is torn down.
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    for (let i = 0; i < 8; i++) {
+      await wait(120);
+      if (page.byId('progress').hidden) continue;
+      const m = /(\d+)\/(\d+)/.exec(page.$('#pSteps li')?.textContent ?? '');
+      if (m) seen.push(Number(m[1]));
+    }
+
+    assert.ok(poll >= 2, `the job was polled more than once (${poll})`);
+    assert.ok(seen.some((n) => n > 0 && n < 9000),
+      `the bar showed partial progress, saw: ${seen.join(',') || 'nothing'}`);
+    assert.ok(seen.some((n) => n === 4500), 'counting the fetch, not the steps');
   } finally {
     page.restore();
   }

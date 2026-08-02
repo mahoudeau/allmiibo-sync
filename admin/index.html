@@ -143,6 +143,19 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
      only the pair tells you whether you want the change. The checkerboard is
      there because most of this art is transparent, and "did it lose its
      background?" is exactly the kind of regression a dark panel hides. */
+  /* A standing problem with this machine, not a transient message. Borrows the
+     .status box so there is one look for "something is wrong", and adds a
+     heading and a what-to-do line, because a warning nobody can act on is just
+     a warning nobody reads. */
+  .health { padding: .6rem .75rem; border: 2px solid var(--warn); color: var(--warn);
+            background: var(--panel); margin-bottom: 1rem; }
+  .health[hidden] { display: none; }
+  .health h4 { font-family: var(--pixel); font-size: .5rem; margin: 0 0 .35rem; }
+  .health p { font: 12.5px/1.7 var(--mono); margin: 0 0 .3rem; color: var(--fg); }
+  .health .fix { color: var(--muted); }
+  .health .tried { color: var(--muted); font: 11.5px/1.6 var(--mono); }
+  .warnNote { color: var(--warn); }
+
   /* What the update is doing. The bar is driven by completed REQUESTS, not by a
      timer: each step is one round trip, so a filled segment is work that has
      actually finished. A timed bar would be a guess dressed as information. */
@@ -281,6 +294,12 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
       <div class="statTile" id="tileEdited"><b id="statEdited">0</b><span class="cap">CURATED</span></div>
       <div class="statTile" id="tileState"><b id="statState">SAVED</b><span class="cap">STATUS</span></div>
     </div>
+
+    <!-- Standing problems with the machine this admin runs on, as opposed to
+         the transient #status line below. It stays until fixed, because a
+         message you can miss is no use for something that is still true
+         tomorrow. Hidden when there is nothing wrong. -->
+    <div id="health" class="health" hidden></div>
 
     <div id="status" class="status" hidden></div>
 
