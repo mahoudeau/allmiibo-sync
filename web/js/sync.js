@@ -16,41 +16,94 @@ import {
   sha256,
 } from './localfs.js';
 
+// Why a directory in this index may carry `unenumerated`, and what it means.
+//
+// A folder is recorded before its contents are read, so a folder we never
+// managed to list looks exactly like an empty one. That distinction is not
+// cosmetic: remove() is recursive (PROTOCOL.md §9.4), so a planner that reads
+// "no children" as "safe to remove" would erase a subtree nobody has seen.
+//
+// So the flag goes on when the entry is created and comes off only once the
+// listing has been consumed to the very end. Every early exit — a stop, a
+// throw from deeper down, some future `break` — therefore leaves it set by
+// construction, and the invariant holds for reasons nobody has thought of yet.
+export const UNENUMERATED = {
+  pending: 'not-listed',   // never reached; only seen if the walk exits early
+  deep: 'too-deep',        // its children cannot be addressed within 63 bytes
+  failed: 'unlistable',    // read_dir failed twice
+  stopped: 'stopped',      // the user stopped the walk
+};
+
 // Walk the device below `deviceRoot` into the planner's index shape:
 //   Map<relPath, {size, isDir}>
 // Sizes only — hashing would cost a full read per file.
 //
 // The only descent limit is the device's own: VFS_MAX_PATH_LEN caps every
 // addressable path at MAX_PATH_BYTES, so a subtree whose path cannot fit is
-// unreachable for the firmware too — it is reported via onDeep rather than
-// silently skipped. (FAT has no symlinks, so cycles cannot occur.)
-export async function walkDevice(client, deviceRoot, { onProgress = () => {}, shouldStop = () => false, onDeep = () => {} } = {}) {
+// unreachable for the firmware too. (FAT has no symlinks, so cycles cannot
+// occur.)
+export async function walkDevice(client, deviceRoot, { onProgress = () => {}, shouldStop = () => false } = {}) {
   const index = new Map();
   const encoder = new TextEncoder();
   let files = 0;
 
+  const mark = (relPath, reason, error = null) => {
+    const e = index.get(relPath);
+    if (e) index.set(relPath, { ...e, unenumerated: reason, listError: error });
+  };
+  // Absent, not false: every consumer tests truthiness, and a stray `false`
+  // in the index would be one more thing to remember to look at.
+  const clear = (relPath) => {
+    const e = index.get(relPath);
+    if (!e) return; // the root itself has no entry
+    const { unenumerated, listError, ...rest } = e;
+    index.set(relPath, rest);
+  };
+
   async function walk(relDir) {
     if (shouldStop()) return;
     const full = devicePath(deviceRoot, relDir);
-    const entries = await client.readDir(full);
+    // One retry, the same idiom hashDeviceIndex uses below: over a link slow
+    // enough to take minutes on one folder, a single late or dropped reply is
+    // not evidence that a folder is unreadable.
+    const entries = await client.readDir(full).catch(() => client.readDir(full));
+
     for (const e of entries) {
-      if (shouldStop()) return;
+      if (shouldStop()) return; // relDir stays marked
       if (e.name === '.' || e.name === '..') continue;
       const relPath = relDir ? `${relDir}/${e.name}` : e.name;
       if (e.isDir) {
-        index.set(relPath, { size: 0, isDir: true, meta: e.meta });
+        index.set(relPath, { size: 0, isDir: true, meta: e.meta, unenumerated: UNENUMERATED.pending });
         // Entering the folder means addressing children at path + "/x" at
         // minimum; if even that cannot fit, the subtree is out of reach.
-        if (encoder.encode(devicePath(deviceRoot, relPath)).length + 2 <= MAX_PATH_BYTES) await walk(relPath);
-        else onDeep(relPath);
+        if (encoder.encode(devicePath(deviceRoot, relPath)).length + 2 <= MAX_PATH_BYTES) {
+          // One unreadable folder must not cost the other eight hundred files.
+          try {
+            await walk(relPath);
+          } catch (err) {
+            mark(relPath, UNENUMERATED.failed, err.message);
+          }
+        } else {
+          mark(relPath, UNENUMERATED.deep);
+        }
       } else {
         index.set(relPath, { size: e.size, isDir: false, meta: e.meta });
         onProgress(++files, relPath);
       }
     }
+    clear(relDir);
   }
 
+  // No try/catch at the root. A device we could not list at all is not a
+  // partial truth, it is no truth: an empty index would read as "the device is
+  // empty", turning a failed scan into a silent empty backup or a full
+  // re-upload of a library that is already there.
   await walk('');
+  if (shouldStop()) {
+    for (const [p, e] of index) {
+      if (e.unenumerated === UNENUMERATED.pending) mark(p, UNENUMERATED.stopped);
+    }
+  }
   return index;
 }
 

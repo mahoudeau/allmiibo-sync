@@ -54,19 +54,25 @@ and 2.16.0 (January 2026) added on-device emulation for v3 amiibo.
 - **Interface**: an 8-bit skin with three themes, an original pirate mascot
   in twelve colourways, and an Advanced toggle that keeps the expert layer out
   of the way until asked for. ✅
-- **Tests**: 664 across twenty-eight files; the protocol suite runs against a
+- **Tests**: 715 across twenty-nine files; the protocol suite runs against a
   simulated device, the admin suite against a real HTTP server on an ephemeral
   port, the UI suites against a real DOM, the rest are pure. Nothing reaches the
   network. ✅
 
-Three hardware findings shape the sync design:
+Four hardware findings shape the sync design:
 
 - **~2 KB/s, and slower as the drive fills**: 1.0 s per dump onto an empty
   drive, 2.5 s onto a full one. Transfer the minimum; long runs are resumable
   and every operation is logged.
 - **`remove` deletes folders recursively**, with no "not empty" guard. Files
-  are deleted individually.
+  are deleted individually, and a folder the walk could not list is never a
+  deletion candidate — a childless folder in a device listing means "never
+  looked", not "empty".
 - **`rename` moves between folders**, so a relocated file need not be re-uploaded.
+- **Devices vary by ~4× on identical operations.** The same 160-byte read took
+  176 ms on one unit and 649 ms on an older one, so response deadlines measure
+  silence rather than elapsed time: a big folder listing legitimately streams
+  for a minute before it finishes.
 
 ## Quick start
 

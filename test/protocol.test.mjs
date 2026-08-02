@@ -13,6 +13,7 @@ import {
   HEADER_LEN,
   OPEN_MODE,
   driveRoot,
+  parsePartialDir,
 } from '../web/js/protocol.js';
 import { ByteWriter } from '../web/js/bytes.js';
 
@@ -59,11 +60,46 @@ class FakeTransport extends EventTarget {
   respond(cmd, status, payload = new Uint8Array(0)) {
     this.respondChunked(cmd, status, payload, Math.max(payload.length, 1));
   }
+
+  frameFor(cmd, status, part, last) {
+    return new ByteWriter(HEADER_LEN + part.length)
+      .u8(cmd)
+      .u8(status)
+      .u16(last ? 0 : MORE)
+      .bytes(part)
+      .toUint8Array();
+  }
+
+  // Like respondChunked, but with a real gap between notifications — what a
+  // slow device streaming a large listing actually looks like. `stopAfter`
+  // simulates the device falling silent mid-response: the last frame sent
+  // still carries the continuation flag.
+  async dribble(cmd, status, payload, { size = 20, gapMs = 20, stopAfter = Infinity } = {}) {
+    const parts = [];
+    for (let off = 0; off < payload.length; off += size) {
+      parts.push(payload.subarray(off, Math.min(off + size, payload.length)));
+    }
+    for (let i = 0; i < parts.length && i < stopAfter; i++) {
+      this.emitFrame(this.frameFor(cmd, status, parts[i], i === parts.length - 1));
+      await sleep(gapMs);
+    }
+  }
 }
 
-function client(transport) {
-  return new AllmiiboClient(transport, { timeoutMs: 1000 });
+function client(transport, opts = {}) {
+  return new AllmiiboClient(transport, { timeoutMs: 1000, ...opts });
 }
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// One read_dir entry: name, size, type, then a minimal meta TLV (flags only).
+function dirPayload(names) {
+  const w = new ByteWriter(2048);
+  for (const n of names) w.string(n).u32(540).u8(0).u8(2).u8(2).u8(0);
+  return w.toUint8Array();
+}
+
+const names = (n) => Array.from({ length: n }, (_, i) => `${String(i + 1).padStart(4, '0')}.bin`);
 
 test('request framing: cmd byte, zeroed status and chunk, then payload', async () => {
   const t = new FakeTransport();
@@ -397,4 +433,186 @@ test('after real silence the client pings get_version, but never while busy', as
   } finally {
     t.dispatchEvent(new CustomEvent('disconnected')); // always clear the interval
   }
+});
+
+// ---- response deadlines -----------------------------------------------------
+//
+// The deadline measures silence, not the length of a response. A read_dir on a
+// large folder legitimately streams for a long time on a slow link; killing it
+// part-way is what made a healthy device unusable. See PROTOCOL.md §3.4.
+
+test('a response that keeps arriving is never a timeout, however long it takes', async () => {
+  const t = new FakeTransport();
+  const c = client(t, { timeoutMs: 100 });
+
+  // Eight frames at 60 ms is ~480 ms of streaming against a 100 ms deadline.
+  const payload = dirPayload(names(8));
+  t.onWrite = () => t.dribble(CMD.READ_DIR, 0, payload, { size: 18, gapMs: 60 });
+
+  const entries = await c.readDir('E:/amiibo');
+  assert.equal(entries.length, 8);
+  assert.equal(entries[0].name, '0001.bin');
+  assert.equal(entries[7].name, '0008.bin');
+});
+
+test('silence mid-response times out on the idle interval, not the ceiling', async () => {
+  const t = new FakeTransport();
+  const c = client(t, { timeoutMs: 100, maxResponseMs: 5000 });
+
+  t.onWrite = () => t.dribble(CMD.READ_DIR, 0, dirPayload(names(8)), {
+    size: 18, gapMs: 10, stopAfter: 2,
+  });
+
+  const t0 = Date.now();
+  await assert.rejects(() => c.readDir('E:/amiibo'), (err) => {
+    assert.equal(err.timeout, 'idle');
+    assert.equal(err.cmd, CMD.READ_DIR);
+    assert.match(err.message, /for 100ms/);
+    return true;
+  });
+  assert.ok(Date.now() - t0 < 1000, 'waited for the ceiling instead of the idle deadline');
+});
+
+test('a trickle that never ends is cut off by the absolute ceiling', async () => {
+  const t = new FakeTransport();
+  const c = client(t, { timeoutMs: 200, maxResponseMs: 300 });
+
+  // Frames faster than the idle deadline, forever: only the ceiling can stop it.
+  let timer = null;
+  t.onWrite = () => {
+    const part = dirPayload(['x.bin']);
+    timer = setInterval(() => t.emitFrame(t.frameFor(CMD.READ_DIR, 0, part, false)), 40);
+  };
+
+  try {
+    await assert.rejects(() => c.readDir('E:/amiibo'), (err) => {
+      assert.equal(err.timeout, 'ceiling');
+      assert.ok(err.frames > 1, 'ceiling fired without counting the frames it saw');
+      return true;
+    });
+  } finally {
+    clearInterval(timer);
+  }
+});
+
+test('after a timeout the next command waits for the link to fall quiet', async () => {
+  const t = new FakeTransport();
+  // The ceiling is what gives up here: a device streaming steadily keeps
+  // re-arming the idle deadline, so only the absolute cap can abandon a
+  // response while frames are still arriving — which is the state the settle
+  // gate exists for.
+  const c = client(t, { timeoutMs: 200, maxResponseMs: 150 });
+
+  let timer = null;
+  t.onWrite = (frame) => {
+    if (frame[0] !== CMD.READ_DIR) {
+      t.respond(CMD.GET_VERSION, 0, new ByteWriter(32).string('after').toUint8Array());
+      return;
+    }
+    const part = dirPayload(['x.bin']);
+    timer = setInterval(() => t.emitFrame(t.frameFor(CMD.READ_DIR, 0, part, false)), 30);
+    setTimeout(() => clearInterval(timer), 400);
+  };
+
+  try {
+    await assert.rejects(() => c.readDir('E:/amiibo'), (err) => {
+      assert.equal(err.timeout, 'ceiling');
+      return true;
+    });
+    const afterTimeout = t.writes.length;
+
+    // The device is still streaming. Writing now would splice its late frames
+    // into the next reply, and there are no request IDs to tell them apart.
+    const pending = c.getVersion();
+    await sleep(100);
+    assert.equal(t.writes.length, afterTimeout, 'wrote while the link was still busy');
+
+    assert.equal((await pending).version, 'after');
+    assert.ok(t.writes.length > afterTimeout, 'never wrote after the link went quiet');
+  } finally {
+    clearInterval(timer);
+  }
+});
+
+test('a timeout does not splice late frames into the next response', async () => {
+  const t = new FakeTransport();
+  const c = client(t, { timeoutMs: 100 });
+
+  const payload = dirPayload(names(6));
+  t.onWrite = async (frame) => {
+    if (frame[0] === CMD.GET_VERSION) {
+      t.respond(CMD.GET_VERSION, 0, new ByteWriter(32).string('after').toUint8Array());
+      return;
+    }
+    // Stall long enough to be abandoned, then finish the whole response —
+    // including its terminal frame — into a client that is no longer listening.
+    await t.dribble(CMD.READ_DIR, 0, payload, { size: 18, gapMs: 10, stopAfter: 2 });
+    await sleep(150);
+    await t.dribble(CMD.READ_DIR, 0, payload.subarray(36), { size: 18, gapMs: 5 });
+  };
+
+  await assert.rejects(() => c.readDir('E:/amiibo'));
+  assert.equal((await c.getVersion()).version, 'after', 'late frames leaked into the next reply');
+});
+
+// ---- recovering a listing the device never finished -------------------------
+
+test('a stalled listing yields the entries that did arrive', async () => {
+  const t = new FakeTransport();
+  const c = client(t, { timeoutMs: 100 });
+
+  // 18 bytes per entry, 36 bytes per frame: two whole entries each.
+  t.onWrite = () => t.dribble(CMD.READ_DIR, 0, dirPayload(names(8)), {
+    size: 36, gapMs: 10, stopAfter: 3,
+  });
+
+  const { entries, complete } = await c.readDirPartial('E:/amiibo');
+  assert.equal(complete, false);
+  // Six arrived; the last is dropped as untrustworthy.
+  assert.equal(entries.length, 5);
+  assert.deepEqual(entries.map((e) => e.name), ['0001.bin', '0002.bin', '0003.bin', '0004.bin', '0005.bin']);
+  assert.equal(entries[0].size, 540);
+  assert.equal(entries[0].isDir, false);
+});
+
+test('readDirPartial reports a listing that completed normally', async () => {
+  const t = new FakeTransport();
+  const c = client(t);
+  t.onWrite = () => t.respond(CMD.READ_DIR, 0, dirPayload(names(3)));
+
+  const { entries, complete } = await c.readDirPartial('E:/amiibo');
+  assert.equal(complete, true);
+  assert.equal(entries.length, 3);
+});
+
+test('readDirPartial still rejects a real failure rather than reporting it empty', async () => {
+  const t = new FakeTransport();
+  const c = client(t);
+  t.onWrite = () => t.respond(CMD.READ_DIR, 1);
+
+  await assert.rejects(() => c.readDirPartial('E:/missing'), (err) => {
+    assert.equal(err.status, 1);
+    return true;
+  });
+});
+
+test('parsePartialDir discards a tail cut anywhere in an entry', () => {
+  const full = dirPayload(names(6));
+  const framed = new ByteWriter(HEADER_LEN + full.length)
+    .u8(CMD.READ_DIR).u8(0).u16(MORE).bytes(full)
+    .toUint8Array();
+
+  // 18 bytes per entry after the 4-byte header. Cut mid-name, mid-u32,
+  // mid-meta and mid-length-prefix; every survivor must be well formed.
+  for (const cut of [4 + 18 * 3 + 5, 4 + 18 * 3 + 12, 4 + 18 * 3 + 17, 4 + 18 * 3 + 1]) {
+    const entries = parsePartialDir(framed.subarray(0, cut));
+    assert.ok(entries.length <= 3, `cut at ${cut} kept a severed entry`);
+    for (const e of entries) {
+      assert.match(e.name, /^\d{4}\.bin$/, `cut at ${cut} produced a bogus name`);
+      assert.equal(e.size, 540);
+    }
+  }
+
+  // A clean cut on an entry boundary keeps all but the last complete entry.
+  assert.equal(parsePartialDir(framed.subarray(0, 4 + 18 * 4)).length, 3);
 });

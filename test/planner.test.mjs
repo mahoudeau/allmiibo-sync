@@ -1258,3 +1258,132 @@ test('the time estimate matches what the hardware actually did', () => {
   const minutes = p.stats.estimatedSeconds / 60;
   assert.ok(minutes > 35 && minutes < 60, `estimated ${minutes.toFixed(0)} min, expected about 48`);
 });
+
+// ---- folders that were never listed --------------------------------------
+//
+// walkDevice records a directory before reading it, so one it could not list
+// sits in the index with no children — shaped exactly like an empty folder.
+// remove() is recursive on the firmware (PROTOCOL.md §9.4), so treating the
+// two alike erases a subtree nobody has seen. This already applied to
+// path-too-long folders before any of the timeout work.
+
+const unlisted = (reason = 'unlistable') => ({ size: 0, isDir: true, unenumerated: reason });
+
+for (const reason of ['unlistable', 'too-deep', 'stopped', 'not-listed']) {
+  test(`a folder flagged ${reason} is never removed`, () => {
+    const p = plan({}, { Zelda: unlisted(reason) }, {}, { mode: 'push', delete: true });
+
+    assert.deepEqual(p.rmdirDevice, []);
+    assert.equal(p.stats.unenumerated, 1);
+    assert.deepEqual(p.unenumerated.map((u) => u.relPath), ['Zelda']);
+    assert.ok(
+      p.warnings.some((w) => w.includes('could not be listed') && w.includes('Zelda')),
+      'the plan removed nothing but never said why'
+    );
+  });
+}
+
+test('nor is the parent of a folder that was never listed', () => {
+  const p = plan({}, { a: dir(), 'a/b': unlisted() }, {}, { mode: 'push', delete: true });
+  assert.deepEqual(p.rmdirDevice, []);
+});
+
+test('a listed sibling is still removed — the guard is surgical, not blanket', () => {
+  const p = plan({}, { a: dir(), b: unlisted() }, {}, { mode: 'push', delete: true });
+
+  // Without this the guard could quietly degrade into "never rmdir anything".
+  assert.deepEqual(p.rmdirDevice.map((r) => r.relPath), ['a']);
+});
+
+test('an unlisted folder does not stop uploads', () => {
+  const p = plan(
+    { 'a/x.bin': file(540, 'h1'), a: dir() },
+    { a: unlisted() },
+    {},
+    { mode: 'push', delete: true }
+  );
+
+  // Blocking deletions must not turn into blocking the transfer the user asked
+  // for; a push into an unreadable folder is still the user's explicit call.
+  assert.deepEqual(p.upload.map((u) => u.relPath), ['a/x.bin']);
+});
+
+test('a local file under an unlisted folder is not deleted locally on pull', () => {
+  const p = plan(
+    { 'a/x.bin': file(540, 'h1'), a: dir() },
+    { a: unlisted() },
+    {},
+    { mode: 'pull', delete: true }
+  );
+
+  assert.deepEqual(p.deleteLocal, []);
+  assert.deepEqual(p.ambiguous.map((a) => a.relPath), ['a/x.bin']);
+  assert.match(p.ambiguous[0].reason, /could not be listed/);
+});
+
+test('two-way does not delete a local file whose device folder went unlisted', () => {
+  const p = plan(
+    { 'a/x.bin': file(540, 'h1'), a: dir() },
+    { a: unlisted() },
+    { 'a/x.bin': { size: 540, hash: 'h1' } }, // synced before, so it looks removed
+    { mode: 'two-way', delete: true }
+  );
+
+  assert.deepEqual(p.deleteLocal, []);
+  assert.deepEqual(p.ambiguous.map((a) => a.relPath), ['a/x.bin']);
+});
+
+test('the no-shared-paths warning is suppressed when a folder could not be listed', () => {
+  const p = plan(
+    { 'a/x.bin': file(540, 'h1') },
+    { b: unlisted(), 'c/y.bin': file(540, 'h2') },
+    {}
+  );
+
+  // The unlisted folder is the real diagnosis; blaming the device root would
+  // send the user off re-pointing a setting that was never wrong.
+  assert.ok(!p.warnings.some((w) => w.includes('No path is shared')));
+});
+
+test('replace leaves an unlisted folder standing and says so', () => {
+  const p = planReplace({
+    local: index({ 'x.bin': file(540, 'h1') }),
+    device: index({ Broken: unlisted(), keep: dir() }),
+    deviceRoot: ROOT,
+  });
+
+  assert.deepEqual(p.rmdirDevice.map((r) => r.relPath), ['keep']);
+  assert.ok(p.warnings.some((w) => w.includes('not a complete replacement')));
+});
+
+test('replace stops assuming an empty drive when a folder could not be listed', () => {
+  const drive = { totalSize: 1_920_401, freeSize: 1_000_000 };
+  const clean = planReplace({
+    local: index({ 'x.bin': file(540, 'h1') }),
+    device: index({ keep: dir() }),
+    deviceRoot: ROOT,
+    options: { drive },
+  });
+  const stuck = planReplace({
+    local: index({ 'x.bin': file(540, 'h1') }),
+    device: index({ Broken: unlisted() }),
+    deviceRoot: ROOT,
+    options: { drive },
+  });
+
+  assert.equal(clean.capacity.usableBytes, drive.totalSize);
+  // 840 KB that stays put is 840 KB the uploads cannot have.
+  assert.ok(stuck.capacity.usableBytes < drive.totalSize,
+    'planned against room the unlisted folder is still occupying');
+  assert.equal(stuck.capacity.usableBytes, drive.freeSize);
+});
+
+test('a backup warns that a subtree was not copied', () => {
+  const p = planDump({
+    device: index({ 'x.bin': file(540, 'h1'), Broken: unlisted() }),
+    deviceRoot: ROOT,
+  });
+
+  assert.equal(p.stats.unenumerated, 1);
+  assert.ok(p.warnings.some((w) => w.includes('Nothing inside them was backed up')));
+});

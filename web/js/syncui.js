@@ -315,6 +315,7 @@ const SECTIONS = [
   { key: 'blocked', label: 'BLOCKED — WON\u2019T FIT', ico: 'cancel', tone: 'err', fmt: (b) => [b.relPath, ''] },
   { key: 'ambiguous', label: 'SKIPPED — UNVERIFIED', ico: 'eyeOff', tone: 'warn', fmt: (a) => [a.relPath, ''] },
   { key: 'renamedLocally', label: 'RENAMED FOR YOUR DISK', ico: 'move', fmt: (r) => [`${r.from} → ${r.to}`, ''] },
+  { key: 'unenumerated', label: 'DEVICE FOLDERS NOT LISTED', ico: 'eyeOff', tone: 'warn', fmt: (u) => [u.relPath, u.reason] },
 ];
 
 // What an all-in-one file in the folder contributed. Written to read as a
@@ -401,6 +402,7 @@ function renderReview(p, op) {
     p.conflicts.length ? { ico: 'warning', n: p.conflicts.length, cap: 'CONFLICTS', cls: 'warn' } : null,
     p.blocked.length ? { ico: 'cancel', n: p.blocked.length, cap: 'BLOCKED', cls: 'err' } : null,
     p.ambiguous.length ? { ico: 'eyeOff', n: p.ambiguous.length, cap: 'UNVERIFIED', cls: 'warn' } : null,
+    s.unenumerated ? { ico: 'eyeOff', n: s.unenumerated, cap: 'NOT LISTED', cls: 'warn' } : null,
     { ico: 'clock', n: fmtDuration(s.estimatedSeconds), cap: 'ESTIMATED', cls: 'muted' },
     s.unchanged ? { ico: 'checkDouble', n: s.unchanged, cap: 'UNCHANGED', cls: 'muted' } : null,
   ].filter(Boolean);

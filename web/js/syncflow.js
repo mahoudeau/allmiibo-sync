@@ -227,6 +227,7 @@ export async function scanAndPlan({
       conflicts: plan.conflicts,
       ambiguous: plan.ambiguous,
       renamedLocally: plan.renamedLocally ?? [],
+      unenumerated: plan.unenumerated ?? [],
     },
     bundles: bundle.report.bundles,
     apply: null,

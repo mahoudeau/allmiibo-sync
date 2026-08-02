@@ -208,6 +208,54 @@ function depth(relPath) {
   return relPath.split('/').length;
 }
 
+// Folders whose listing was never completed, plus every ancestor of one.
+//
+// walkDevice records a directory before reading it, so one it could not list
+// is in the index with no children — indistinguishable from an empty folder by
+// shape alone. remove() is recursive on the firmware (PROTOCOL.md §9.4), so
+// removing any of these would erase a subtree nobody has ever seen. A childless
+// directory here means "never looked", not "empty".
+export function unenumeratedDirs(device) {
+  const out = new Set();
+  for (const [relPath, e] of device) {
+    if (!e.isDir || !e.unenumerated) continue;
+    out.add(relPath);
+    for (const parent of parentDirs(relPath)) out.add(parent);
+  }
+  return out;
+}
+
+// True for a path living inside a folder we could not list: the device may or
+// may not still hold it, and the index cannot say which.
+function shadowedBy(protectedDirs) {
+  if (protectedDirs.size === 0) return () => false;
+  return (relPath) => {
+    for (const dir of protectedDirs) if (relPath.startsWith(`${dir}/`)) return true;
+    return false;
+  };
+}
+
+// The folders actually flagged, for the UI and the saved run log. Ancestors
+// are an implementation detail of the guard and are deliberately not here.
+export function unenumeratedList(device) {
+  return [...device]
+    .filter(([, e]) => e.isDir && e.unenumerated)
+    .map(([relPath, e]) => ({ relPath, reason: e.unenumerated, error: e.listError ?? null }))
+    .sort((a, b) => a.relPath.localeCompare(b.relPath));
+}
+
+// The named folders only — ancestors would just be noise in a warning.
+function unenumeratedWarning(device, extra = '') {
+  const dirs = [...device].filter(([, e]) => e.isDir && e.unenumerated).map(([p]) => p).sort();
+  if (dirs.length === 0) return null;
+  const shown = dirs.slice(0, 3).join(', ') + (dirs.length > 3 ? `, +${dirs.length - 3} more` : '');
+  return `${dirs.length} device folder${dirs.length === 1 ? '' : 's'} could not be listed, so this ` +
+    `plan is incomplete: ${shown}. Nothing inside them was counted, and nothing inside them will be ` +
+    `removed — removing a folder on the device deletes everything under it, and no one has seen ` +
+    `what is in there.${extra} Scan again to retry those folders — a slow Bluetooth link is the ` +
+    `usual cause.`;
+}
+
 /**
  * @param {object} input
  * @param {Map<string, {size:number, hash?:string, isDir:boolean}>} input.local
@@ -222,6 +270,8 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
   const allowDelete = !!options.delete;
   const excludes = options.excludes || DEFAULT_EXCLUDES;
   const prev = state.entries || {};
+  const protectedDirs = unenumeratedDirs(device);
+  const shadowed = shadowedBy(protectedDirs);
 
   const plan = {
     mode,
@@ -370,6 +420,18 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
         continue;
       }
 
+      // A file under a folder we could not list only *looks* device-only. The
+      // device may well still hold it, so mirroring the device onto your disk
+      // here would delete a local copy on the strength of a listing that never
+      // happened. Uploads are untouched: this blocks deletions, not transfers.
+      if (shadowed(relPath) && (mode === 'pull' || (mode === 'two-way' && deletedOnDevice))) {
+        plan.ambiguous.push({
+          relPath,
+          reason: 'its folder on the device could not be listed, so we cannot tell whether the device still has it',
+        });
+        continue;
+      }
+
       // pull mirrors in the other direction: the device is master.
       if (mode === 'pull') {
         if (allowDelete) plan.deleteLocal.push({ relPath, size: l.size });
@@ -473,6 +535,11 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
     const candidates = new Set();
     for (const dir of deviceDirs) {
       if (localDirs.has(dir) || isExcluded(dir, excludes)) continue;
+      // A folder we never listed is not empty, it is unread — and remove() is
+      // recursive. The surviving-subfolder rule below would also spare it once
+      // a flagged child is out of `candidates`, but that only holds while the
+      // child is present in deviceDirs; this does not depend on it.
+      if (protectedDirs.has(dir)) continue;
       // In two-way a folder we have never seen is not ours to remove; push is
       // an explicit mirror, so it removes surplus folders either way.
       if (mode === 'two-way' && !prev[dir] && !hasStateUnder(prev, dir)) continue;
@@ -511,8 +578,14 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
     );
   }
 
+  const unlisted = unenumeratedWarning(device, ' Files still transfer normally.');
+  if (unlisted) plan.warnings.push(unlisted);
+
   const overlap = [...localFiles.keys()].filter((p) => deviceFiles.has(p)).length;
-  if (localFiles.size > 0 && deviceFiles.size > 0 && overlap === 0) {
+  // With a folder unlisted the two sides genuinely cannot overlap much, and
+  // the warning above is the right diagnosis. Blaming the device root would
+  // send the user off re-pointing a setting that was never wrong.
+  if (localFiles.size > 0 && deviceFiles.size > 0 && overlap === 0 && protectedDirs.size === 0) {
     plan.warnings.push(
       `No path is shared between the ${localFiles.size} local and ${deviceFiles.size} device files. ` +
         `Check that the device folder matches your local folder's contents — if your local folder ` +
@@ -580,8 +653,10 @@ export function planSync({ local, device, state = { entries: {} }, deviceRoot, o
     }
   }
 
+  plan.unenumerated = unenumeratedList(device);
   plan.stats = {
     overlap,
+    unenumerated: plan.unenumerated.length,
     upload: plan.upload.length,
     download: plan.download.length,
     moveDevice: plan.moveDevice.length,
@@ -928,8 +1003,18 @@ export function planIdentitySync({ local, device, deviceRoot, options = {} }) {
     );
   }
 
+  // No deletions to guard here, but an amiibo sitting in a folder we could not
+  // list reads as absent — so this can re-upload a copy the device already has.
+  const unlisted = unenumeratedWarning(
+    device,
+    ' An amiibo inside one reads as missing, so it may be sent again.'
+  );
+  if (unlisted) plan.warnings.push(unlisted);
+
+  plan.unenumerated = unenumeratedList(device);
   plan.stats = {
     onBothSides,
+    unenumerated: plan.unenumerated.length,
     upload: plan.upload.length,
     download: plan.download.length,
     moveDevice: 0,
@@ -1051,7 +1136,14 @@ export function planDump({ device, local = new Map(), state = { entries: {} }, d
     );
   }
 
+  // A backup that silently omits a subtree is the worst outcome here: nothing
+  // is destroyed, but the user believes they have a copy they do not have.
+  const unlisted = unenumeratedWarning(device, ' Nothing inside them was backed up.');
+  if (unlisted) plan.warnings.push(unlisted);
+
+  plan.unenumerated = unenumeratedList(device);
   plan.stats = {
+    unenumerated: plan.unenumerated.length,
     upload: 0,
     download: plan.download.length,
     moveDevice: 0,
@@ -1109,12 +1201,19 @@ export function planReplace({ local, device, deviceRoot, options = {} }) {
     deleteFirst: true, // a replacement always clears before it writes
   };
 
-  // Everything on the device goes, except what the device owns.
+  // Everything on the device goes, except what the device owns — and except
+  // what we could not see. A replacement may wipe what it showed the user; a
+  // folder that never listed was never shown, and remove() would take its
+  // unread contents with it.
+  const protectedDirs = unenumeratedDirs(device);
   const deviceDirs = [];
   for (const [relPath, e] of device) {
     if (isExcluded(relPath, excludes)) continue;
-    if (e.isDir) deviceDirs.push(relPath);
-    else plan.deleteDevice.push({ relPath, size: e.size });
+    if (e.isDir) {
+      if (!protectedDirs.has(relPath)) deviceDirs.push(relPath);
+    } else {
+      plan.deleteDevice.push({ relPath, size: e.size });
+    }
   }
   deviceDirs.sort((a, b) => depth(b) - depth(a) || b.localeCompare(a));
   for (const relPath of deviceDirs) plan.rmdirDevice.push({ relPath });
@@ -1135,24 +1234,32 @@ export function planReplace({ local, device, deviceRoot, options = {} }) {
   const uploadBytes = plan.upload.reduce((n, u) => n + storedSize(u.size), 0);
   const drive = options.drive ?? null;
   if (drive && Number.isFinite(drive.totalSize)) {
-    // The device is empty by the time the uploads run, so the whole drive is
-    // what has to hold them.
+    const freeingBytes = plan.deleteDevice.reduce((n, d) => n + storedSize(d.size ?? 0), 0);
+    // Normally the device is empty by the time the uploads run, so the whole
+    // drive is what has to hold them. Not so when a folder could not be
+    // listed: its contents stay put, and planning against the full drive would
+    // promise room that is still occupied — the run would then die hundreds of
+    // uploads in, on a device it had already cleared.
+    const cleared = protectedDirs.size === 0;
+    const usableBytes = cleared ? drive.totalSize : driveFreeBytes(drive) + freeingBytes;
     plan.capacity = {
       totalSize: drive.totalSize,
       usedSize: drive.totalSize - driveFreeBytes(drive),
       freeNow: driveFreeBytes(drive),
       uploadBytes,
-      freeingBytes: plan.deleteDevice.reduce((n, d) => n + storedSize(d.size ?? 0), 0),
+      freeingBytes,
       // Nothing is overwritten in place: the root is emptied first.
       replacingBytes: 0,
-      freeAfterDeletes: drive.totalSize,
-      usableBytes: drive.totalSize,
-      fits: uploadBytes <= drive.totalSize,
+      freeAfterDeletes: cleared ? drive.totalSize : driveFreeBytes(drive) + freeingBytes,
+      usableBytes,
+      fits: uploadBytes <= usableBytes,
     };
     if (!plan.capacity.fits) {
       plan.warnings.push(
         `Will not fit: the uploads need about ${uploadBytes} bytes once filesystem overhead is ` +
-          `counted, and the drive holds ${drive.totalSize}. Sync a smaller folder.`
+          `counted, and ${cleared ? `the drive holds ${drive.totalSize}` :
+            `only ${usableBytes} can be freed — folders that could not be listed stay as they are`}. ` +
+          `Sync a smaller folder.`
       );
     }
   }
@@ -1163,7 +1270,15 @@ export function planReplace({ local, device, deviceRoot, options = {} }) {
       `Use Smart sync instead to transfer only what differs.`
   );
 
+  const unlisted = unenumeratedWarning(
+    device,
+    ' So this is not a complete replacement: those folders and everything under them are left exactly as they are.'
+  );
+  if (unlisted) plan.warnings.push(unlisted);
+
+  plan.unenumerated = unenumeratedList(device);
   plan.stats = {
+    unenumerated: plan.unenumerated.length,
     upload: plan.upload.length,
     download: 0,
     moveDevice: 0,

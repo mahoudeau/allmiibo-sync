@@ -50,11 +50,15 @@ export function driveRoot(drive) {
 }
 
 export class ProtocolError extends Error {
-  constructor(message, { cmd, status } = {}) {
+  // `timeout` is 'idle' (the device went quiet) or 'ceiling' (it kept talking
+  // past maxResponseMs). The two mean different things to a caller deciding
+  // whether to retry, and to anyone reading a probe report afterwards.
+  constructor(message, { cmd, status, timeout } = {}) {
     super(message);
     this.name = 'ProtocolError';
     this.cmd = cmd;
     this.status = status;
+    this.timeout = timeout;
   }
 }
 
@@ -73,15 +77,29 @@ export function assertPath(path) {
 export class AllmiiboClient {
   // transport: a BleTransport (or anything emitting 'frame' with Uint8Array
   // payloads and exposing async write()).
-  constructor(transport, { timeoutMs = 15000, log = () => {}, keepAliveMs = 10000 } = {}) {
+  //
+  // timeoutMs is an *idle* deadline, re-armed on every notification, not a
+  // budget for the whole response. A read_dir on a large folder legitimately
+  // streams for a minute on a slow link — 760 entries is ~29 KB at 243 bytes
+  // per frame — and killing it part-way made a healthy device unusable. What
+  // matters is whether the device has gone quiet. maxResponseMs is the
+  // separate backstop for a device that trickles forever. See PROTOCOL.md §3.4.
+  constructor(transport, {
+    timeoutMs = 15000,
+    maxResponseMs = 120000,
+    log = () => {},
+    keepAliveMs = 10000,
+  } = {}) {
     this.transport = transport;
     this.timeoutMs = timeoutMs;
+    this.maxResponseMs = maxResponseMs;
     this.log = log;
 
     this._queue = [];
     this._inFlight = null;
     this._acc = null; // reassembly buffer for multi-frame responses
     this._accActive = false;
+    this._settling = false; // a timeout left the device possibly still talking
     this.lastActivityAt = Date.now();
 
     transport.addEventListener('frame', (e) => this._onFrame(e.detail));
@@ -117,18 +135,68 @@ export class AllmiiboClient {
     });
   }
 
+  // Re-armed on every frame, so the deadline measures silence rather than the
+  // length of the response.
+  _arm(job) {
+    clearTimeout(job.timer);
+    job.timer = setTimeout(() => {
+      this._timedOut(new ProtocolError(
+        `no response to cmd ${job.cmd} for ${this.timeoutMs}ms` +
+          (job.frames ? ` (${job.frames} frames received, then silence)` : ''),
+        { cmd: job.cmd, timeout: 'idle' }
+      ));
+    }, this.timeoutMs);
+  }
+
+  _clearTimers(job) {
+    clearTimeout(job.timer);
+    clearTimeout(job.ceiling);
+  }
+
+  // A timeout abandons a response the device may still be sending. There are
+  // no request IDs (§3.4), so its late frames are indistinguishable from the
+  // next reply — _pump waits for the link to fall quiet before writing again.
+  _timedOut(err) {
+    const job = this._inFlight;
+    // Whatever did arrive is real directory data. The rescue tool drains a
+    // folder that will not list by working from exactly these bytes, so they
+    // are handed to the caller rather than dropped with the buffer.
+    if (this._acc) err.partial = concat(this._acc);
+    err.frames = job?.frames ?? 0;
+    this._settling = true;
+    this._fail(err);
+  }
+
   _pump() {
     if (this._inFlight || this._queue.length === 0) return;
+
+    if (this._settling) {
+      const settleMs = Math.min(2000, this.timeoutMs);
+      const quiet = Date.now() - this.lastActivityAt;
+      if (quiet < settleMs) {
+        setTimeout(() => this._pump(), settleMs - quiet);
+        return;
+      }
+      this._settling = false;
+    }
 
     const job = this._queue.shift();
     this._inFlight = job;
     this._acc = null;
     this._accActive = false;
+    job.frames = 0;
     this.lastActivityAt = Date.now();
 
-    job.timer = setTimeout(() => {
-      this._fail(new ProtocolError(`timeout waiting for response to cmd ${job.cmd}`, { cmd: job.cmd }));
-    }, this.timeoutMs);
+    this._arm(job);
+    if (Number.isFinite(this.maxResponseMs) && this.maxResponseMs > 0) {
+      job.ceiling = setTimeout(() => {
+        this._timedOut(new ProtocolError(
+          `cmd ${job.cmd} was still arriving after ${this.maxResponseMs}ms ` +
+            `(${job.frames} frames); giving up`,
+          { cmd: job.cmd, timeout: 'ceiling' }
+        ));
+      }, this.maxResponseMs);
+    }
 
     const frame = new ByteWriter(HEADER_LEN + job.payload.length)
       .u8(job.cmd)
@@ -143,7 +211,7 @@ export class AllmiiboClient {
   _fail(err) {
     const job = this._inFlight;
     if (!job) return;
-    clearTimeout(job.timer);
+    this._clearTimers(job);
     this._inFlight = null;
     this._acc = null;
     this._accActive = false;
@@ -159,8 +227,11 @@ export class AllmiiboClient {
     this._queue = [];
     this._acc = null;
     this._accActive = false;
+    // A dropped link is not a device that may still be talking; nothing can
+    // arrive to be spliced into the next command.
+    this._settling = false;
     for (const job of pending) {
-      clearTimeout(job.timer);
+      this._clearTimers(job);
       job.reject(new ProtocolError('device disconnected'));
     }
   }
@@ -170,6 +241,17 @@ export class AllmiiboClient {
   // payload only.
   _onFrame(bytes) {
     if (bytes.length < HEADER_LEN) return;
+
+    // Every frame counts as activity, including continuation frames — that is
+    // what turns timeoutMs into an idle deadline rather than a cap on how long
+    // a large response may take. It also gives _pump's settle gate a real
+    // "last thing seen on the link" to wait on.
+    this.lastActivityAt = Date.now();
+    if (this._inFlight) {
+      this._inFlight.frames++;
+      this._arm(this._inFlight);
+    }
+
     const chunk = bytes[2] | (bytes[3] << 8);
     const more = (chunk & MORE_CHUNKS) !== 0;
 
@@ -202,7 +284,7 @@ export class AllmiiboClient {
       this.log('warn', 'unsolicited frame dropped', frame);
       return;
     }
-    clearTimeout(job.timer);
+    this._clearTimers(job);
     this._inFlight = null;
     this.lastActivityAt = Date.now();
 
@@ -268,17 +350,25 @@ export class AllmiiboClient {
     const payload = new ByteWriter(64).string(path).toUint8Array();
     const { data } = await this._send(CMD.READ_DIR, payload, (r) => {
       const entries = [];
-      while (r.remaining > 0) {
-        entries.push({
-          name: r.string(),
-          size: r.u32(),
-          type: r.u8(), // 0 = regular file, non-zero = directory
-          meta: readMeta(r),
-        });
-      }
+      while (r.remaining > 0) entries.push(readDirEntry(r));
       return entries;
     });
     return data.map((e) => ({ ...e, isDir: e.type !== 0 }));
+  }
+
+  // Like readDir, but a listing that stalls part-way yields what did arrive
+  // instead of throwing. `complete` is false when the device went quiet
+  // mid-response — the caller then knows the folder holds more than this.
+  //
+  // Only a timeout is soft. A non-zero status, a disconnect or a malformed
+  // frame still rejects: those say the request failed, not that it was cut off.
+  async readDirPartial(path) {
+    try {
+      return { entries: await this.readDir(path), complete: true };
+    } catch (err) {
+      if (!err.partial) throw err;
+      return { entries: parsePartialDir(err.partial), complete: false, error: err };
+    }
   }
 
   async openFile(path, mode) {
@@ -362,6 +452,46 @@ export class AllmiiboClient {
     writeMeta(w, meta);
     await this._send(CMD.UPDATE_META, w.toUint8Array(), null);
   }
+}
+
+function readDirEntry(r) {
+  return {
+    name: r.string(),
+    size: r.u32(),
+    type: r.u8(), // 0 = regular file, non-zero = directory
+    meta: readMeta(r),
+  };
+}
+
+// Recover the entries from a directory listing the device never finished
+// sending. `bytes` is the raw accumulation: the first notification with its
+// header, then payload-only continuations.
+//
+// Two things make this safe to trust. Frames arrive in order and each carries
+// its own payload, so everything before the cut is exactly what the device
+// sent; and the tail is discarded rather than guessed at — parsing stops at
+// the first read past the end, and the last surviving entry is dropped too,
+// because a length prefix severed mid-field can decode to a plausible but
+// wrong name. Nothing is lost by being cautious: the caller re-lists, and the
+// entries it did keep are what let it get that far.
+export function parsePartialDir(bytes) {
+  const r = new ByteReader(bytes);
+  const entries = [];
+  try {
+    r.u8(); r.u8(); r.u16(); // header: cmd, status, chunk flags
+    while (r.remaining > 0) entries.push(readDirEntry(r));
+  } catch {
+    // Ran off the end mid-entry, which is the expected way out.
+  }
+  if (entries.length > 0) entries.pop();
+  return entries.filter(plausibleEntry).map((e) => ({ ...e, isDir: e.type !== 0 }));
+}
+
+// A name the firmware could actually have stored. `/` is the one character
+// that cannot appear (it is the separator), and vfs_obj_t.name is a 48-byte
+// field, so anything longer is a misread rather than a long filename.
+function plausibleEntry(e) {
+  return e.name.length > 0 && !e.name.includes('/') && utf8Length(e.name) <= MAX_NAME_BYTES;
 }
 
 // Join a path segment onto a directory path, tolerating a trailing slash.

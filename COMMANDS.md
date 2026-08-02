@@ -138,3 +138,14 @@ console.log(JSON.stringify({...describeAmiibo(id), vehicle:parseVehicle(b)},null
   and local folder are probably offset by one level (e.g. local folder
   *contains* `amiibo/` while the device root is already `E:/amiibo`); the plan
   header warns when the two sides share no paths.
+- **"N device folders could not be listed"**: listing them over Bluetooth
+  failed twice. Nothing inside them was counted, so the plan is incomplete —
+  and nothing inside them will be deleted, because removing a folder on the
+  device takes its contents with it and no one has seen what is in there.
+  Files elsewhere still transfer normally. Scan again to retry; a slow link is
+  the usual cause. The folders are named in the plan warning, in the SCAN
+  REPORT on the collection page, and in the saved run log.
+- **A scan stalls on one folder every time**: that folder probably holds too
+  many files for the device to list over Bluetooth in one go — several hundred
+  in a single directory is enough on older hardware. Spreading the library
+  across subfolders fixes it permanently; listing cost is paid on every scan.

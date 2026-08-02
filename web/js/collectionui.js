@@ -105,6 +105,9 @@ function saveScanCache() {
             size: e.size, isDir: e.isDir, hash: e.hash ?? null,
             amiiboId: e.amiiboId ?? null, vehicle: e.vehicle ?? null,
             uid: e.uid ?? null,
+            // Carried deliberately: a restored index that quietly dropped this
+            // would look like a folder we had listed and found empty.
+            unenumerated: e.unenumerated ?? null,
           }])
         : null,
       skipped: skippedReport,
@@ -470,10 +473,8 @@ async function scanDevice() {
     els.stop.hidden = false;
     renderDeviceChip({ scanning: 'listing…' });
     pbar.busy(`Listing ${devRoot}…`);
-    const deepFolders = [];
     let index = await walkDevice(client, devRoot, {
       shouldStop: () => stopRequested,
-      onDeep: (relPath) => deepFolders.push(relPath),
       onProgress: (n) => {
         if (n % 50 === 0) {
           renderDeviceChip({ scanning: `listing ${n}` });
@@ -501,9 +502,19 @@ async function scanDevice() {
     const devUnrecognised = [];
     const devErrors = [];
     const devIgnored = [];
+    // Folders the walk never managed to enumerate, split by why: an
+    // out-of-reach path is a permanent fact about the name, a failed listing
+    // is worth retrying. Both mean nothing inside them was counted.
+    const devDeep = [];
+    const devUnlisted = [];
     for (const v of vehiclesById.values()) for (const e of v.values()) e.device = false;
     for (const [relPath, e] of index) {
-      if (e.isDir) continue;
+      if (e.isDir) {
+        if (!e.unenumerated) continue;
+        if (e.unenumerated === 'too-deep') devDeep.push(relPath);
+        else devUnlisted.push({ relPath, reason: e.unenumerated, error: e.listError ?? null });
+        continue;
+      }
       if (e.amiiboId) {
         deviceIds.add(e.amiiboId);
         if (e.vehicle) markVehicle(e.amiiboId, e.vehicle, 'device');
@@ -520,13 +531,14 @@ async function scanDevice() {
       ...skippedReport,
       deviceUnrecognised: devUnrecognised,
       deviceErrors: devErrors,
-      deviceDeep: deepFolders,
+      deviceDeep: devDeep,
+      deviceUnlisted: devUnlisted,
       deviceIgnored: devIgnored,
     };
 
     render();
     saveScanCache();
-    const skipped = devUnrecognised.length + devErrors.length + deepFolders.length;
+    const skipped = devUnrecognised.length + devErrors.length + devDeep.length + devUnlisted.length;
     say(stopRequested
       ? `Stopped — ${deviceIds.size} read so far. Results partial.`
       : skipped
@@ -1389,6 +1401,7 @@ els.exportLog.addEventListener('click', () => {
         unrecognised: skippedReport.deviceUnrecognised,
         errors: skippedReport.deviceErrors,
         tooDeep: skippedReport.deviceDeep ?? [],
+        unlisted: skippedReport.deviceUnlisted ?? [],
         system: skippedReport.deviceIgnored ?? [],
       },
     },
@@ -1422,7 +1435,7 @@ els.collapseAll.addEventListener('click', () => {
 });
 
 function renderSkipped() {
-  const { ignored, unrecognised, deviceUnrecognised = [], deviceErrors = [], deviceDeep = [], deviceIgnored = [] } = skippedReport;
+  const { ignored, unrecognised, deviceUnrecognised = [], deviceErrors = [], deviceDeep = [], deviceUnlisted = [], deviceIgnored = [] } = skippedReport;
   els.skipped.textContent = '';
 
   // The arithmetic first: how many files became how many distinct amiibo.
@@ -1443,7 +1456,8 @@ function renderSkipped() {
     p.textContent = sums.join(' ');
     els.skipped.append(p);
   }
-  if (!ignored.length && !unrecognised.length && !deviceUnrecognised.length && !deviceErrors.length && !deviceDeep.length) {
+  if (!ignored.length && !unrecognised.length && !deviceUnrecognised.length && !deviceErrors.length
+      && !deviceDeep.length && !deviceUnlisted.length) {
     const p = document.createElement('p');
     p.className = 'sub';
     p.textContent = localIds.size ? 'Every file was recognised.' : 'Nothing scanned yet.';
@@ -1472,6 +1486,10 @@ function renderSkipped() {
   })), 'Read over Bluetooth failed twice for these. Rescan to retry them.');
   block('Device folders out of reach', deviceDeep.map((relPath) => ({ size: 0, relPath })),
     'Their full path exceeds the 63 bytes the device itself can address, so nothing inside them is reachable.');
+  block('Device folders that could not be listed', deviceUnlisted.map((d) => ({
+    size: 0, relPath: d.error ? `${d.relPath}   (${d.error})` : d.relPath,
+  })), 'Listing them over Bluetooth failed twice, so nothing inside them was counted. ' +
+    'Sync will not delete anything in them. Scan again to retry — a slow link is the usual cause.');
   block('Device system files (sync skips these too)', deviceIgnored);
 }
 

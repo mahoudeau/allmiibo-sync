@@ -123,6 +123,21 @@ The client keeps a FIFO queue with **strictly one command in flight**. The next
 request is only written after the previous response fully arrives. Do not
 pipeline — the device has no request IDs to correlate replies.
 
+**A response deadline must measure silence, not elapsed time.** A large
+`read_dir` legitimately streams for a minute on a slow link (§7.2), so a
+deadline armed once when the request is written kills healthy transfers. Arm it
+per notification instead, and re-arm on every frame including continuations.
+Field report: a device whose `E:/amiibo` held ~760 entries failed *every* sync
+against a 15 s whole-response deadline, while the same folder listed fine once
+the deadline counted idle time. Keep a separate, much larger absolute ceiling
+for a device that trickles forever without ever finishing.
+
+**After a timeout, wait for the link to fall quiet before writing again.** With
+no request IDs, frames still arriving from the response you abandoned are
+indistinguishable from the reply to your next command, and get spliced onto the
+front of it. The reassembly buffer must also be reset when the next request is
+written, not only when a response completes.
+
 ---
 
 ## 4. Type codecs
@@ -430,7 +445,17 @@ state, not dumps.
 Findings that constrain the sync engine:
 
 **`VFS_MAX_FOLDER_SIZE` is not a per-folder entry cap.** Two folders hold 100
-entries each and listed without error. Large folders are safe.
+entries each and listed without error. The *firmware* imposes no limit.
+
+**But a large folder is a large response, and that is a client problem.** An
+entry costs roughly 38 bytes on the wire, so 100 entries is ~4 KB and 760 is
+~29 KB — streamed 243 bytes at a time at 0.5–2 KB/s. Reported from the field: a
+device holding ~760 dumps in one flat `E:/amiibo` timed out on every scan
+against a client that gave the whole response 15 s, while its drive reported
+846,372 bytes used and the walk had accounted for only 4,657. Nothing was wrong
+with the device or the folder. A client must measure its timeout per
+notification (§3.4), and a library should still be spread across subfolders —
+listing a 760-entry folder costs a minute you pay on every single scan.
 
 **The path budget is the binding constraint.** The 63-byte cap covers the whole
 path including the `E:/` prefix. Observed maxima: longest full path **exactly
@@ -496,6 +521,13 @@ changes would cost on the order of two and a half minutes. Size-first
 comparison, with content hashing reserved for ambiguous cases, matters more
 than it would on a faster link.
 
+**These figures are one device's.** The same 160-byte `key_retail.bin` took
+**649 ms** on an older unit (Pixl.js 2.13.0, coin-cell hardware) — a 3.7×
+spread on an identical operation. Everything timing-related in this document
+was measured on the fast one, so treat it as a floor: the planner's
+`OPEN_CLOSE_MS` / `DOWNLOAD_MS` / `COMMAND_MS` are estimates for a progress
+bar, and **no timeout should ever be derived from them**.
+
 ### 7.3 Change detection
 
 - **No modification times.** `vfs_read_dir` returns name, size, type and
@@ -548,6 +580,14 @@ Still open:
   reset it. The web client mitigates by sending `get_version` after ten
   seconds of silence; whether that traffic actually defers the power-off
   needs confirming on hardware.
+- The largest `read_dir` response the firmware will emit, and how long it may
+  take before the *first* notification of a big listing — the device has to
+  scan the directory before it can answer. Unmeasured beyond ~760 entries; the
+  client's absolute ceiling is 120 s, picked with roughly 2× headroom over the
+  only large sample there is.
+- Whether a `read_dir` that stalls part-way does so deterministically at the
+  same entry. It matters for recovery: if it does, moving the entries that did
+  arrive out of the folder and re-listing gets progressively further.
 
 ---
 
@@ -594,6 +634,15 @@ mistargeted `remove` can erase an entire library. A sync tool must never remove
 a directory as a shortcut for removing its contents — delete files
 individually, and treat directory removal as a separate, explicitly confirmed
 step.
+
+**Corollary: never remove a folder whose listing you did not complete.** A walk
+records a directory before reading it, so one that failed to list — a timeout,
+a path too long for its children to be addressable, a cancelled scan — sits in
+the index with no children, shaped exactly like an empty folder. Because
+`remove` is recursive, treating the two alike erases a subtree nobody has ever
+seen. **A childless directory in an index means "never looked", not "empty",**
+and the difference has to be recorded at walk time; it cannot be recovered
+later.
 
 ### 9.5 `rename` moves between folders
 
