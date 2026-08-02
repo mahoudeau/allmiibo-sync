@@ -104,7 +104,15 @@ export const RELEASES = [
   {
     version: '0.1.1',
     date: '2026-07-29',
-    title: 'Beta fixes',
+    title: 'What the testers found',
+    added: [
+      'The scan report opens with the arithmetic: how many files became how many dumps became how many distinct amiibo',
+      'Every device file the scan cannot identify is given a named reason: an unrecognised size, a read that failed, a folder out of reach, or a device system file',
+      'A Bluetooth read that fails is retried once before a file is recorded as unreadable',
+      'The scan no longer stops at a depth we picked. It descends as far as the device itself can address, so "out of reach" is a fact about the hardware rather than a limit of ours',
+      '**EXPORT SCAN LOG**, which saves what both scans saw as JSON for bug reports: filenames, sizes, IDs and errors, never file contents',
+      'The build id in the footer, so a screenshot says which version you are on',
+    ],
     fixed: [
       '**A nearly empty device refused every sync.** Free space was read as used space, so a device reporting 1,918,644 bytes free of 1,920,401 came out as 1,757 bytes free and rejected everything',
       '**Refreshing a file already on the device was charged as though it needed room for a second copy**, so an in-place update could be blocked for space it never needed',
@@ -174,8 +182,6 @@ export const RELEASES = [
           'HOW TO, and a public legal and licensing page',
           'Read-only folder scanning in Firefox and Safari, where syncing is not available. The panel says so rather than showing dead buttons',
           'Works down to 320px wide',
-          '**EXPORT SCAN LOG**, which saves what both scans saw as JSON for bug reports: filenames, sizes, IDs and errors, never file contents',
-          'The build id in the footer, so a screenshot says which version you are on',
         ],
       },
     ],

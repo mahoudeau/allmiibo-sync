@@ -75,7 +75,16 @@ the site under [What's new](https://allmiibo.mathieu.dev/changelog.html).
 
 ## 0.1.1 · 29 July 2026
 
-**Beta fixes**
+**What the testers found**
+
+### Added
+
+- The scan report opens with the arithmetic: how many files became how many dumps became how many distinct amiibo
+- Every device file the scan cannot identify is given a named reason: an unrecognised size, a read that failed, a folder out of reach, or a device system file
+- A Bluetooth read that fails is retried once before a file is recorded as unreadable
+- The scan no longer stops at a depth we picked. It descends as far as the device itself can address, so "out of reach" is a fact about the hardware rather than a limit of ours
+- **EXPORT SCAN LOG**, which saves what both scans saw as JSON for bug reports: filenames, sizes, IDs and errors, never file contents
+- The build id in the footer, so a screenshot says which version you are on
 
 ### Fixed
 
@@ -139,8 +148,6 @@ the site under [What's new](https://allmiibo.mathieu.dev/changelog.html).
 - HOW TO, and a public legal and licensing page
 - Read-only folder scanning in Firefox and Safari, where syncing is not available. The panel says so rather than showing dead buttons
 - Works down to 320px wide
-- **EXPORT SCAN LOG**, which saves what both scans saw as JSON for bug reports: filenames, sizes, IDs and errors, never file contents
-- The build id in the footer, so a screenshot says which version you are on
 
 ### Awkward cases handled
 
