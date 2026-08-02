@@ -279,6 +279,24 @@ test('an excluded amiibo takes no part in naming or collision checks', () => {
   assert.deepEqual([...merged.names.values()], ['Mario']);
 });
 
+// ---- declining an artwork change ----------------------------------------
+
+test('an artwork refusal names the exact version refused', () => {
+  const SHA = 'a'.repeat(40);
+  ok(overlay({ artwork: { [ID]: { declined: SHA } } }));
+  ok(overlay({ artwork: { [ID]: { declined: SHA, decidedAt: '2026-08-02' } } }));
+
+  // Without a version this would be "never show me this picture again", which
+  // is a different feature and not the one anyone asked for. The record is what
+  // makes the refusal expire when upstream changes the picture again.
+  rejects(overlay({ artwork: { [ID]: {} } }), /declined must be a 40-character hex/);
+  rejects(overlay({ artwork: { [ID]: { declined: 'nope' } } }), /40-character hex/);
+  rejects(overlay({ artwork: { [ID]: { declined: SHA.toUpperCase() } } }), /40-character hex/);
+  rejects(overlay({ artwork: { NOTANID: { declined: SHA } } }), /not a 16-character/);
+  rejects(overlay({ artwork: { [ID]: { declined: SHA, why: 'ugly' } } }), /unknown key "why"/);
+  rejects(overlay({ artwork: [] }), /artwork must be an object/);
+});
+
 // ---- pins ---------------------------------------------------------------
 
 test('pins are collected per kind', () => {

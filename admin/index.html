@@ -139,6 +139,58 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
   .entity.accepted .verdict { color: var(--ok); }
   .entity.declined .verdict { color: var(--err); }
 
+  /* Artwork is reviewed by looking at it. A hash tells you something changed;
+     only the pair tells you whether you want the change. The checkerboard is
+     there because most of this art is transparent, and "did it lose its
+     background?" is exactly the kind of regression a dark panel hides. */
+  /* What the update is doing. The bar is driven by completed REQUESTS, not by a
+     timer: each step is one round trip, so a filled segment is work that has
+     actually finished. A timed bar would be a guess dressed as information. */
+  .progress { padding: .8rem .9rem; margin-bottom: 1rem; }
+  .pBar { height: .5rem; border: 2px solid var(--border); background: var(--bg);
+          margin-bottom: .7rem; }
+  .pBar span { display: block; height: 100%; width: 0; background: var(--ok);
+               transition: width .25s ease; }
+  @media (prefers-reduced-motion: reduce) { .pBar span { transition: none; } }
+  #pSteps { list-style: none; margin: 0; padding: 0;
+            font: 12.5px/1.9 var(--mono); color: var(--muted); }
+  #pSteps li { display: flex; gap: .6rem; align-items: baseline; }
+  #pSteps .mark { width: 1.2rem; flex: none; text-align: center; }
+  #pSteps li.done { color: var(--fg); }
+  #pSteps li.done .mark { color: var(--ok); }
+  #pSteps li.now { color: #fff; }
+  #pSteps li.now .mark { color: var(--warn); }
+  #pSteps li.fail .mark, #pSteps li.fail { color: var(--err); }
+  #pSteps .note { color: var(--muted); }
+
+  /* Always before -> after, so an arrival and a replacement read the same way.
+     The grid is fixed rather than flex-flowed so both sides line up down the
+     column however many rows there are. */
+  .artPair { display: grid; grid-template-columns: 96px 1.4rem 96px;
+             align-items: center; gap: .3rem .8rem; margin: .55rem 0 .2rem; }
+  .artPair img, .artPair .artNone { width: 96px; height: 96px;
+                 border: 2px solid var(--border); padding: .2rem; }
+  .artPair img { object-fit: contain;
+                 background-color: #2a2a2a;
+                 background-image:
+                   linear-gradient(45deg, #222 25%, transparent 25%, transparent 75%, #222 75%),
+                   linear-gradient(45deg, #222 25%, transparent 25%, transparent 75%, #222 75%);
+                 background-size: 16px 16px;
+                 background-position: 0 0, 8px 8px; }
+  /* An empty slot, not a missing image: dashed, labelled, and holding its
+     place. "There is nothing here today" is the thing worth seeing. */
+  .artPair .artNone { display: flex; align-items: center; justify-content: center;
+                 border-style: dashed; color: var(--muted);
+                 font: 12.5px/1.4 var(--mono); text-align: center; }
+  .artPair .artArrow { font: 14px/1 var(--mono); color: var(--muted); text-align: center; }
+  .artPair .artCaption { display: contents; }
+  .artPair .artCaption span { font: 11.5px/1.4 var(--mono); color: var(--muted); }
+  .artPair .artCaption span:first-child { grid-column: 1; }
+  .artPair .artCaption span:last-child { grid-column: 3; }
+  .entity.artRow .why { margin-top: .2rem; }
+  /* The series sits beside the name; only the ID is pushed to the right edge. */
+  .entity .ref.inline { margin-left: 0; }
+
   .reviewFoot { display: flex; align-items: center; gap: .7rem; }
   .reviewFoot .grow { margin-left: auto; }
   .confirmList { font: 12.5px/1.7 var(--mono); color: var(--fg); margin: .5rem 0; }
@@ -214,6 +266,9 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
          without a second header to keep in step. Its actions live here and are
          handed to the builder. -->
     <span id="adminActions" hidden>
+      <!-- One update, asked what it should cover. Data and pictures move on
+           different schedules upstream, so both need to be reachable alone —
+           but they are the same review, not two features. -->
       <button id="refresh"><span class="ico" data-ico="sync"></span>UPDATE</button>
       <button id="save" class="primary" disabled>
         <span class="ico" data-ico="upload"></span>SAVE &amp; PUBLISH</button>
@@ -228,6 +283,13 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
     </div>
 
     <div id="status" class="status" hidden></div>
+
+    <!-- What the update is doing, step by step. Each line is one real request,
+         so a step marked done IS done — nothing here is on a timer. -->
+    <div id="progress" class="panel progress" hidden>
+      <div class="pBar"><span id="pFill"></span></div>
+      <ol id="pSteps"></ol>
+    </div>
 
     <!-- Every save leaves a timestamped copy, and a restore is itself a save,
          so it leaves one too. Collapsed by default: this is the panel you want

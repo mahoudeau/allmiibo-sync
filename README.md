@@ -54,9 +54,10 @@ and 2.16.0 (January 2026) added on-device emulation for v3 amiibo.
 - **Interface**: an 8-bit skin with three themes, an original pirate mascot
   in twelve colourways, and an Advanced toggle that keeps the expert layer out
   of the way until asked for. ✅
-- **Tests**: 595 across twenty-six files; the protocol suite runs against a
+- **Tests**: 664 across twenty-eight files; the protocol suite runs against a
   simulated device, the admin suite against a real HTTP server on an ephemeral
-  port, the UI suites against a real DOM, the rest are pure. ✅
+  port, the UI suites against a real DOM, the rest are pure. Nothing reaches the
+  network. ✅
 
 Three hardware findings shape the sync design:
 
@@ -371,6 +372,12 @@ excluded amiibo takes part in no naming, no disambiguation and no collision
 check: it simply is not there. Note that an excluded ID you own a dump of reads
 as "not in the database" on the collection page, which is the cost of holding an
 addition out.
+
+One overlay key reaches no generated table at all: `artwork`, which records an
+artwork change you declined by the blob hash you declined. It is not database
+content — the pictures are gitignored and the database says nothing about them —
+so it lives in the overlay only because that is where decisions live, and it is
+written in the same save as everything else so one apply is one restore point.
 
 **Upstream can only warn; the overlay author can fail.** A routine refresh must
 not break because a third party edited their repository, so an override for an ID
@@ -689,6 +696,112 @@ keep their own confirmation, with the actual paths
 (`E:/amiibo/SSB/Mario.bin`), because that is the one consequence that reaches
 hardware.
 
+#### Artwork
+
+Artwork is part of the update and is reviewed the same way, as its own step:
+
+```
+  UPDATE → [ DATA & PICTURES · DATA ONLY · PICTURES ONLY ]
+
+  ① SERIES   ② TYPES   ③ AMIIBO   ④ ARTWORK   ⑤ ON YOUR DEVICE   ⑥ CONFIRM
+```
+
+It had not been part of it at all. The image pass lived only in
+`npm run update-db`, so an update applied through the admin added two amiibo and
+silently left the site with 948 entries and 946 images, with nothing reporting
+it because nothing looked.
+
+**UPDATE asks what to cover first** — data, pictures, or both — because the two
+move on different schedules upstream and each has to be reachable alone. That is
+a scope question, not a second feature: whichever is chosen lands on the same
+screen with the same ACCEPT and DECLINE. Pictures alone fetch no sources at all,
+since the comparison is against the published database and one image index.
+
+**A picture is reviewed by looking at it**, so an artwork row is the pair — what
+the site serves now, and what upstream would replace it with — and not two
+hashes. An arrival shows the one picture there is, because an empty box beside
+it would be a broken image rather than a comparison.
+
+**Every picture is a question, arrivals included.** An earlier version stated
+arrivals as a count and fetched them regardless, reasoning that there is no
+picture to keep and so nothing to decide. That was wrong: "I do not want that
+one" is a real answer, and deciding on the reviewer's behalf is the opposite of
+a review.
+
+**Noticing a change costs one request and no image bytes.** GitHub's git trees
+API returns the whole `images/` directory with a blob hash per file, and that
+hash — `sha1("blob <len>\0" + bytes)` — is computable from a local file. So the
+comparison is a hash of what is on disk against a list that arrived in one
+response:
+
+```
+GET /repos/8bitDream/AmiiboAPI/git/trees/dev:images
+  → 948 entries · 946 identical · 2 missing · 0 changed
+```
+
+Candidates are then downloaded **lazily**, one per row, when you actually look
+at one. A review listing 300 changed pictures costs a single request until you
+start scrolling, and anything you looked at is already staged when you accept
+it. Nothing live is touched until then.
+
+**A refusal names the version refused**, recorded in the overlay as
+`artwork: { "<id>": { "declined": "<blob hash>" } }`. This is the one place the
+artwork model deliberately differs from the data model: declining an *arrival*
+means "not this time" and comes back next update, but declining a *change* means
+"I prefer the picture I have" — and being asked about the same picture every
+month is nagging, not review. Recording the specific hash is what stops that
+from becoming "never": once upstream changes the picture again, the record no
+longer matches and the new version is a new question. A declined arrival records
+nothing at all, because there is no version of it here to hold on to.
+
+**A check that could not run says so.** A rate-limited index and an unchanged
+image set look identical from the outside and mean opposite things, so a failure
+is reported as its own line rather than as an absence — read the lenient way, a
+403 makes every local picture look like a removal, and the screen would
+confidently propose deleting all 948. The data review is unaffected either way:
+GitHub throttling the image index is no reason to be unable to review a rename.
+
+**Applying** fetches what you accepted, replaces what you accepted a new version
+of, and deletes what upstream dropped and you agreed to drop. It is bounded by
+the size of the update rather than the size of the database, so it stays inside
+one request. It cannot fail an update: the database is written and promoted
+before any picture is requested, and what happened comes back in the receipt.
+
+A pictures-only update goes to its own endpoint and **never touches the
+database** — pictures are not generated from the sources, so there is nothing
+there for it to change. That case is why the scope question exists: upstream
+ships artwork on its own schedule, so an amiibo added in July can get its
+picture in August with no data change to carry it. Grace Ashcroft and Leon S.
+Kennedy were in exactly that state. A full sweep of an empty install is still a
+job for `npm run fetch-images`, which is incremental and skips everything
+already on disk.
+
+**A 404 is not an error.** Upstream publishes pictures on its own schedule, so
+an amiibo newer than the image set simply has none yet and gets one on a later
+run. The receipt distinguishes that (`1 have none upstream yet`) from a real
+failure.
+
+**The resized tiers need an image tool**, and which one depends on the machine:
+`sips` on macOS, ImageMagick on a Linux server. The first available of `sips`,
+`magick`, `convert` is used, and when there is none the full-size images are
+still fetched and the receipt says so plainly rather than leaving you to notice
+missing thumbnails:
+
+```
+Artwork: 2 fetched. Tiers NOT generated — no image tool on this machine.
+Run `npm run fetch-images` locally and redeploy to build them.
+```
+
+#### Why applying reloads the page
+
+The generated database is an **ES module**, evaluated once per document and
+cached by the browser. Applying rewrites that file on the server, but the page
+already holds the version it loaded at boot — so re-fetching the API and
+redrawing showed the old counts and the old rows, which is exactly what it did.
+Nothing short of a new document picks up a new database. The receipt is parked
+in `sessionStorage` and read back on the next boot, so the reload does not throw
+away what just happened.
+
 #### Why a fetch does not take effect
 
 A refresh writes into `tools/.cache/pending/` and never over the live pair. That
@@ -920,6 +1033,22 @@ npm test
   repository's `tools/.cache` is what every other test and `npm run update-db`
   depend on. Each of the four apply gates is covered by a test that fails when
   the gate is removed.
+- `artwork.test.mjs`: fetching pictures and building the tiers, with `fetch` and
+  the child-process runner both injected — so no test needs an image tool
+  installed, and the Linux path (`mogrify`) is exercised on a Mac. The case with
+  most riding on it is the one with no tool at all: the artwork still arrives
+  and the report says the tiers were skipped, because the alternative is missing
+  thumbnails and nothing anywhere explaining them.
+- `artwork-compare.test.mjs`: noticing a picture changed without downloading it.
+  The manifest is served by a real local origin rather than a stub. Two of git's
+  own published blob hashes are asserted directly, which is what pins the hash
+  to git's definition rather than to this implementation of it.
+
+**No test reaches the network.** Everything is served from an ephemeral local
+origin, which the suite is checked for: preloading a wrapper around `fetch` into
+every test process and running all 664 tests reports zero requests off the
+machine — verified by first making a deliberate one and watching it get caught,
+since a guard that cannot fire proves nothing.
 
 The last seven run the interface itself, against a real DOM from `linkedom`.
 They exist because every UI bug in this project's history lived in a gap
@@ -1053,13 +1182,15 @@ server/auth.mjs           scrypt password, signed cookie, rate limit, CSRF
 server/store.mjs          atomic overlay writes and backups
 server/regen.mjs          rebuild the site database after an edit
 server/upstream.mjs       fetch the sources into pending/, promote, discard
+server/artwork.mjs        compare artwork by blob hash, stage, promote, discard
 admin/                    the admin UI (not part of the public site)
 
 tools/build-amiibo-db.mjs regenerate the database; also importable as generate()
 tools/update-db.mjs        fetch upstream sources + regenerate + report the diff
 tools/fetch-amiibo-images.mjs  download artwork, build the three tiers
+                          (a module: the admin server calls fetchArtwork() too)
 
-test/                     twenty-six files, see Tests above
+test/                     twenty-eight files, see Tests above
 ```
 
 ## Hosting

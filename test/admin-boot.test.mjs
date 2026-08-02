@@ -97,8 +97,28 @@ const PREVIEW = {
   diff: diffDatabases(BEFORE_TEXT, AFTER_TEXT),
 };
 
+// Artwork is compared against an image index rather than against the database,
+// and by its own request — which is what lets the screen report honest progress
+// instead of one long silence. The IDs come from the database being reviewed so
+// the rows can show real names.
+const ARTWORK = {
+  added: [{ id: GRACE, sha: 'a'.repeat(40), size: 1234 }],
+  changed: [{ id: '0000000000000002', sha: 'b'.repeat(40), was: 'c'.repeat(40), size: 4321 }],
+  removed: [],
+  unchanged: 945,
+  held: 0,
+  upstreamCount: 947,
+  localCount: 946,
+};
+
 let instance = 0;
-async function bootAdmin({ overlay = { schema: 1, amiibos: {} }, upstreamReady = true } = {}) {
+async function bootAdmin({
+  overlay = { schema: 1, amiibos: {} },
+  upstreamReady = true,
+  preview = PREVIEW,
+  artwork = ARTWORK,
+  artworkRoute = null,
+} = {}) {
   const page = mountPage('admin/index.html');
   const fetch = stubFetch({
     '/api/session': { csrf: 'test-token' },
@@ -109,8 +129,21 @@ async function bootAdmin({ overlay = { schema: 1, amiibos: {} }, upstreamReady =
     'POST /api/restore': { ok: true, entries: 946, restored: BACKUPS[0] },
     'POST /api/upstream/refresh': { ok: true, changed: true, fetchedAt: '2026-08-01T10-00-00-000Z' },
     'DELETE /api/upstream/pending': { ok: true },
-    '/api/upstream/preview': PREVIEW,
-    'POST /api/upstream/apply': { ok: true, entries: 947, applied: { pinsWritten: 0 }, renames: [] },
+    '/api/artwork': artworkRoute ?? { ok: true, artwork },
+    'POST /api/artwork/apply': {
+      ok: true,
+      artwork: { fetched: 2, cached: 0, noArtwork: [], failed: [], tiers: { skipped: false } },
+      artworkSummary: 'Artwork: 2 fetched.',
+    },
+    '/api/upstream/preview': preview,
+    'POST /api/upstream/apply': {
+      ok: true,
+      entries: 947,
+      applied: { pinsWritten: 0 },
+      renames: [],
+      artwork: { fetched: 2, cached: 0, noArtwork: [], failed: [], tiers: { skipped: false } },
+      artworkSummary: 'Artwork: 2 fetched.',
+    },
     'POST /api/logout': {},
   });
   globalThis.fetch = fetch;
@@ -1187,14 +1220,28 @@ test('a series can be named where upstream has none, which unblocks authoring th
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
-async function openReview(page) {
+/**
+ * Press UPDATE and answer the scope question.
+ *
+ * UPDATE asks what to cover before it fetches anything — data, pictures, or
+ * both — because the two move on different schedules upstream and each has to
+ * be reachable alone. Whichever is chosen lands on this same screen.
+ */
+async function openReview(page, scope = 'both') {
   page.byId('refresh').dispatchEvent(new page.window.Event('click'));
   await settle();
+
+  const choice = page.$(`dialog.nesDialog .dChoice[data-value="${scope}"]`);
+  assert.ok(choice, `the update offers a "${scope}" scope`);
+  choice.dispatchEvent(new page.window.Event('click'));
   await settle();
+  await settle();
+
   return {
     steps: () => page.$$('#reviewSteps button').map((b) => b.textContent.replace(/^\d+/, '')),
     rows: () => page.$$('#reviewPanel .entity'),
     row: (key) => page.$(`#reviewPanel .entity[data-key="${CSS.escape(key)}"]`),
+    artRow: (id) => page.$(`#reviewPanel .entity[data-art="${id}"]`),
     next: page.byId('reviewNext'),
     back: page.byId('reviewBack'),
     apply: page.byId('reviewApply'),
@@ -1203,12 +1250,20 @@ async function openReview(page) {
   };
 }
 
-/** Walk to the last step. */
+/**
+ * Walk to the last step.
+ *
+ * Bounded, because an unbounded walk is a test that cannot fail: when NEXT
+ * stopped hiding at the end this hung the whole run instead of reporting
+ * anything, which is strictly worse than a red test.
+ */
 async function toConfirm(page, r) {
-  while (!r.next.hidden) {
+  for (let i = 0; i < 12; i++) {
+    if (r.next.hidden) return;
     r.next.dispatchEvent(new page.window.Event('click'));
     await settle();
   }
+  assert.fail(`NEXT never gave way to APPLY; stuck on step ${r.steps().join(' > ')}`);
 }
 
 test('a refresh opens the review, hiding the library rather than a dialog', async () => {
@@ -1232,20 +1287,31 @@ test('the summary counts exactly the rows the steps render', async () => {
   try {
     const r = await openReview(page);
 
-    let seen = 0;
-    for (let i = 0; i < r.steps().length; i++) {
+    // Counted per step, because the two populations are compared separately:
+    // entities come from the diff, artwork from the image manifest. Adding them
+    // into one number is how the previous screen ended up describing neither.
+    let entityRows = 0;
+    let artRows = 0;
+    const titles = r.steps();
+    for (let i = 0; i < titles.length; i++) {
       page.$$('#reviewSteps button')[i].dispatchEvent(new page.window.Event('click'));
       await settle();
-      seen += r.rows().length;
+      if (titles[i] === 'ARTWORK') artRows += r.rows().length;
+      else entityRows += r.rows().length;
     }
 
     const s = PREVIEW.diff.summary;
     const expected = Object.values(s.amiibo).reduce((a, b) => a + b, 0)
       + Object.values(s.series).reduce((a, b) => a + b, 0)
       + Object.values(s.type).reduce((a, b) => a + b, 0);
-    assert.equal(seen, expected,
+    assert.equal(entityRows, expected,
       'every entity in the summary is on screen exactly once, and vice versa');
-    assert.equal(seen, s.total);
+    assert.equal(entityRows, s.total);
+
+    // Every picture in the comparison is a row, arrivals included — the same
+    // invariant as the entity steps, and for the same reason.
+    const a = ARTWORK;
+    assert.equal(artRows, a.added.length + a.changed.length + a.removed.length);
   } finally {
     page.restore();
   }
@@ -1295,9 +1361,23 @@ test('steps run coarse to fine, and empty ones are not shown', async () => {
   const { page } = await bootAdmin();
   try {
     const r = await openReview(page);
-    assert.deepEqual(r.steps(), ['SERIES', 'AMIIBO', 'CONFIRM'],
-      'series before the amiibo inside it; no TYPES or DEVICE step, because '
-      + 'this update has neither');
+    assert.deepEqual(r.steps(), ['SERIES', 'AMIIBO', 'ARTWORK', 'CONFIRM'],
+      'series before the amiibo inside it, and the pictures after both; no '
+      + 'TYPES or DEVICE step, because this update has neither');
+  } finally {
+    page.restore();
+  }
+});
+
+test('an update with no artwork question shows no ARTWORK step', async () => {
+  // The same rule as every other step: the numbering counts what there is to
+  // look at, so a comparison that found nothing produces no step at all.
+  const { page } = await bootAdmin({
+    artwork: { ...ARTWORK, added: [], changed: [], removed: [] },
+  });
+  try {
+    const r = await openReview(page);
+    assert.deepEqual(r.steps(), ['SERIES', 'AMIIBO', 'CONFIRM']);
   } finally {
     page.restore();
   }
@@ -1451,6 +1531,341 @@ test('APPLY sends one verdict per change, expanded from the rows', async () => {
       PREVIEW.diff.changes.map((c) => c.key).sort());
     assert.ok(Object.values(sent.decisions).every((v) => v === 'keep'),
       'untouched means accepted');
+  } finally {
+    page.restore();
+  }
+});
+
+// ---- artwork -------------------------------------------------------------
+
+const MARIO_ART = '0000000000000002';
+
+/** Open the review and stand on the ARTWORK step. */
+async function toArtwork(page, r) {
+  page.$$('#reviewSteps button')[r.steps().indexOf('ARTWORK')]
+    .dispatchEvent(new page.window.Event('click'));
+  await settle();
+}
+
+test('a changed picture is shown as a pair, because a hash is not a picture', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    await toArtwork(page, r);
+
+    const row = r.artRow(MARIO_ART);
+    assert.ok(row, 'the changed picture has a row');
+    const imgs = [...row.querySelectorAll('.artPair img')];
+    assert.equal(imgs.length, 2, 'what it is now, and what it would become');
+    assert.match(imgs[0].getAttribute('src'), /\/data\/images\/full\/0000000000000002\.png$/,
+      'the left is the picture the site serves today');
+    assert.match(imgs[1].getAttribute('src'), /\/api\/upstream\/art\/0000000000000002\.png$/,
+      'the right comes from the review endpoint, which fetches it on first sight');
+    assert.equal(imgs[1].loading, 'lazy',
+      'so a step listing 300 changes costs one request until it is read');
+
+    // Which amiibo it lands on, named the way every other row names one. A
+    // picture is not identification on its own: several amiibo share a
+    // character and a pose, and the series is what tells them apart.
+    const top = row.querySelector('.top').textContent;
+    assert.match(top, /Mario/, 'the name');
+    assert.match(top, /0000000000000002/, 'the ID');
+    assert.match(row.querySelector('.ref.inline').textContent, /\S/, 'and its series');
+  } finally {
+    page.restore();
+  }
+});
+
+test('a picture arriving is a question too, not a decision taken for you', async () => {
+  // An earlier version stated arrivals as a count and fetched them regardless,
+  // on the grounds that there is no picture to keep. But "I do not want that
+  // one" is a real answer, and deciding on the reviewer's behalf is the
+  // opposite of a review.
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    await toArtwork(page, r);
+
+    const row = r.artRow(GRACE);
+    assert.ok(row, 'the arrival has its own row');
+    assert.equal(row.querySelectorAll('.acts button').length, 2, 'with both answers');
+
+    // Still before → after, with the missing side drawn as an explicit empty
+    // slot. An arrival and a replacement then read the same way, and "there is
+    // nothing here today" is itself the thing worth seeing.
+    const pair = row.querySelector('.artPair');
+    const empty = pair.querySelector('.artNone');
+    assert.ok(empty, 'the empty side is shown, not left out');
+    assert.match(empty.textContent, /none yet/);
+    const imgs = [...pair.querySelectorAll('img')];
+    assert.equal(imgs.length, 1, 'and the one picture there is');
+    assert.match(imgs[0].getAttribute('src'), /\/api\/upstream\/art\//);
+
+    const decline = row.querySelector('.acts button:last-child');
+    assert.match(decline.title, /offer it again/i,
+      'and declining an arrival means not this time, as it does for data');
+  } finally {
+    page.restore();
+  }
+});
+
+test('declining a picture says it will not be asked about again', async () => {
+  // The difference from the data model, and the reason it is spelled out on the
+  // button rather than left to be discovered: an addition declined comes back
+  // next update, a CHANGE declined does not.
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    await toArtwork(page, r);
+
+    const decline = r.artRow(MARIO_ART).querySelector('.acts button:last-child');
+    assert.match(decline.title, /not be asked again unless upstream changes it/i);
+
+    decline.dispatchEvent(new page.window.Event('click'));
+    await settle();
+    assert.ok(r.artRow(MARIO_ART).classList.contains('declined'));
+  } finally {
+    page.restore();
+  }
+});
+
+test('an artwork verdict reaches the server with the version it was about', async () => {
+  // The hash IS the record: without it the server could only note "this picture
+  // was refused", and the refusal would outlive the version it was about.
+  const { page, fetch } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    await toArtwork(page, r);
+    r.artRow(MARIO_ART).querySelector('.acts button:last-child')
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    await toConfirm(page, r);
+    r.apply.dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    const sent = JSON.parse(fetch.calls.find((c) => c.path === '/api/upstream/apply').body);
+    assert.deepEqual(sent.artwork[MARIO_ART], {
+      verdict: 'skip',
+      sha: ARTWORK.changed[0].sha,
+      op: 'edit',
+    });
+    // Untouched means accepted here too, so every row is sent rather than only
+    // the ones that were clicked — the server cannot infer what it never saw.
+    assert.deepEqual(sent.artwork[GRACE], { verdict: 'keep', sha: null, op: 'add' });
+  } finally {
+    page.restore();
+  }
+});
+
+test('the confirm step counts the pictures, including the ones left alone', async () => {
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    await toArtwork(page, r);
+    r.artRow(MARIO_ART).querySelector('.acts button:last-child')
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+    await toConfirm(page, r);
+
+    const text = page.byId('reviewPanel').textContent;
+    assert.match(text, /1 picture fetched/);
+    assert.match(text, /1 picture kept as it is/);
+    assert.doesNotMatch(text, /picture(s)? replaced/,
+      'the only change was declined, so nothing is replaced');
+  } finally {
+    page.restore();
+  }
+});
+
+test('an artwork check that failed is said out loud, not left as an absence', async () => {
+  // "Could not check" and "nothing changed" look identical on screen otherwise,
+  // and they mean opposite things.
+  const { page } = await bootAdmin({
+    artworkRoute: { status: 502, body: { error: 'the image index is rate-limited right now' } },
+  });
+  try {
+    const r = await openReview(page);
+    assert.match(r.risk(), /artwork not checked — the image index is rate-limited/);
+    assert.deepEqual(r.steps(), ['SERIES', 'AMIIBO', 'CONFIRM'], 'and no step promises otherwise');
+
+    await toConfirm(page, r);
+    assert.match(page.byId('reviewPanel').textContent, /Artwork was not checked/);
+  } finally {
+    page.restore();
+  }
+});
+
+test('UPDATE asks what to cover before fetching anything', async () => {
+  // One update with options, not two buttons. Data and pictures move on
+  // different schedules upstream, so each has to be reachable alone — but that
+  // is a scope question, not a second feature.
+  const { page, fetch } = await bootAdmin();
+  try {
+    page.byId('refresh').dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    const choices = page.$$('dialog.nesDialog .dChoice').map((b) => b.dataset.value);
+    assert.deepEqual(choices, ['both', 'data', 'images']);
+    assert.equal(fetch.calls.filter((c) => c.path === '/api/upstream/refresh').length, 0,
+      'and nothing is fetched until the question is answered');
+  } finally {
+    page.restore();
+  }
+});
+
+test('PICTURES ONLY reviews artwork without touching the sources', async () => {
+  // The case this exists for: upstream ships the picture a month after the
+  // database entry, so there is no data update to carry it. Fetching the
+  // sources to find that out would be work for nothing.
+  const { page, fetch } = await bootAdmin();
+  try {
+    const r = await openReview(page, 'images');
+
+    assert.equal(fetch.calls.filter((c) => c.path === '/api/upstream/refresh').length, 0,
+      'the sources are left alone');
+    // pending=0: there is no candidate database, so the pictures are checked
+    // against the one the site publishes.
+    assert.ok(fetch.calls.some((c) => c.path === '/api/artwork?pending=0'));
+    assert.deepEqual(r.steps(), ['ARTWORK', 'CONFIRM'], 'and only the picture steps');
+    assert.match(r.risk(), /Pictures only — the database is not touched/);
+  } finally {
+    page.restore();
+  }
+});
+
+test('the artwork check runs against the database the update would publish', async () => {
+  // The two halves are one update. An amiibo the data half is adding has no
+  // artwork yet, and checking the pictures against the PUBLISHED database would
+  // never look for it — the arrival would be invisible until some later,
+  // unrelated update happened to notice.
+  const { page, fetch } = await bootAdmin();
+  try {
+    await openReview(page, 'both');
+    assert.ok(fetch.calls.some((c) => c.path === '/api/artwork?pending=1'),
+      'the candidate database, not the published one');
+
+    // And the data step asks for no artwork, so each step is one job and the
+    // progress it reports is real rather than inferred.
+    assert.ok(fetch.calls.some((c) => c.path === '/api/upstream/preview?artwork=0'));
+  } finally {
+    page.restore();
+  }
+});
+
+test('the update reports its progress step by step, not as one silence', async () => {
+  // The artwork request is held open, so the panel can be inspected while the
+  // last step is genuinely still running. What is asserted is that a step marked
+  // done IS done: two requests have returned, the third has not.
+  let release;
+  const held = new Promise((r) => { release = r; });
+
+  const { page } = await bootAdmin({
+    artworkRoute: async () => { await held; return { ok: true, artwork: ARTWORK }; },
+  });
+  try {
+    page.byId('refresh').dispatchEvent(new page.window.Event('click'));
+    await settle();
+    page.$('dialog.nesDialog .dChoice[data-value="both"]')
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+    await settle();
+
+    assert.equal(page.byId('progress').hidden, false, 'the panel is up while it works');
+    const steps = page.$$('#pSteps li');
+    assert.equal(steps.length, 3, 'fetch, build, artwork');
+    assert.match(steps[0].textContent, /Fetching the upstream sources/);
+    assert.ok(steps[0].classList.contains('done'), 'that request returned');
+    assert.ok(steps[1].classList.contains('done'), 'and so did that one');
+    assert.ok(steps[2].classList.contains('now'), 'the artwork is still in flight');
+
+    // Two of three finished, so the bar is two thirds along — driven by work
+    // that completed, never by a timer.
+    assert.equal(page.byId('pFill').style.width, '67%');
+
+    release();
+    await settle();
+    await settle();
+    assert.equal(page.byId('progress').hidden, true, 'and it goes when the review arrives');
+    assert.equal(page.byId('review').hidden, false);
+  } finally {
+    release();
+    page.restore();
+  }
+});
+
+test('a pictures-only apply goes to its own endpoint, not the database one', async () => {
+  const { page, fetch } = await bootAdmin();
+  try {
+    const r = await openReview(page, 'images');
+    await toConfirm(page, r);
+    r.apply.dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    assert.equal(fetch.calls.filter((c) => c.path === '/api/upstream/apply').length, 0,
+      'nothing rebuilds a database this update cannot change');
+    const call = fetch.calls.find((c) => c.path === '/api/artwork/apply');
+    assert.ok(call, 'the artwork verdicts are applied on their own');
+    assert.ok(Object.keys(JSON.parse(call.body).artwork).length > 0);
+  } finally {
+    page.restore();
+  }
+});
+
+test('pictures already up to date says so instead of an empty review', async () => {
+  const { page } = await bootAdmin({
+    artwork: { added: [], changed: [], removed: [], unchanged: 948, held: 3 },
+  });
+  try {
+    page.byId('refresh').dispatchEvent(new page.window.Event('click'));
+    await settle();
+    page.$('dialog.nesDialog .dChoice[data-value="images"]')
+      .dispatchEvent(new page.window.Event('click'));
+    await settle();
+    await settle();
+
+    assert.equal(page.byId('review').hidden, true, 'no review screen with nothing on it');
+    assert.match(page.byId('status').textContent, /up to date: 948 pictures/);
+    assert.match(page.byId('status').textContent, /3 held at the version you chose/,
+      'and a decision still in force is visible, not silent');
+  } finally {
+    page.restore();
+  }
+});
+
+test('applying reloads the page, because the database is a cached module', async () => {
+  // The bug this fixes: apply rewrote web/data/amiibo-db.js on the server, the
+  // admin re-fetched /api/db and redrew — and the list still showed the old
+  // counts and the old rows. The grid is built through amiibo.js, which
+  // statically imports that database, and an ES module is evaluated once per
+  // DOCUMENT. Rewriting the file cannot reach a page that already loaded it, so
+  // only a new document shows the new entries.
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    await toConfirm(page, r);
+    assert.equal(page.reloads, 0);
+    r.apply.dispatchEvent(new page.window.Event('click'));
+    await settle();
+    assert.equal(page.reloads, 1, 'the page reloaded rather than re-rendering');
+  } finally {
+    page.restore();
+  }
+});
+
+test('the receipt survives that reload, and names the artwork', async () => {
+  // A reload would otherwise throw the result away, and "did anything happen?"
+  // is the wrong thing to leave someone wondering after an update.
+  const { page } = await bootAdmin();
+  try {
+    const r = await openReview(page);
+    await toConfirm(page, r);
+    r.apply.dispatchEvent(new page.window.Event('click'));
+    await settle();
+
+    const parked = JSON.parse(sessionStorage.getItem('admin:sayAfterReload'));
+    assert.match(parked.message, /947 amiibo/);
+    assert.match(parked.message, /Artwork: 2 fetched/);
   } finally {
     page.restore();
   }

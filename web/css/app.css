@@ -403,6 +403,18 @@ dialog.nesDialog .dDetail { font: 12.5px/1.7 var(--mono); color: var(--muted);
 dialog.nesDialog .dDetail[hidden] { display: none; }
 dialog.nesDialog .dRow { display: flex; justify-content: flex-end; gap: .7rem; }
 
+/* One question, several answers. Each choice is full width and carries its own
+   consequence, so the difference between them is readable without a legend. */
+dialog.nesDialog .dChoices { display: flex; flex-direction: column;
+  gap: .5rem; margin-bottom: .9rem; }
+dialog.nesDialog .dChoices[hidden] { display: none; }
+dialog.nesDialog .dChoice { display: flex; flex-direction: column;
+  align-items: flex-start; gap: .25rem; text-align: left;
+  padding: .6rem .8rem; min-height: 0; }
+dialog.nesDialog .dChoice .cLabel { font-family: var(--pixel); font-size: .5rem; }
+dialog.nesDialog .dChoice .cHint { font: 12.5px/1.5 var(--mono);
+  color: var(--muted); text-transform: none; }
+
 /* Device folder picker */
 dialog.devPicker { width: min(24rem, 92vw); }
 dialog.devPicker .dTitle { font-family: var(--pixel); font-size: .6rem; }

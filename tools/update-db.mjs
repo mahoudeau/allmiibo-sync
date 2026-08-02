@@ -15,7 +15,7 @@
 // Prints exactly what changed, because a silent regeneration is how a bad
 // upstream edit would slip into the committed database unreviewed.
 
-import { readFile, rename } from 'node:fs/promises';
+import { readFile, rename, readdir } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -226,6 +226,19 @@ if (overlayText !== null) {
 // ---- commit, or throw it all away ------------------------------------------
 
 if (dryRun) {
+  // Artwork is reported the same way everything else is: by naming what would
+  // happen, without doing any of it. Only the local directory is read — no
+  // request goes out, which is what makes a dry run cost nothing.
+  if (!skipImages) {
+    const have = new Set(await readdir(join(ROOT, 'web/data/images/full')).catch(() => []));
+    const wanted = [...after.names.keys()].filter((id) => !have.has(`${id}.png`));
+    console.log(`\nartwork: ${have.size} cached, ${wanted.length} would be fetched`);
+    for (const id of wanted.slice(0, 20)) {
+      console.log(`  ${id}  ${after.names.get(id)}`);
+    }
+    if (wanted.length > 20) console.log(`  …and ${wanted.length - 20} more`);
+  }
+
   await upstream.discard();
   console.log('\nDry run: the database, the cache and the overlay are all unchanged.');
   console.log('Run `npm run update-db` to apply this, or review it in the admin.');

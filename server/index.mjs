@@ -28,11 +28,15 @@ import { Store, BACKUP_NAME_RE } from './store.mjs';
 import { Regenerator, GenerateError, publicReport } from './regen.mjs';
 import { Upstream } from './upstream.mjs';
 import {
+  fetchArtwork, removeArtwork, describeArtwork, IMAGES_BASE,
+} from '../tools/fetch-amiibo-images.mjs';
+import { Artwork } from './artwork.mjs';
+import {
   verifyPassword, issueSession, readSession, sessionCookie, clearCookie,
   readCookie, checkCsrf, RateLimiter, CSRF_HEADER,
 } from './auth.mjs';
 import { EMPTY_OVERLAY, serializeOverlay } from '../web/js/overlay.js';
-import { diffDatabases, applyDecisions, undecided } from '../web/js/dbdiff.js';
+import { diffDatabases, applyDecisions, undecided, parseGenerated } from '../web/js/dbdiff.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const UI_DIR = join(ROOT, 'admin');
@@ -58,6 +62,11 @@ export function createAdminServer(config = {}) {
     publicSiteDir: process.env.PUBLIC_SITE_DIR ?? join(ROOT, 'web'),
     dataDir: process.env.DATA_DIR ?? join(ROOT, 'content'),
     cacheDir: process.env.CACHE_DIR ?? join(ROOT, 'tools/.cache'),
+    // Where artwork is fetched from. Overridable so the tests can point it at
+    // their own origin: the alternative is a suite that reaches GitHub, which
+    // is both slow and a way to fail for reasons that have nothing to do with
+    // the code.
+    imagesBase: process.env.IMAGES_BASE ?? IMAGES_BASE,
     secureCookies: process.env.INSECURE_COOKIES !== '1',
     ...config,
   };
@@ -86,6 +95,15 @@ export function createAdminServer(config = {}) {
   const upstream = new Upstream({
     cacheDir: cfg.cacheDir,
     ...(config.sources ? { sources: config.sources } : {}),
+    ...(config.fetch ? { fetch: config.fetch } : {}),
+  });
+  const art = new Artwork({
+    imagesDir: join(cfg.publicSiteDir, 'data/images'),
+    // Beside the source cache rather than inside the public site: a staged
+    // candidate is not published, and anything under publicSiteDir is.
+    pendingDir: join(cfg.cacheDir, 'pending-images'),
+    base: cfg.imagesBase,
+    ...(config.manifestUrl ? { manifestUrl: config.manifestUrl } : {}),
     ...(config.fetch ? { fetch: config.fetch } : {}),
   });
   const limiter = new RateLimiter();
@@ -225,7 +243,7 @@ export function createAdminServer(config = {}) {
    * The candidate is built from pending/ while the live cache is left alone,
    * which is what makes this safe to call at any time.
    */
-  async function buildPreview() {
+  async function buildPreview({ artwork: withArtwork = true } = {}) {
     const meta = await upstream.pending();
     if (!meta) return { status: 200, body: { pending: null } };
 
@@ -248,6 +266,31 @@ export function createAdminServer(config = {}) {
     }
 
     const diff = diffDatabases(dry.previous, dry.contents, { overlay });
+
+    // What upstream's pictures would do, against the database this update would
+    // produce — `dry.contents`, the CANDIDATE, so an amiibo this update adds is
+    // in the list its artwork is checked against. Checking the published
+    // database instead would report every arrival as having artwork it does not
+    // need, and miss the artwork it does.
+    //
+    // One request and no image bytes, but it does reach the network, so a
+    // failure here is reported as its own thing and never takes the data review
+    // down with it: the two are independent decisions.
+    //
+    // Skippable so the admin can ask for it as a separate step and show honest
+    // progress. Rolling both into one request meant one long wait with nothing
+    // to say about it.
+    let artwork = null;
+    let artworkError = null;
+    if (withArtwork) {
+      try {
+        const ids = [...parseGenerated(dry.contents).names.keys()];
+        artwork = await art.compare(ids, overlay.artwork ?? {});
+      } catch (err) {
+        artworkError = err.message;
+      }
+    }
+
     return {
       status: 200,
       body: {
@@ -255,10 +298,99 @@ export function createAdminServer(config = {}) {
         ok: true,
         errors: [],
         diff,
+        artwork,
+        artworkError,
         report: publicReport(dry.report),
         fingerprint: fingerprint(dry.previous, meta, overlay),
       },
     };
+  }
+
+  /**
+   * Carry out artwork verdicts. Shared by both apply paths.
+   *
+   * Deliberately unable to throw: when this runs from an update the database is
+   * already written and promoted, and a picture that will not download is not a
+   * reason to report the update as broken. What happened comes back in the
+   * report instead.
+   *
+   * @param {object} verdicts  id -> { verdict: 'keep'|'skip', sha }
+   * @param {string[]} [also]  IDs to fetch regardless — the entries an update
+   *                           just added, which want pictures either way
+   */
+  async function applyArtwork(verdicts, also = []) {
+    const entries = Object.entries(verdicts ?? {});
+    const declined = new Set(entries.filter(([, v]) => v?.verdict === 'skip').map(([id]) => id));
+    const accepted = entries.filter(([, v]) => v?.verdict === 'keep');
+
+    // Changes accepted: staged during the review, so this is a move on local
+    // disk rather than a download. `sha` is what marks a row as a REPLACEMENT
+    // rather than an arrival — an arrival has nothing staged to promote.
+    const replaced = await art
+      .promote(accepted.filter(([, v]) => v.sha).map(([id]) => id))
+      .catch(() => []);
+
+    // Removals accepted: upstream dropped the picture, so it goes here too.
+    let deleted = 0;
+    for (const [id, v] of accepted) {
+      if (v.op !== 'remove') continue;
+      deleted += await removeArtwork(id, join(cfg.publicSiteDir, 'data/images')).catch(() => 0);
+    }
+
+    // Arrivals accepted, plus anything just replaced — whose tiers promote()
+    // cleared, so they need rebuilding from the new picture.
+    const wanted = [
+      ...also,
+      ...accepted.filter(([, v]) => !v.sha && v.op !== 'remove').map(([id]) => id),
+      ...replaced,
+    ];
+    const toFetch = [...new Set(wanted)].filter((id) => !declined.has(id));
+
+    const report = toFetch.length
+      ? await fetchArtwork({
+        ids: toFetch,
+        imagesDir: join(cfg.publicSiteDir, 'data/images'),
+        base: cfg.imagesBase,
+        ...(config.fetch ? { fetch: config.fetch } : {}),
+      }).catch((err) => ({
+        considered: toFetch.length, cached: 0, fetched: 0, noArtwork: [],
+        failed: [err.message],
+        tiers: { built: 0, skipped: true, tool: null, reason: err.message },
+      }))
+      : null;
+
+    await art.discard().catch(() => {});
+    if (!report) {
+      if (!replaced.length && !deleted && !declined.size) return null;
+      return {
+        considered: 0, cached: 0, fetched: 0, noArtwork: [], failed: [],
+        tiers: { built: 0, skipped: false, tool: null, reason: null },
+        replaced: replaced.length, deleted, declined: declined.size,
+      };
+    }
+    report.replaced = replaced.length;
+    report.deleted = deleted;
+    report.declined = declined.size;
+    return report;
+  }
+
+  /** Artwork verdicts written into the overlay, as a record of what was refused. */
+  function recordArtwork(overlay, verdicts, today) {
+    const next = { ...(overlay.artwork ?? {}) };
+    for (const [id, v] of Object.entries(verdicts ?? {})) {
+      if (!/^[0-9a-f]{16}$/.test(id)) continue;
+      // Only a CHANGE leaves a record. Declining an arrival means "not this
+      // time" and is offered again next check, exactly as a declined data
+      // addition is — there is no version of it here to hold on to.
+      if (v?.verdict === 'skip' && /^[0-9a-f]{40}$/.test(v.sha ?? '')) {
+        next[id] = { declined: v.sha, decidedAt: today };
+      } else if (v?.verdict === 'keep' && next[id]) {
+        // Accepting supersedes an older refusal, which would otherwise keep
+        // hiding this picture from every future check.
+        delete next[id];
+      }
+    }
+    return Object.keys(next).length ? next : null;
   }
 
   /**
@@ -272,7 +404,7 @@ export function createAdminServer(config = {}) {
    * would silently REVERT published data to the old upstream. Reverting is the
    * worse failure.
    */
-  async function applyUpstream({ fingerprint: sent, decisions = {} }) {
+  async function applyUpstream({ fingerprint: sent, decisions = {}, artwork: artVerdicts = {} }) {
     const meta = await upstream.pending();
     if (!meta) return { status: 409, body: { error: 'there is no pending refresh to apply' } };
 
@@ -309,6 +441,12 @@ export function createAdminServer(config = {}) {
     const { overlay: next, applied } = applyDecisions(overlay, diff, settled, today);
     applied.acceptedByDefault = byDefault.length;
 
+    // Artwork verdicts go into the same overlay write as everything else, so
+    // one apply is one backup and one restore point.
+    const artRecord = recordArtwork(next, artVerdicts, today);
+    if (artRecord) next.artwork = artRecord;
+    else delete next.artwork;
+
     // Refuse before writing, exactly as a save does: a decision set that would
     // collide two amiibo onto one device path is rejected with the reason and
     // nothing is touched.
@@ -336,6 +474,14 @@ export function createAdminServer(config = {}) {
       const renames = diff.changes
         .filter((c) => c.group === 'naming' && settled[c.key] !== 'skip' && c.device)
         .map((c) => ({ before: c.device.before, after: c.device.after }));
+
+      // The entries this update added also want pictures, whether or not the
+      // artwork step was part of the review. See applyArtwork().
+      const arrived = diff.changes
+        .filter((c) => c.group === 'added' && settled[c.key] !== 'skip')
+        .map((c) => String(c.subject));
+      const artwork = await applyArtwork(artVerdicts, arrived);
+
       return {
         status: 200,
         body: {
@@ -345,6 +491,8 @@ export function createAdminServer(config = {}) {
           entries: check.report.entries,
           applied,
           renames,
+          artwork,
+          artworkSummary: artwork ? describeArtwork(artwork) : null,
           report: publicReport(check.report),
         },
       };
@@ -596,10 +744,137 @@ export function createAdminServer(config = {}) {
           return json(res, 200, { ok: true });
         }
 
+        // Artwork on its own, with no data update pending.
+        //
+        // Needed because upstream publishes pictures on a different schedule
+        // from the database: an amiibo added in July can get its picture in
+        // August, and there is no data change then to carry the fetch. Without
+        // this the only way to pick it up would be to wait for an unrelated
+        // update.
+        if (path === '/api/artwork' && req.method === 'GET') {
+          const overlay = await store.read();
+
+          // Which database to check the pictures against. `?pending=1` uses the
+          // CANDIDATE built from a pending refresh, so an amiibo that update
+          // adds is in the list — the two checks are one update, and the
+          // artwork half has to know what the data half is about to publish.
+          // Without a pending refresh it is the published database, which is
+          // the pictures-only case.
+          const wantsPending = url.searchParams.get('pending') === '1';
+          let dbText = null;
+          if (wantsPending && await upstream.pending()) {
+            const dry = await regen.dryRun(overlay, { cacheDir: upstream.pendingDir });
+            if (dry.ok) dbText = dry.contents;
+          }
+          dbText ??= await regen.currentText();
+
+          const ids = [...parseGenerated(dbText).names.keys()];
+          try {
+            return json(res, 200, {
+              ok: true,
+              artwork: await art.compare(ids, overlay.artwork ?? {}),
+            });
+          } catch (err) {
+            return json(res, 502, { error: err.message });
+          }
+        }
+
+        // Apply artwork verdicts with no data update pending.
+        //
+        // The same decisions the review screen produces, going through the same
+        // applyArtwork(). Only the database is spared a rebuild it would not
+        // change: pictures are not generated from the sources, so nothing here
+        // touches the database at all.
+        if (path === '/api/artwork/apply' && req.method === 'POST') {
+          const gate = fetchLimiter.check('artwork');
+          if (gate.locked) {
+            res.setHeader('retry-after', Math.ceil(gate.retryAfterMs / 1000));
+            return json(res, 429, {
+              error: 'too many artwork fetches in the last hour',
+              retryAfterSeconds: Math.ceil(gate.retryAfterMs / 1000),
+            });
+          }
+
+          let body;
+          try {
+            body = JSON.parse(await readBody(req)) ?? {};
+          } catch (err) {
+            return json(res, err.status ?? 400, { error: err.message || 'invalid JSON' });
+          }
+          fetchLimiter.fail('artwork');
+
+          const overlay = await store.read();
+          const today = new Date().toISOString().slice(0, 10);
+          const artRecord = recordArtwork(overlay, body.artwork ?? {}, today);
+
+          // Written only when the RECORD moved. Comparing whole overlays would
+          // write on every call, because an overlay read from nothing carries
+          // `artwork: {}` and dropping an empty key reads as a change — a
+          // backup and a new restore point for a decision nobody made.
+          const before = overlay.artwork ?? null;
+          const changed = JSON.stringify(artRecord)
+            !== JSON.stringify(before && Object.keys(before).length ? before : null);
+
+          // The overlay is written first and the pictures moved after, which is
+          // the safe order here: a refusal recorded but not yet acted on simply
+          // gets acted on next time, whereas a picture replaced with no record
+          // of the decision would be offered again immediately.
+          let saved = null;
+          if (changed) {
+            const next = { ...overlay };
+            if (artRecord) next.artwork = artRecord;
+            else delete next.artwork;
+            try {
+              saved = await store.write(next);
+            } catch (err) {
+              return json(res, 422, { error: err.message, details: err.details ?? [] });
+            }
+          }
+
+          const report = await applyArtwork(body.artwork ?? {});
+          return json(res, 200, {
+            ok: true,
+            backup: saved?.backup ?? null,
+            artwork: report,
+            artworkSummary: describeArtwork(report),
+          });
+        }
+
         if (path === '/api/upstream/preview' && req.method === 'GET') {
-          const { busy, value } = await exclusive(() => buildPreview());
+          // `?artwork=0` leaves the picture comparison out, so the admin can ask
+          // for it as its own step and report honest progress rather than one
+          // long silence.
+          const withArtwork = url.searchParams.get('artwork') !== '0';
+          const { busy, value } = await exclusive(() => buildPreview({ artwork: withArtwork }));
           if (busy) return json(res, 409, { error: 'a refresh is already running' });
           return json(res, value.status, value.body);
+        }
+
+        // One candidate picture, fetched on first sight and cached after.
+        //
+        // This is what keeps the artwork review cheap: the rows are drawn from
+        // the manifest alone, and a picture is downloaded only when someone
+        // actually looks at it. Reviewing 300 changes costs one request until
+        // you start scrolling — and anything you looked at is already staged
+        // when you accept it.
+        const candidate = /^\/api\/upstream\/art\/([0-9a-f]{16})\.png$/.exec(path);
+        if (candidate && req.method === 'GET') {
+          let buf;
+          try {
+            buf = await art.stage(candidate[1]);
+          } catch (err) {
+            return json(res, 502, { error: err.message });
+          }
+          res.writeHead(200, {
+            'content-type': 'image/png',
+            'content-length': buf.length,
+            // Staged bytes are immutable for the life of this review, but a
+            // later review of the same ID is a different picture. No-store
+            // keeps that from being a puzzle.
+            'cache-control': 'no-store',
+            'x-content-type-options': 'nosniff',
+          });
+          return res.end(buf);
         }
 
         if (path === '/api/upstream/apply' && req.method === 'POST') {

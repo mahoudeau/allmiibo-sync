@@ -29,13 +29,18 @@ export const EMPTY_OVERLAY = Object.freeze({
   categories: {},
   amiibos: {},
   excluded: [],
+  artwork: {},
 });
 
 const ID_RE = /^[0-9a-f]{16}$/;
 const CATEGORY_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-const ROOT_KEYS = new Set(['schema', 'series', 'types', 'categories', 'amiibos', 'excluded']);
+const ROOT_KEYS = new Set([
+  'schema', 'series', 'types', 'categories', 'amiibos', 'excluded', 'artwork',
+]);
+const ARTWORK_KEYS = new Set(['declined', 'decidedAt']);
+const BLOB_SHA_RE = /^[0-9a-f]{40}$/;
 const AMIIBO_KEYS = new Set([
   'kind', 'name', 'release', 'fileName', 'shortName', 'path', 'blurb', 'note',
   'upstreamWas', 'decidedAt',
@@ -200,6 +205,27 @@ export function validateOverlay(overlay) {
           bad(`excluded: ${JSON.stringify(id)} is not a 16-character lowercase hex ID`);
         } else if (seen.has(id)) bad(`excluded: ${id} listed twice`);
         seen.add(id);
+      }
+    }
+  }
+
+  // Artwork changes refused, by the version refused.
+  //
+  // Unlike `excluded`, this one is NOT re-offered next time: a change declined
+  // means "I prefer the picture I have", and asking again every month would be
+  // nagging rather than review. Recording the specific blob hash is what keeps
+  // that from becoming "never": once upstream changes the picture again, the
+  // record no longer matches and the new version is a new question.
+  if (overlay.artwork !== undefined) {
+    if (!isPlainObject(overlay.artwork)) bad('artwork must be an object');
+    else for (const [id, entry] of Object.entries(overlay.artwork)) {
+      if (!ID_RE.test(id)) bad(`artwork: ${id} is not a 16-character lowercase hex ID`);
+      if (!isPlainObject(entry)) { bad(`artwork ${id}: must be an object`); continue; }
+      for (const key of Object.keys(entry)) {
+        if (!ARTWORK_KEYS.has(key)) bad(`artwork ${id}: unknown key "${key}"`);
+      }
+      if (typeof entry.declined !== 'string' || !BLOB_SHA_RE.test(entry.declined)) {
+        bad(`artwork ${id}: declined must be a 40-character hex blob hash`);
       }
     }
   }

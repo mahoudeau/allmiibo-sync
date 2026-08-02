@@ -111,6 +111,19 @@ export function mountHtml(html, { url = 'http://localhost/', storage = {} } = {}
     };
   }
 
+  const reloads = [];
+
+  /** A location the pages can read, and whose reload() can be observed. */
+  function locationLike(src, log) {
+    const out = { reload: () => { log.push(1); }, assign() {}, replace() {} };
+    for (const k of ['href', 'origin', 'protocol', 'host', 'hostname', 'port',
+      'pathname', 'search', 'hash']) {
+      out[k] = src[k] ?? '';
+    }
+    out.toString = () => out.href;
+    return out;
+  }
+
   const globals = {
     window: dom.window,
     // A browser global linkedom does not provide. Selector keys in this project
@@ -122,7 +135,16 @@ export function mountHtml(html, { url = 'http://localhost/', storage = {} } = {}
     localStorage,
     sessionStorage: { ...localStorage },
     navigator: dom.window.navigator ?? { userAgent: 'node' },
-    location: dom.window.location ?? new URL(url),
+    // A recorded reload rather than a real one. Neither linkedom's location nor
+    // a bare URL has reload(), so a page that reloads itself used to throw into
+    // whatever catch was nearest and the test still passed — which is precisely
+    // how the admin's stale-list bug could have shipped twice. Now the call is
+    // observable: `page.reloads` counts it.
+    //
+    // The fields are copied out rather than inherited: a URL keeps its parts in
+    // internal slots, so an object merely prototyped onto one throws "Receiver
+    // must be an instance of class URL" the first time anything reads .search.
+    location: locationLike(dom.window.location ?? new URL(url), reloads),
     HTMLElement: dom.HTMLElement,
     Event: dom.Event,
     CustomEvent: dom.CustomEvent ?? dom.Event,
@@ -153,6 +175,8 @@ export function mountHtml(html, { url = 'http://localhost/', storage = {} } = {}
     document: dom.document,
     window: dom.window,
     localStorage,
+    /** How many times the page asked for a reload. */
+    get reloads() { return reloads.length; },
     $: (sel) => dom.document.querySelector(sel),
     $$: (sel) => [...dom.document.querySelectorAll(sel)],
     byId: (id) => dom.document.getElementById(id),
@@ -174,6 +198,12 @@ export function mountHtml(html, { url = 'http://localhost/', storage = {} } = {}
  * object, serialised as a 200 JSON response, or `{ status, body }`. Anything
  * unrouted throws with the path, so a forgotten route fails loudly rather than
  * silently returning undefined.
+ *
+ * A query string does not have to be routed: `/api/thing?x=1` falls back to the
+ * `/api/thing` route. Otherwise adding a parameter to a request breaks every
+ * test that stubs it, for no reason connected to what those tests assert — and
+ * `calls` still records the full URL, so a test that cares about the parameter
+ * can assert on it.
  */
 export function stubFetch(routes) {
   const calls = [];
@@ -182,10 +212,17 @@ export function stubFetch(routes) {
     const method = (init.method ?? 'GET').toUpperCase();
     calls.push({ path, method, body: init.body, headers: init.headers ?? {} });
 
-    const route = routes[`${method} ${path}`] ?? routes[path];
+    const bare = path.split('?')[0];
+    let route = routes[`${method} ${path}`] ?? routes[path]
+      ?? routes[`${method} ${bare}`] ?? routes[bare];
     if (route === undefined) {
       throw new Error(`no stub for ${method} ${path}`);
     }
+    // A route may be a function, and may be async — which is the only way to
+    // hold a request open. Anything that renders WHILE a request is in flight
+    // is otherwise untestable against instant stubs: the flow finishes inside
+    // one tick and there is no mid-flight to look at.
+    if (typeof route === 'function') route = await route({ path, method, body: init.body });
     const { status = 200, body = route } = route.status ? route : { body: route };
     const text = typeof body === 'string' ? body : JSON.stringify(body);
     return {

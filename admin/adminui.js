@@ -17,9 +17,10 @@ import { ICONS } from '/js/icons.js';
 import { buildCollection, seriesRepresentative, describeAmiibo, isHhdItemCards } from '/js/amiibo.js';
 import { AMIIBO_RELEASE } from '/data/amiibo-db.js';
 import { sortSeries, seriesDate } from '/js/collectionview.js';
+import { seriesByteOf } from '/js/dbsource.js';
 import { buildSeriesGrid, applyGridFilter, reorderGroups } from '/js/collectiongrid.js';
 import { validateAmiiboEntry, validateOverlay, REFERENCE_ROOT } from '/js/overlay.js';
-import { confirmDialog } from '/js/dialog.js';
+import { confirmDialog, chooseDialog } from '/js/dialog.js';
 import { mountHeader, mountFooter, currentPirate } from '/js/chrome.js';
 import { makeArt, dropBrokenArt } from '/js/artwork.js';
 import { buildAmiiboDetail } from '/js/amiibopanel.js';
@@ -150,6 +151,42 @@ function say(message, kind = '') {
   box.textContent = message;
 }
 
+/**
+ * A message that has to survive a page reload.
+ *
+ * Applying an update rewrites the generated database, and this page imported
+ * that database as an ES MODULE — evaluated once per document and cached by the
+ * browser, so rewriting the file on disk cannot reach a page that already
+ * loaded it. Re-fetching the API and re-rendering leaves the old names, the old
+ * counts and the old rows on screen, which is exactly what it looked like. The
+ * only way to pick up a new database is a new document, so the receipt is
+ * parked here and read back on the next boot.
+ */
+const HANDOVER = 'admin:sayAfterReload';
+
+function sayAfterReload(message, kind = 'ok') {
+  try {
+    sessionStorage.setItem(HANDOVER, JSON.stringify({ message, kind }));
+  } catch {
+    // Private mode, or storage full. The reload still has to happen — losing
+    // the receipt is much better than leaving a stale list on screen.
+  }
+  location.reload();
+}
+
+function drainHandover() {
+  let raw = null;
+  try {
+    raw = sessionStorage.getItem(HANDOVER);
+    sessionStorage.removeItem(HANDOVER);
+  } catch {}
+  if (!raw) return;
+  try {
+    const { message, kind } = JSON.parse(raw);
+    if (message) say(message, kind);
+  } catch {}
+}
+
 // ---- login --------------------------------------------------------------
 
 async function signIn() {
@@ -206,6 +243,10 @@ async function boot() {
   loadBackups();
   if (!overlayRes.upstreamReady) {
     say('The upstream sources have not been fetched yet, so saving cannot rebuild the site.', 'warn');
+  } else {
+    // Last, so a receipt from before a reload is not immediately overwritten by
+    // the line above — and so it appears against a list that is already drawn.
+    drainHandover();
   }
 }
 
@@ -579,9 +620,24 @@ const STEPS = [
   { key: 'series', title: 'SERIES', of: (e) => e.kind === 'series' },
   { key: 'type', title: 'TYPES', of: (e) => e.kind === 'type' },
   { key: 'amiibo', title: 'AMIIBO', of: (e) => e.kind === 'amiibo' && !e.device },
+  // Artwork is not an entity in the diff — it is compared separately, against a
+  // manifest rather than against the database — so this step has no `of` and
+  // is included on its own count.
+  { key: 'artwork', title: 'ARTWORK', of: () => false },
   { key: 'device', title: 'ON YOUR DEVICE', of: (e) => Boolean(e.device) },
   { key: 'confirm', title: 'CONFIRM', of: () => false },
 ];
+
+/** The artwork rows to review: an addition is not a question, a change is. */
+function artworkRows(review) {
+  const a = review?.artwork;
+  if (!a) return [];
+  return [
+    ...a.added.map((c) => ({ ...c, op: 'add' })),
+    ...a.changed.map((c) => ({ ...c, op: 'edit' })),
+    ...a.removed.map((c) => ({ ...c, op: 'remove' })),
+  ];
+}
 
 // Sections within a step, in a fixed order.
 const OPS = [
@@ -595,11 +651,19 @@ const FIELD_LABEL = {
   fileName: 'filename', shortName: 'short name',
 };
 
+/**
+ * One update, asked what it should cover.
+ *
+ * Data and pictures move on different schedules upstream — an amiibo added in
+ * July can get its artwork in August — so each has to be reachable on its own.
+ * That is a scope question, not a second feature: whichever is chosen, the
+ * answer is reviewed on the same screen with the same ACCEPT and DECLINE.
+ */
 async function openReview() {
   if (state.dirty) {
     const ok = await confirmDialog({
       title: 'SAVE YOUR EDITS FIRST?',
-      body: 'Applying a refresh writes the overlay, so it cannot run alongside '
+      body: 'Applying an update writes the overlay, so it cannot run alongside '
         + 'unsaved edits. Save or revert them, then try again.',
       confirmLabel: 'OK',
       cancelLabel: 'CLOSE',
@@ -607,17 +671,21 @@ async function openReview() {
     return void ok;
   }
 
-  say('Checking for updates…');
+  const scope = await chooseDialog({
+    title: 'WHAT SHOULD THIS UPDATE COVER?',
+    body: 'Everything found is reviewed before anything is published.',
+    options: [
+      { value: 'both', label: 'DATA & PICTURES', hint: 'The usual choice: check both at once.' },
+      { value: 'data', label: 'DATA ONLY', hint: 'Names, series, release dates and filenames.' },
+      { value: 'images', label: 'PICTURES ONLY', hint: 'Artwork that is missing or has changed upstream. Does not fetch the sources.' },
+    ],
+  });
+  if (!scope) return;
+
+  say('Checking…');
   el('refresh').disabled = true;
   try {
-    await api('/upstream/refresh', { method: 'POST' });
-    // Deliberately NOT short-circuiting on "the sources are byte-identical to
-    // what is cached". That answers a different question. The sources can be
-    // unchanged while the published database is still behind them — a cache
-    // fetched but never applied, or a database regenerated from an older pair
-    // — and there is plenty to review in that case. What matters is whether
-    // the DATABASE would change, which only the preview knows.
-    await loadPreview();
+    await loadPreview(scope);
   } catch (err) {
     say([err.message, ...(err.details ?? [])].join(' · '), 'err');
   } finally {
@@ -625,32 +693,153 @@ async function openReview() {
   }
 }
 
-async function loadPreview() {
-  const preview = await api('/upstream/preview');
-  if (!preview.pending) {
-    say('There is no pending refresh.', 'warn');
-    return;
-  }
-  if (!preview.ok) {
-    // The new sources introduce something the build refuses. There is no
-    // candidate to diff, so say that plainly rather than showing an empty
-    // review.
-    say(`This refresh will not build: ${preview.errors.join(' · ')}`, 'err');
-    return;
-  }
-  if (preview.diff.counts.total === 0) {
-    // Nothing to decide. Worth one line rather than an empty review screen —
-    // and the fetch is thrown away so it does not sit there looking pending.
-    say('No update available: the site already matches upstream.', 'ok');
-    await api('/upstream/pending', { method: 'DELETE' }).catch(() => {});
-    return;
-  }
+/**
+ * The progress panel: one line per request, and a bar driven by how many have
+ * actually finished.
+ *
+ * Nothing here is on a timer. A step marked done is a round trip that returned,
+ * which is why the work is split into separate requests at all — rolling the
+ * database and the artwork into one call meant one long wait with nothing
+ * truthful to say about it.
+ */
+const progress = {
+  steps: [],
+  start(steps) {
+    this.steps = steps.map((s) => ({ ...s, state: 'wait' }));
+    el('progress').hidden = false;
+    this.draw();
+  },
+  at(key, state, note) {
+    const step = this.steps.find((s) => s.key === key);
+    if (step) Object.assign(step, { state, note: note ?? step.note });
+    this.draw();
+  },
+  stop() {
+    el('progress').hidden = true;
+    this.steps = [];
+  },
+  draw() {
+    const done = this.steps.filter((s) => s.state === 'done').length;
+    el('pFill').style.width = this.steps.length
+      ? `${Math.round((done / this.steps.length) * 100)}%` : '0';
 
-  // Verdicts are per ENTITY — the thing on screen — and expanded to the flat
-  // change keys the server names only when the update is applied.
-  state.review = { ...preview, verdicts: {}, steps: [], step: 0 };
-  renderReview();
-  say('');
+    const list = el('pSteps');
+    list.textContent = '';
+    for (const s of this.steps) {
+      const li = document.createElement('li');
+      li.className = s.state === 'done' ? 'done' : s.state === 'now' ? 'now' : s.state === 'fail' ? 'fail' : '';
+      const mark = document.createElement('span');
+      mark.className = 'mark';
+      mark.textContent = { done: '✓', now: '…', fail: '✕', wait: '·' }[s.state];
+      li.append(mark);
+      li.append(document.createTextNode(s.label));
+      if (s.note) {
+        const note = document.createElement('span');
+        note.className = 'note';
+        note.textContent = `— ${s.note}`;
+        li.append(note);
+      }
+      list.append(li);
+    }
+  },
+};
+
+async function loadPreview(scope = 'both') {
+  const wantsData = scope !== 'images';
+  const wantsArt = scope !== 'data';
+
+  progress.start([
+    ...(wantsData ? [
+      { key: 'fetch', label: 'Fetching the upstream sources' },
+      { key: 'build', label: 'Building the database and comparing it' },
+    ] : []),
+    ...(wantsArt ? [{ key: 'art', label: 'Comparing the artwork' }] : []),
+  ]);
+
+  try {
+    let preview = null;
+
+    if (wantsData) {
+      progress.at('fetch', 'now');
+      const meta = await api('/upstream/refresh', { method: 'POST' });
+      progress.at('fetch', 'done', meta.changed ? 'both sources read' : 'unchanged since last time');
+
+      // Deliberately NOT short-circuiting on "the sources are byte-identical to
+      // what is cached". That answers a different question. The sources can be
+      // unchanged while the published database is still behind them — a cache
+      // fetched but never applied, or a database regenerated from an older pair
+      // — and there is plenty to review in that case. What matters is whether
+      // the DATABASE would change, which only the preview knows.
+      // Always without the artwork: it is its own step below, so that its
+      // progress is real rather than inferred from a request doing two jobs.
+      progress.at('build', 'now');
+      preview = await api('/upstream/preview?artwork=0');
+
+      if (!preview.pending) {
+        progress.at('build', 'fail', 'nothing pending');
+        say('There is no pending refresh.', 'warn');
+        return;
+      }
+      if (!preview.ok) {
+        // The new sources introduce something the build refuses. There is no
+        // candidate to diff, so say that plainly rather than showing an empty
+        // review.
+        progress.at('build', 'fail', 'the candidate would not build');
+        say(`This refresh will not build: ${preview.errors.join(' · ')}`, 'err');
+        return;
+      }
+      const n = preview.diff.summary.total;
+      progress.at('build', 'done', n ? `${n} change${n === 1 ? '' : 's'}` : 'no changes');
+    }
+
+    let artwork = null;
+    let artworkError = null;
+    if (wantsArt) {
+      progress.at('art', 'now');
+      try {
+        // `pending=1` compares against the database this update would PUBLISH,
+        // not the one on the site — so an amiibo the data half is adding has
+        // its artwork checked in the same pass.
+        ({ artwork } = await api(`/artwork?pending=${wantsData ? '1' : '0'}`));
+        const n = artworkRows({ artwork }).length;
+        progress.at('art', 'done', n ? `${n} picture${n === 1 ? '' : 's'}` : 'all up to date');
+      } catch (err) {
+        // Its own failure, never the data review's: GitHub throttling the image
+        // index is no reason to be unable to review a rename.
+        artworkError = err.message;
+        progress.at('art', 'fail', err.message);
+      }
+    }
+
+    const nothing = !(preview?.diff.counts.total) && !artworkRows({ artwork }).length;
+    if (nothing) {
+      // Nothing to decide. Worth one line rather than an empty review screen —
+      // and any fetch is thrown away so it does not sit there looking pending.
+      say(artworkError
+        ? `Nothing to update in the data. Artwork was not checked: ${artworkError}`
+        : wantsArt && !wantsData
+          ? `Artwork is up to date: ${artwork.unchanged} pictures`
+            + (artwork.held ? `, ${artwork.held} held at the version you chose` : '') + '.'
+          : wantsArt
+            ? 'No update available: the site already matches upstream, pictures included.'
+            : 'No update available: the site already matches upstream.',
+        artworkError ? 'warn' : 'ok');
+      if (wantsData) await api('/upstream/pending', { method: 'DELETE' }).catch(() => {});
+      return;
+    }
+
+    // Verdicts are per ENTITY — the thing on screen — and expanded to the flat
+    // change keys the server names only when the update is applied.
+    state.review = {
+      ...(preview ?? { diff: null, pending: null, fingerprint: null }),
+      scope, artwork, artworkError,
+      verdicts: {}, artVerdicts: {}, steps: [], step: 0,
+    };
+    renderReview();
+    say('');
+  } finally {
+    progress.stop();
+  }
 }
 
 function renderReview() {
@@ -658,11 +847,18 @@ function renderReview() {
   el('library').hidden = true;
   el('review').hidden = false;
 
-  el('reviewWhen').textContent = `fetched ${readableStamp(r.pending.fetchedAt)}`;
+  el('reviewWhen').textContent = r.pending
+    ? `fetched ${readableStamp(r.pending.fetchedAt)}`
+    : 'artwork only — the sources were not fetched';
 
   // Only steps that have something in them, so the numbering counts what there
-  // actually is to look at rather than promising empty screens.
-  r.steps = STEPS.filter((s) => s.key === 'confirm' || r.diff.entities.some(s.of));
+  // actually is to look at rather than promising empty screens. A pictures-only
+  // update has no diff at all, which is why every entity step is gated on one
+  // existing rather than on it being empty.
+  r.steps = STEPS.filter((s) => s.key === 'confirm'
+    || (s.key === 'artwork'
+      ? artworkRows(r).length > 0
+      : Boolean(r.diff) && r.diff.entities.some(s.of)));
   r.step = 0;
 
   renderSummary();
@@ -685,19 +881,30 @@ function closeReview() {
  * That is the specific failure being fixed.
  */
 function renderSummary() {
-  const s = state.review.diff.summary;
+  const s = state.review.diff?.summary ?? null;
   const part = (n, noun, verb) => `${n} ${noun}${n === 1 ? '' : n && noun.endsWith('s') ? '' : ''} to ${verb}`;
 
   const bits = [];
-  if (s.amiibo.add || s.amiibo.edit || s.amiibo.remove) {
+  if (s && (s.amiibo.add || s.amiibo.edit || s.amiibo.remove)) {
     bits.push(`${part(s.amiibo.add, 'amiibo', 'add')}, ${s.amiibo.edit} to change, `
       + `${s.amiibo.remove} to remove`);
   }
-  for (const [kind, noun] of [['series', 'series'], ['type', 'type']]) {
+  for (const [kind, noun] of s ? [['series', 'series'], ['type', 'type']] : []) {
     const k = s[kind];
     if (k.add) bits.push(`${k.add} ${noun} to add`);
     if (k.edit) bits.push(`${k.edit} ${noun} to change`);
     if (k.remove) bits.push(`${k.remove} ${noun} to remove`);
+  }
+  // Artwork joins the same sentence, in the same shape, because it is part of
+  // the same update — and a picture count nobody mentions is a picture count
+  // nobody checks.
+  const a = state.review.artwork;
+  if (a) {
+    const art = [];
+    if (a.added.length) art.push(`${a.added.length} to fetch`);
+    if (a.changed.length) art.push(`${a.changed.length} to replace`);
+    if (a.removed.length) art.push(`${a.removed.length} to drop`);
+    if (art.length) bits.push(`artwork: ${art.join(', ')}`);
   }
   el('reviewSummary').textContent = `Update: ${bits.join(' · ')}`;
 
@@ -705,14 +912,21 @@ function renderSummary() {
   // whether this update needs care.
   const risk = el('reviewRisk');
   const notes = [];
-  notes.push(s.yours
-    ? `${s.yours} of these collide with something you curated`
-    : 'Nothing you have curated is affected');
-  notes.push(s.device
-    ? `${s.device} would rename files on your device`
-    : 'No files move on your device');
+  if (s) {
+    notes.push(s.yours
+      ? `${s.yours} of these collide with something you curated`
+      : 'Nothing you have curated is affected');
+    notes.push(s.device
+      ? `${s.device} would rename files on your device`
+      : 'No files move on your device');
+  } else {
+    notes.push('Pictures only — the database is not touched');
+  }
+  // Said out loud rather than left as an absence: a check that could not run
+  // and a check that found nothing look identical on screen otherwise.
+  if (state.review.artworkError) notes.push(`artwork not checked — ${state.review.artworkError}`);
   risk.textContent = notes.join(' · ');
-  risk.className = `summaryRisk${s.device ? ' err' : s.yours ? ' warn' : ''}`;
+  risk.className = `summaryRisk${s?.device ? ' err' : (s?.yours || state.review.artworkError) ? ' warn' : ''}`;
 }
 
 function renderStepper() {
@@ -751,6 +965,7 @@ function renderStep() {
   el('reviewApply').hidden = !last;
 
   if (step.key === 'confirm') return renderConfirm(panel);
+  if (step.key === 'artwork') return renderArtworkStep(panel);
 
   const rows = r.diff.entities.filter(step.of);
   const body = document.createElement('div');
@@ -888,6 +1103,202 @@ function renderEntityRow(entity) {
 }
 
 /**
+ * The artwork step: pictures side by side, because a hash is not a picture.
+ *
+ * Every row is a question, additions included. An earlier version stated
+ * arrivals as a count and fetched them regardless, on the grounds that there is
+ * no picture to keep — but "I do not want that one" is a real answer, and
+ * deciding on the reviewer's behalf is the opposite of a review.
+ */
+function renderArtworkStep(panel) {
+  const r = state.review;
+  const rows = artworkRows(r);
+  const body = document.createElement('div');
+  body.className = 'stepBody panel';
+
+  for (const { op, title } of OPS) {
+    const inOp = rows.filter((row) => row.op === op);
+    if (!inOp.length) continue;
+
+    const h = document.createElement('h3');
+    h.append(document.createTextNode(`${title} (${inOp.length})`));
+    if (inOp.length > 1) {
+      const bulk = document.createElement('span');
+      bulk.className = 'bulk';
+      for (const [verdict, label] of [['keep', 'ACCEPT ALL'], ['skip', 'DECLINE ALL']]) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = label;
+        b.addEventListener('click', () => {
+          for (const row of inOp) decideArtwork(row, verdict);
+          renderStep();
+        });
+        bulk.append(b);
+      }
+      h.append(bulk);
+    }
+    body.append(h);
+    for (const row of inOp) body.append(renderArtworkRow(row));
+  }
+
+  panel.append(body);
+}
+
+function renderArtworkRow(item) {
+  const r = state.review;
+  const verdict = r.artVerdicts[item.id];
+
+  const row = document.createElement('div');
+  row.className = 'entity artRow'
+    + (verdict === 'keep' ? ' accepted' : verdict === 'skip' ? ' declined' : '');
+  row.dataset.art = item.id;
+
+  // Which amiibo this picture belongs to, named the way the rest of the screen
+  // names one: the display name, the series it sits in, and the ID. A picture
+  // on its own is not identification — several amiibo share a character and a
+  // pose, and the series is what tells them apart.
+  const top = document.createElement('div');
+  top.className = 'top';
+  const name = document.createElement('span');
+  name.className = 'name';
+  name.textContent = state.db.names[item.id] ?? item.id;
+  top.append(name);
+
+  const series = document.createElement('span');
+  series.className = 'ref inline';
+  series.textContent = seriesLabel(seriesByteOf(item.id));
+  top.append(series);
+
+  // Last, so the shared `.ref` rule pushes it to the right edge the way it does
+  // on every other row.
+  const ref = document.createElement('span');
+  ref.className = 'ref';
+  ref.textContent = item.id;
+  top.append(ref);
+
+  if (verdict) {
+    const v = document.createElement('span');
+    v.className = 'verdict';
+    v.textContent = verdict === 'keep' ? '✓ ACCEPTED' : '✕ DECLINED';
+    top.append(v);
+  }
+  row.append(top);
+
+  // Always before → after, whatever the operation. Where one side does not
+  // exist it is drawn as an explicit empty slot rather than left out: an
+  // arrival and a replacement then read the same way, and "there is nothing
+  // here today" is itself the thing worth seeing. An empty slot is not the same
+  // as a missing image — it is labelled, and it holds the layout.
+  const pair = document.createElement('div');
+  pair.className = 'artPair';
+
+  const slot = (label) => {
+    const box = document.createElement('span');
+    box.className = 'artNone';
+    box.textContent = label;
+    return box;
+  };
+  const picture = (src, alt) => {
+    const img = document.createElement('img');
+    img.src = src;
+    img.alt = alt;
+    img.loading = 'lazy';
+    return img;
+  };
+
+  pair.append(item.op === 'add'
+    ? slot('none yet')
+    : picture(`/data/images/full/${item.id}.png`, 'the picture now'));
+
+  const arrow = document.createElement('span');
+  arrow.className = 'artArrow';
+  arrow.textContent = '→';
+  pair.append(arrow);
+
+  // Fetched from the review endpoint, which downloads that one candidate on
+  // first sight — so a step listing 300 pictures still costs one request until
+  // it is actually read.
+  pair.append(item.op === 'remove'
+    ? slot('deleted')
+    : picture(`/api/upstream/art/${item.id}.png`, 'the picture upstream has'));
+
+  const caption = document.createElement('div');
+  caption.className = 'artCaption';
+  for (const text of [
+    item.op === 'add' ? 'no artwork here' : 'here now',
+    item.op === 'remove' ? 'gone upstream' : 'upstream',
+  ]) {
+    const c = document.createElement('span');
+    c.textContent = text;
+    caption.append(c);
+  }
+  pair.append(caption);
+  row.append(pair);
+
+  const why = document.createElement('div');
+  why.className = 'why';
+  const size = item.size ? `${item.size.toLocaleString()} bytes` : '';
+  why.textContent = item.op === 'remove'
+    ? 'Upstream no longer has a picture for this one.'
+    : item.op === 'add'
+      ? ['This amiibo has no artwork on the site yet.', size].filter(Boolean).join(' · ')
+      : [`${item.was.slice(0, 8)} → ${item.sha.slice(0, 8)}`, size].filter(Boolean).join(' · ');
+  row.append(why);
+
+  const acts = document.createElement('div');
+  acts.className = 'acts';
+  for (const [v, label, title] of [
+    ['keep', '✓ ACCEPT', item.op === 'remove'
+      ? 'Delete the picture here too.'
+      : item.op === 'add' ? 'Fetch it.' : 'Use the new picture.'],
+    ['skip', '✕ DECLINE', item.op === 'remove'
+      ? 'Keep the picture you have.'
+      : item.op === 'add'
+        ? 'Leave it out for now. The next update will offer it again.'
+        : 'Keep the picture you have. You will not be asked again unless upstream changes it further.'],
+  ]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.title = title;
+    if (verdict === v) b.className = 'primary';
+    b.addEventListener('click', () => { decideArtwork(item, v); renderStep(); });
+    acts.append(b);
+  }
+  row.append(acts);
+  return row;
+}
+
+/**
+ * An artwork verdict, with what it was about.
+ *
+ * The version matters for a change — that is the record which makes a refusal
+ * expire when upstream moves again — and the operation matters for all three,
+ * because accepting means fetch, replace or delete depending on it.
+ */
+function decideArtwork(item, verdict) {
+  const r = state.review;
+  r.artVerdicts[item.id] = verdict;
+  r.artFacts = { ...(r.artFacts ?? {}), [item.id]: { sha: item.sha ?? null, op: item.op } };
+}
+
+/** Verdicts in the shape the server applies them: id -> { verdict, sha, op }. */
+function artworkDecisions() {
+  const r = state.review;
+  const out = {};
+  // Untouched means accepted, the same rule the data uses — so every row is
+  // sent, not only the ones that were clicked.
+  for (const row of artworkRows(r)) {
+    out[row.id] = {
+      verdict: r.artVerdicts?.[row.id] ?? 'keep',
+      sha: row.op === 'edit' ? row.sha : null,
+      op: row.op,
+    };
+  }
+  return out;
+}
+
+/**
  * Record a verdict, and carry it to whatever depends on it.
  *
  * Declining an amiibo whose series is also new leaves the series with nothing
@@ -913,11 +1324,11 @@ function renderConfirm(panel) {
   const body = document.createElement('div');
   body.className = 'stepBody panel';
 
+  const entities = r.diff?.entities ?? [];
   const decided = Object.keys(r.verdicts).length;
-  const declined = r.diff.entities.filter((e) => r.verdicts[e.key] === 'skip');
-  const accepted = r.diff.entities.filter((e) => r.verdicts[e.key] !== 'skip');
-  const renames = r.diff.entities.filter(
-    (e) => e.device && r.verdicts[e.key] !== 'skip');
+  const declined = entities.filter((e) => r.verdicts[e.key] === 'skip');
+  const accepted = entities.filter((e) => r.verdicts[e.key] !== 'skip');
+  const renames = entities.filter((e) => e.device && r.verdicts[e.key] !== 'skip');
 
   const h = document.createElement('h3');
   h.textContent = 'WHAT WILL HAPPEN';
@@ -931,18 +1342,56 @@ function renderConfirm(panel) {
     list.append(li);
   };
 
-  say_(`${accepted.length} change${accepted.length === 1 ? '' : 's'} applied.`);
-  if (declined.length) {
-    say_(`${declined.length} declined — left out for now, offered again next update.`);
+  if (entities.length) {
+    say_(`${accepted.length} change${accepted.length === 1 ? '' : 's'} applied.`);
+    if (declined.length) {
+      say_(`${declined.length} declined — left out for now, offered again next update.`);
+    }
+    if (renames.length) {
+      say_(`${renames.length} file${renames.length === 1 ? '' : 's'} renamed on every device you sync.`);
+    }
+    if (decided < entities.length) {
+      // Said out loud rather than left implicit: this is the trade for not
+      // blocking on rows nobody can act on.
+      say_(`${entities.length - decided} left untouched, and will be accepted.`);
+    }
+  } else {
+    say_('The database is not touched: this update is pictures only.');
   }
-  if (renames.length) {
-    say_(`${renames.length} file${renames.length === 1 ? '' : 's'} renamed on every device you sync.`);
+
+  // Artwork, counted the same way. Anything not answered is accepted, exactly
+  // as with the data — one rule, not two.
+  if (r.artwork) {
+    const rows = artworkRows(r);
+    const taken = (op) => rows.filter(
+      (row) => row.op === op && r.artVerdicts[row.id] !== 'skip').length;
+    const fetching = taken('add');
+    const replacing = taken('edit');
+    const dropping = taken('remove');
+    const artDeclined = rows.filter((row) => r.artVerdicts[row.id] === 'skip');
+    const untouched = rows.filter((row) => !r.artVerdicts[row.id]).length;
+
+    if (fetching) say_(`${fetching} picture${fetching === 1 ? '' : 's'} fetched.`);
+    if (replacing) say_(`${replacing} picture${replacing === 1 ? '' : 's'} replaced.`);
+    if (dropping) say_(`${dropping} picture${dropping === 1 ? '' : 's'} deleted here too.`);
+    if (artDeclined.length) {
+      const declinedAdds = artDeclined.filter((row) => row.op === 'add').length;
+      const declinedRest = artDeclined.length - declinedAdds;
+      // Two sentences because the two mean different things, and collapsing
+      // them would promise one behaviour for both.
+      if (declinedAdds) {
+        say_(`${declinedAdds} picture${declinedAdds === 1 ? '' : 's'} left out for now — `
+          + 'offered again next update.');
+      }
+      if (declinedRest) {
+        say_(`${declinedRest} picture${declinedRest === 1 ? '' : 's'} kept as ${declinedRest === 1 ? 'it is' : 'they are'} — `
+          + 'you will not be asked again unless upstream changes them further.');
+      }
+    }
+    if (untouched) say_(`${untouched} picture${untouched === 1 ? '' : 's'} left untouched, and will be accepted.`);
   }
-  if (decided < r.diff.entities.length) {
-    // Said out loud rather than left implicit: this is the trade for not
-    // blocking on rows nobody can act on.
-    say_(`${r.diff.entities.length - decided} left untouched, and will be accepted.`);
-  }
+  if (r.artworkError) say_(`Artwork was not checked: ${r.artworkError}`);
+
   body.append(list);
   panel.append(body);
 }
@@ -951,7 +1400,7 @@ function renderConfirm(panel) {
 function reviewDecisions() {
   const r = state.review;
   const out = {};
-  for (const e of r.diff.entities) {
+  for (const e of r.diff?.entities ?? []) {
     const verdict = r.verdicts[e.key] ?? 'keep';
     for (const key of e.changeKeys) out[key] = verdict;
   }
@@ -960,7 +1409,8 @@ function reviewDecisions() {
 
 async function applyReview() {
   const r = state.review;
-  const renames = r.diff.entities.filter((e) => e.device && r.verdicts[e.key] !== 'skip');
+  const renames = (r.diff?.entities ?? []).filter(
+    (e) => e.device && r.verdicts[e.key] !== 'skip');
 
   if (renames.length) {
     const ok = await confirmDialog({
@@ -973,26 +1423,47 @@ async function applyReview() {
     if (!ok) return;
   }
 
+  // A pictures-only update has no pending source fetch to apply, so it goes to
+  // its own endpoint. Same verdicts, same screen — only the database is spared
+  // a rebuild it would not change.
+  const picturesOnly = !r.diff;
+
   el('reviewApply').disabled = true;
-  say('Applying and rebuilding the site…');
+  say(picturesOnly ? 'Applying the artwork…' : 'Applying and rebuilding the site…');
   try {
-    const result = await api('/upstream/apply', {
-      method: 'POST',
-      body: { fingerprint: r.fingerprint, decisions: reviewDecisions() },
-    });
+    const result = picturesOnly
+      ? await api('/artwork/apply', { method: 'POST', body: { artwork: artworkDecisions() } })
+      : await api('/upstream/apply', {
+        method: 'POST',
+        body: {
+          fingerprint: r.fingerprint,
+          decisions: reviewDecisions(),
+          artwork: artworkDecisions(),
+        },
+      });
     closeReview();
-    say(`Applied. The site now has ${result.entries} amiibo`
-      + (result.applied.pinsWritten ? `, holding ${result.applied.pinsWritten} value(s) back` : '')
-      + (result.renames.length ? `, renaming ${result.renames.length} file(s) on the device` : '')
-      + '.', 'ok');
-    await boot();
+
+    const receipt = picturesOnly
+      ? result.artworkSummary
+      : `Applied. The site now has ${result.entries} amiibo`
+        + (result.applied.pinsWritten ? `, holding ${result.applied.pinsWritten} value(s) back` : '')
+        + (result.renames.length ? `, renaming ${result.renames.length} file(s) on the device` : '')
+        + '.'
+        + (result.artworkSummary ? ` ${result.artworkSummary}` : '');
+
+    // A reload rather than boot(): the database this page is drawing from is a
+    // module the browser has already evaluated, so nothing short of a new
+    // document shows the new entries. Pictures are ordinary files rather than a
+    // module, but they are cached too, and a reload is the honest way to see
+    // them replaced.
+    sayAfterReload(receipt, result.artwork?.tiers?.skipped ? 'warn' : 'ok');
   } catch (err) {
     el('reviewApply').disabled = false;
     if (err.status === 409) {
       // The world moved underneath the preview. Reload it rather than trying
       // to reconcile decisions against a diff that no longer exists.
       say('Something changed while you were reviewing. Reloading the preview.', 'warn');
-      await loadPreview();
+      await loadPreview(r.scope);
       return;
     }
     say([err.message, ...(err.details ?? [])].join(' · '), 'err');

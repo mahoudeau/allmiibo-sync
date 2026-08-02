@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 import { createAdminServer } from '../server/index.mjs';
 import { hashPassword, CSRF_HEADER } from '../server/auth.mjs';
+import { blobSha } from '../server/artwork.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const REAL_CACHE = join(REPO, 'tools/.cache');
@@ -28,6 +29,8 @@ const opts = { skip: haveCache ? false : 'tools/.cache is empty; run npm run upd
 
 const PASSWORD = 'a correct horse battery staple';
 const MARIO = '0000000000000002';
+const MARIO_SMB = '0000000000340102';   // the same character, a different series
+const MARIO_GOLD = '00000000003c0102';
 
 let dir;
 let base;
@@ -85,6 +88,11 @@ beforeEach(async () => {
     cacheDir: join(dir, 'cache'),
     secureCookies: false,
     sources: { 'db_amiibo.c': `${origin}/firmware`, 'amiibo.json': `${origin}/api` },
+    // Artwork comes from the same local origin, so neither previewing nor
+    // applying ever reaches GitHub. Unrouted paths there answer 404, which is
+    // also the real "upstream has no picture for this one yet" case.
+    imagesBase: `${origin}/images`,
+    manifestUrl: `${origin}/manifest`,
   });
   handle = ctx.server;
   await new Promise((r) => handle.listen(0, '127.0.0.1', r));
@@ -116,6 +124,16 @@ const liveCache = () => readFile(join(dir, 'cache/db_amiibo.c'), 'utf8');
 /** Serve a firmware with one amiibo renamed, so there is something to review. */
 function serveRename(from = '"Mario"', to = '"Mario (Upstream)"') {
   serving = { '/firmware': { body: REAL_FIRMWARE.replace(from, to) }, '/api': { body: REAL_API } };
+}
+
+/** Serve a firmware with one amiibo upstream did not have before. */
+const NEW_ID = 'ffff0000ffff0002';
+function serveAddition(id = NEW_ID, name = 'Invented') {
+  const row = `{0x${id.slice(0, 8)}, 0x${id.slice(8)}, "${name}", "${name}"}, \n`;
+  serving = {
+    '/firmware': { body: REAL_FIRMWARE.replace('{0x00000000,', `${row}{0x00000000,`) },
+    '/api': { body: REAL_API },
+  };
 }
 
 // ---- the gates -----------------------------------------------------------
@@ -405,4 +423,287 @@ test('a skipped rename is not reported as a rename, because it does not happen',
   const body = await (await post(s, '/api/upstream/apply',
     { fingerprint: preview.fingerprint, decisions })).json();
   assert.deepEqual(body.renames, []);
+});
+
+// ---- artwork -------------------------------------------------------------
+
+/** A plausible image index, listing whatever the site already has on disk. */
+async function serveManifest(entries = {}) {
+  const tree = Object.entries(entries).map(([id, body]) => ({
+    path: `icon_${id.slice(0, 8)}-${id.slice(8)}.png`,
+    type: 'blob',
+    sha: blobSha(Buffer.from(body)),
+    size: body.length,
+  }));
+  // Padded past the plausibility floor, which exists so an error page cannot
+  // read as "upstream deleted everything".
+  for (let i = 0; i < 600; i++) {
+    tree.push({
+      path: `icon_ffff${String(i).padStart(4, '0')}-00000002.png`,
+      type: 'blob', sha: blobSha(Buffer.from(`pad${i}`)), size: 4,
+    });
+  }
+  serving['/manifest'] = { body: JSON.stringify({ truncated: false, tree }) };
+}
+
+test('the preview says what would happen to the artwork', opts, async () => {
+  const s = await signIn();
+  await mkdir(join(dir, 'site/data/images/full'), { recursive: true });
+  await writeFile(join(dir, 'site/data/images/full', `${MARIO}.png`), 'OLD PICTURE');
+
+  // serveRename() replaces the whole routing table, so the manifest route has
+  // to be added after it, not before.
+  serveRename();
+  // Mario's picture moved; the second one upstream has and this site does not.
+  await serveManifest({ [MARIO]: 'NEW PICTURE', [MARIO_SMB]: 'A PICTURE' });
+  await post(s, '/api/upstream/refresh');
+  const preview = await (await get(s, '/api/upstream/preview')).json();
+
+  assert.equal(preview.artworkError, null);
+  assert.deepEqual(preview.artwork.changed.map((c) => c.id), [MARIO]);
+  assert.deepEqual(preview.artwork.added.map((a) => a.id), [MARIO_SMB]);
+  assert.deepEqual(preview.artwork.removed, [],
+    'an entry with no picture on either side is not a removal');
+});
+
+test('an artwork check that fails leaves the data review intact', opts, async () => {
+  // Two independent decisions. GitHub rate-limiting the image index is no
+  // reason to be unable to review a rename, and reporting the whole preview as
+  // broken would make it look like one.
+  const s = await signIn();
+  serveRename();
+  serving['/manifest'] = { status: 403, body: '{"message":"rate limit"}' };
+  await post(s, '/api/upstream/refresh');
+  const preview = await (await get(s, '/api/upstream/preview')).json();
+
+  assert.equal(preview.ok, true, 'the data review is fine');
+  assert.equal(preview.diff.counts.renamed, 1);
+  assert.equal(preview.artwork, null);
+  assert.match(preview.artworkError, /rate-limited/);
+});
+
+test('artwork can be checked with nothing pending at all', opts, async () => {
+  // The case this exists for: upstream ships the picture a month after the
+  // database entry, so there is no data update to carry the fetch and waiting
+  // for an unrelated one would be the only alternative.
+  const s = await signIn();
+  await mkdir(join(dir, 'site/data/images/full'), { recursive: true });
+  await writeFile(join(dir, 'site/data/images/full', `${MARIO}.png`), 'A PICTURE');
+  await serveManifest({ [MARIO]: 'A PICTURE', [MARIO_SMB]: 'ANOTHER' });
+
+  const body = await (await get(s, '/api/artwork')).json();
+  assert.equal(body.ok, true);
+  assert.equal(body.artwork.unchanged, 1);
+  assert.deepEqual(body.artwork.added.map((a) => a.id), [MARIO_SMB]);
+  assert.deepEqual(body.artwork.changed, []);
+});
+
+test('the artwork check needs a session, and reports a failure as one', opts, async () => {
+  assert.equal((await fetch(`${base}/api/artwork`)).status, 401);
+
+  const s = await signIn();
+  serving['/manifest'] = { status: 403, body: '{"message":"rate limit"}' };
+  const res = await get(s, '/api/artwork');
+  assert.equal(res.status, 502);
+  assert.match((await res.json()).error, /rate-limited/);
+});
+
+test('a pictures-only apply fetches what was accepted and nothing else', opts, async () => {
+  // The on-demand path carries verdicts, exactly as the update path does. An
+  // earlier version fetched everything missing behind a confirm dialog, which
+  // is a bulk action wearing a review's clothes.
+  const s = await signIn();
+  const full = join(dir, 'site/data/images/full');
+  await mkdir(full, { recursive: true });
+  await writeFile(join(full, `${MARIO}.png`), 'MINE');
+  for (const id of [MARIO_SMB, MARIO_GOLD]) {
+    serving[`/images/icon_${id.slice(0, 8)}-${id.slice(8)}.png`] = { body: `ART ${id}` };
+  }
+
+  const body = await (await post(s, '/api/artwork/apply', {
+    artwork: {
+      [MARIO_SMB]: { verdict: 'keep', sha: null, op: 'add' },
+      [MARIO_GOLD]: { verdict: 'skip', sha: null, op: 'add' },
+    },
+  })).json();
+
+  assert.equal(body.artwork.fetched, 1, 'only the one that was accepted');
+  assert.equal(await readFile(join(full, `${MARIO_SMB}.png`), 'utf8'), `ART ${MARIO_SMB}`);
+  assert.equal(existsSync(join(full, `${MARIO_GOLD}.png`)), false, 'the declined one is absent');
+  assert.equal(await readFile(join(full, `${MARIO}.png`), 'utf8'), 'MINE',
+    'and the picture already here is untouched');
+
+  // A declined ARRIVAL records nothing: "not this time" is the same promise the
+  // data model makes, and the next check offers it again on its own.
+  assert.equal(await overlayOnDisk(), null, 'no overlay was written at all');
+});
+
+test('a pictures-only apply never touches the database', opts, async () => {
+  const s = await signIn();
+  const before = await db();
+  await mkdir(join(dir, 'site/data/images/full'), { recursive: true });
+  serving[`/images/icon_${MARIO_SMB.slice(0, 8)}-${MARIO_SMB.slice(8)}.png`] = { body: 'ART' };
+
+  await post(s, '/api/artwork/apply', {
+    artwork: { [MARIO_SMB]: { verdict: 'keep', sha: null, op: 'add' } },
+  });
+  assert.equal(await db(), before, 'byte for byte');
+});
+
+test('a picture upstream dropped is deleted here only if that is accepted', opts, async () => {
+  const s = await signIn();
+  const images = join(dir, 'site/data/images');
+  await mkdir(join(images, 'full'), { recursive: true });
+  await mkdir(join(images, 'thumb'), { recursive: true });
+  await writeFile(join(images, 'full', `${MARIO}.png`), 'MINE');
+  await writeFile(join(images, 'thumb', `${MARIO}.png`), 'MINE THUMB');
+
+  await post(s, '/api/artwork/apply', {
+    artwork: { [MARIO]: { verdict: 'skip', sha: null, op: 'remove' } },
+  });
+  assert.equal(existsSync(join(images, 'full', `${MARIO}.png`)), true, 'declined: kept');
+
+  const body = await (await post(s, '/api/artwork/apply', {
+    artwork: { [MARIO]: { verdict: 'keep', sha: null, op: 'remove' } },
+  })).json();
+  assert.equal(body.artwork.deleted, 2, 'accepted: gone from every tier');
+  assert.equal(existsSync(join(images, 'full', `${MARIO}.png`)), false);
+  assert.equal(existsSync(join(images, 'thumb', `${MARIO}.png`)), false);
+});
+
+test('applying fetches artwork for the entries it added', opts, async () => {
+  // The gap this closes: the admin could add two amiibo to the database and
+  // leave the site with no pictures for them, reporting nothing, because the
+  // image fetch lived only in the command-line tool.
+  const s = await signIn();
+  serveAddition();
+  serving[`/images/icon_${NEW_ID.slice(0, 8)}-${NEW_ID.slice(8)}.png`] = { body: 'PNGDATA' };
+  await post(s, '/api/upstream/refresh');
+  const preview = await (await get(s, '/api/upstream/preview')).json();
+
+  const body = await (await post(s, '/api/upstream/apply',
+    { fingerprint: preview.fingerprint, decisions: {} })).json();
+
+  assert.equal(body.artwork.fetched, 1);
+  assert.match(body.artworkSummary, /Artwork: 1 fetched/);
+  assert.equal(
+    await readFile(join(dir, 'site/data/images/full', `${NEW_ID}.png`), 'utf8'),
+    'PNGDATA',
+    'and it landed in the public site, beside the database it belongs to');
+});
+
+test('artwork is fetched only for what was accepted', opts, async () => {
+  const s = await signIn();
+  serveAddition();
+  serving[`/images/icon_${NEW_ID.slice(0, 8)}-${NEW_ID.slice(8)}.png`] = { body: 'PNGDATA' };
+  await post(s, '/api/upstream/refresh');
+  const preview = await (await get(s, '/api/upstream/preview')).json();
+  const decisions = Object.fromEntries(preview.diff.changes.map((c) => [c.key, 'skip']));
+
+  const body = await (await post(s, '/api/upstream/apply',
+    { fingerprint: preview.fingerprint, decisions })).json();
+
+  assert.equal(body.artwork, null, 'nothing was added, so nothing was fetched');
+  assert.equal(existsSync(join(dir, 'site/data/images/full', `${NEW_ID}.png`)), false);
+});
+
+test('declining a picture records the version refused, and holds it', opts, async () => {
+  // Both halves of the semantic in one test, because either alone is a
+  // different feature: the refusal must stick against THAT version, and it must
+  // not stick against a later one.
+  const s = await signIn();
+  await mkdir(join(dir, 'site/data/images/full'), { recursive: true });
+  await writeFile(join(dir, 'site/data/images/full', `${MARIO}.png`), 'OLD PICTURE');
+
+  serveRename();
+  await serveManifest({ [MARIO]: 'NEW PICTURE' });
+  await post(s, '/api/upstream/refresh');
+  let preview = await (await get(s, '/api/upstream/preview')).json();
+  const sha = preview.artwork.changed[0].sha;
+
+  await post(s, '/api/upstream/apply', {
+    fingerprint: preview.fingerprint,
+    decisions: {},
+    artwork: { [MARIO]: { verdict: 'skip', sha } },
+  });
+
+  const overlay = JSON.parse(await overlayOnDisk());
+  assert.equal(overlay.artwork[MARIO].declined, sha, 'the version refused is written down');
+  assert.equal(await readFile(join(dir, 'site/data/images/full', `${MARIO}.png`), 'utf8'),
+    'OLD PICTURE', 'and the picture on disk is untouched');
+
+  // The same version again: not offered, because that decision was already made.
+  serveRename();
+  await serveManifest({ [MARIO]: 'NEW PICTURE' });
+  await post(s, '/api/upstream/refresh');
+  preview = await (await get(s, '/api/upstream/preview')).json();
+  assert.deepEqual(preview.artwork.changed, []);
+  assert.equal(preview.artwork.held, 1);
+
+  // A different version: a new question, because the record names one picture
+  // and not the amiibo forever.
+  serveRename();
+  await serveManifest({ [MARIO]: 'NEWER STILL' });
+  await post(s, '/api/upstream/refresh');
+  preview = await (await get(s, '/api/upstream/preview')).json();
+  assert.equal(preview.artwork.changed.length, 1);
+});
+
+test('accepting a picture replaces it, and clears any older refusal', opts, async () => {
+  const s = await signIn();
+  const full = join(dir, 'site/data/images/full');
+  await mkdir(full, { recursive: true });
+  await mkdir(join(dir, 'site/data/images/thumb'), { recursive: true });
+  await writeFile(join(full, `${MARIO}.png`), 'OLD PICTURE');
+  await writeFile(join(dir, 'site/data/images/thumb', `${MARIO}.png`), 'OLD THUMB');
+
+  serveRename();
+  await serveManifest({ [MARIO]: 'NEW PICTURE' });
+  serving[`/images/icon_${MARIO.slice(0, 8)}-${MARIO.slice(8)}.png`] = { body: 'NEW PICTURE' };
+  await post(s, '/api/upstream/refresh');
+  const preview = await (await get(s, '/api/upstream/preview')).json();
+  const sha = preview.artwork.changed[0].sha;
+
+  // Looked at during the review, which is what stages it.
+  const staged = await get(s, `/api/upstream/art/${MARIO}.png`);
+  assert.equal(staged.status, 200);
+  assert.equal(staged.headers.get('content-type'), 'image/png');
+  assert.equal(await readFile(join(full, `${MARIO}.png`), 'utf8'), 'OLD PICTURE',
+    'and looking at it changes nothing');
+
+  const body = await (await post(s, '/api/upstream/apply', {
+    fingerprint: preview.fingerprint,
+    decisions: {},
+    artwork: { [MARIO]: { verdict: 'keep', sha } },
+  })).json();
+
+  assert.equal(body.artwork.replaced, 1);
+  assert.equal(await readFile(join(full, `${MARIO}.png`), 'utf8'), 'NEW PICTURE');
+  const overlay = JSON.parse(await overlayOnDisk());
+  assert.equal(overlay.artwork, undefined, 'no refusal is recorded for an acceptance');
+});
+
+test('artwork that will not download does not fail the update', opts, async () => {
+  // The database is already written and promoted by the time artwork is
+  // fetched. A picture that 404s — the normal case for an amiibo newer than the
+  // image set — must leave a successful apply that says so, not a failed one.
+  const s = await signIn();
+  serveAddition();   // no /images route, so the fetch 404s
+  await post(s, '/api/upstream/refresh');
+  const preview = await (await get(s, '/api/upstream/preview')).json();
+
+  const res = await post(s, '/api/upstream/apply',
+    { fingerprint: preview.fingerprint, decisions: {} });
+  const body = await res.json();
+
+  assert.equal(res.status, 200, 'the update succeeded');
+  assert.equal(body.ok, true);
+  // The invented entry is among those with no picture. Not the whole set, and
+  // not a count: this update adds whatever the cached sources have that the
+  // committed database does not, which changes as upstream does — writing that
+  // down here would fail on the next real update while proving nothing.
+  assert.ok(body.artwork.noArtwork.includes(NEW_ID));
+  assert.deepEqual(body.artwork.failed, [], 'a missing picture is not a failure');
+  assert.match(body.artworkSummary, /have none upstream yet/);
+  assert.match(await db(), new RegExp(NEW_ID), 'and the entry is in the database');
 });
