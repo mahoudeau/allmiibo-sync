@@ -3,7 +3,8 @@
 // only render. No DOM in this module.
 
 import {
-  planSync, planDump, planReplace, planIdentitySync, flattenPlan, driveFreeBytes,
+  planSync, planDump, planReplace, planIdentitySync, planOrganise, planWipe,
+  flattenPlan, driveFreeBytes, estimateSeconds, unenumeratedDirs, isExcluded,
   DEFAULT_EXCLUDES, devicePath,
 } from './planner.js';
 import { walkDevice, verifyDeviceHashes, hashDeviceIndex, applyPlan, ambiguousPaths } from './sync.js';
@@ -42,6 +43,21 @@ export const OPS = [
     opts: [],
   },
   {
+    value: 'wipe', name: 'WIPE', ico: 'trash', advanced: true, danger: true,
+    desc: 'Erase the device folder. Your folder is untouched.',
+    opts: [],
+  },
+  {
+    value: 'organise-device', name: 'ORGANISE DEVICE', ico: 'move', advanced: true,
+    desc: 'Rename and refile the device tidily. Reads every file first.',
+    opts: [],
+  },
+  {
+    value: 'organise-local', name: 'ORGANISE FOLDER', ico: 'move', advanced: true,
+    desc: 'Rename and refile your folder tidily. Touches no device.',
+    opts: [],
+  },
+  {
     value: 'check', name: 'CHECK', ico: 'search', advanced: true,
     desc: 'Read every device file, report differences. Changes nothing.',
     opts: [],
@@ -66,6 +82,7 @@ export const OP_VERBS = {
   deleteDevice: '\u2715 deleting (device)', deleteLocal: '\u2715 deleting (local)',
   mkdirDevice: 'creating folder', mkdirLocal: 'creating folder',
   moveDevice: 'renaming', rmdirDevice: 'removing folder',
+  moveLocal: 'renaming', rmdirLocal: 'removing folder',
 };
 
 export function hasWork(p) {
@@ -97,6 +114,8 @@ export function buildPlan({ op, local, device, state, deviceRoot, drive, opts = 
       });
     case 'replace':
       return planReplace({ local, device, deviceRoot, options: { drive, excludes } });
+    case 'wipe':
+      return planWipe({ device, deviceRoot, options: { excludes } });
     case 'smart':
       return planSync({
         local, device, state, deviceRoot,
@@ -105,6 +124,19 @@ export function buildPlan({ op, local, device, state, deviceRoot, drive, opts = 
     case 'identity':
       return planIdentitySync({
         local, device, deviceRoot, options: { direction: 'both', excludes },
+      });
+    // walkRoot/destRoot differ only after a rescue, when the files are parked
+    // in a sibling of the device folder; the caller passes both.
+    case 'organise-device':
+      return planOrganise({
+        index: device, side: 'device',
+        walkRoot: opts.walkRoot ?? deviceRoot,
+        destRoot: opts.destRoot ?? deviceRoot,
+        options: { excludes },
+      });
+    case 'organise-local':
+      return planOrganise({
+        index: local, side: 'local', walkRoot: '', options: { excludes },
       });
     default:
       throw new Error(`unknown operation: ${op}`);
@@ -147,8 +179,10 @@ export async function scanAndPlan({
   log('ok', `device: ${count(device)} files, ${countDirs(device)} folders under ${deviceRoot}`);
 
   // Identifying the device first, so that unpacking a bundle below can tell
-  // which of its amiibos the device already holds.
-  if (op === 'identity') {
+  // which of its amiibos the device already holds. Organise needs it for a
+  // different reason: a dump's identity is in its bytes, never its filename,
+  // so it cannot know where a file belongs without reading it.
+  if (op === 'identity' || op === 'organise-device') {
     const toRead = [...device.values()].filter((e) => !e.isDir).length;
     log('info', `identifying ${toRead} device files…`);
     const t0 = Date.now();
@@ -248,6 +282,23 @@ export async function planSelection({
   const log = on.log ?? (() => {});
   const wanted = new Set(ids);
 
+  // Deleting needs no source, so it skips the folder walk and the bundle
+  // expansion entirely — both exist to find bytes to send, and there are none.
+  // It also means removing amiibos from a device works with no local folder
+  // chosen at all.
+  if (direction === 'delete-device') {
+    // Still load the sync state when there is a folder: applyPlan drops each
+    // deleted path from it, and a stale entry would make the next sync believe
+    // the device had lost a file it was told to remove.
+    const delState = rootHandle ? await localfs.loadState(rootHandle) : { entries: {} };
+    return {
+      plan: planDeviceDeletes(deviceIndex, wanted, deviceRoot),
+      state: delState,
+      sources: null,
+      readFile: null,
+    };
+  }
+
   // `localIndex` is a source with no folder behind it: loose .bin files picked
   // on their own. Already indexed and hashed by the caller, so there is nothing
   // to walk.
@@ -305,6 +356,60 @@ export async function planSelection({
   // `read` is what the caller should hand to applyThePlan: it already routes a
   // picked file to its File object and everything else to the folder.
   return { plan, state, sources: bundle.sources, readFile: readFile ? read : null };
+}
+
+// Remove every device file belonging to the chosen amiibo, then sweep whatever
+// folders that emptied.
+//
+// One amiibo id is not one file. All 91 HHD item cards share a single
+// fabricated id and Air Riders vehicles share one four ways, so a selection of
+// "one amiibo" can be ninety-one deletions. The caller must confirm against
+// deleteDevice.length, never against the number of amiibo selected.
+export function planDeviceDeletes(deviceIndex, wanted, deviceRoot) {
+  const plan = emptyPlan('delete-selection', deviceRoot);
+  const protectedDirs = unenumeratedDirs(deviceIndex);
+  const going = new Set();
+
+  for (const [relPath, e] of deviceIndex) {
+    if (e.isDir || isExcluded(relPath)) continue;
+    if (!e.amiiboId || !wanted.has(e.amiiboId)) continue;
+    plan.deleteDevice.push({ relPath, size: e.size, amiiboId: e.amiiboId });
+    going.add(relPath);
+  }
+
+  const survivors = [...deviceIndex.keys()].filter(
+    (p) => !deviceIndex.get(p).isDir && !going.has(p)
+  );
+  const emptied = [...deviceIndex]
+    .filter(([p, e]) => e.isDir && !protectedDirs.has(p) && !isExcluded(p))
+    .map(([p]) => p)
+    .filter((dir) => [...going].some((p) => p.startsWith(`${dir}/`)))
+    .filter((dir) => !survivors.some((p) => p.startsWith(`${dir}/`)));
+
+  emptied.sort((a, b) => b.split('/').length - a.split('/').length || b.localeCompare(a));
+  for (const relPath of emptied) plan.rmdirDevice.push({ relPath });
+
+  plan.stats = {
+    upload: 0, download: 0, moveDevice: 0, moveLocal: 0,
+    deleteDevice: plan.deleteDevice.length, deleteLocal: 0,
+    mkdirDevice: 0, mkdirLocal: 0,
+    rmdirDevice: plan.rmdirDevice.length, rmdirLocal: 0,
+    wouldDelete: 0, unchanged: 0, conflicts: 0, blocked: 0, ambiguous: 0,
+    uploadBytes: 0, downloadBytes: 0,
+  };
+  plan.stats.estimatedSeconds = estimateSeconds(plan);
+  return plan;
+}
+
+function emptyPlan(mode, deviceRoot) {
+  return {
+    mode, deviceRoot,
+    mkdirDevice: [], mkdirLocal: [], upload: [], download: [],
+    moveDevice: [], moveLocal: [],
+    deleteDevice: [], deleteLocal: [], rmdirDevice: [], rmdirLocal: [],
+    wouldDelete: [], conflicts: [], blocked: [], unchanged: [], ambiguous: [],
+    warnings: [],
+  };
 }
 
 // Apply with humanised callbacks. on.op(text, i, total), on.bytes(written,

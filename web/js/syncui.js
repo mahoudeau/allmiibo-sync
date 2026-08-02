@@ -15,7 +15,8 @@ import {
 import { pickDeviceFolder } from './devicepicker.js';
 import { toast, statusCtl, progressCtl, busy, idle, fmtBytes, fmtDuration } from './ui.js';
 import { icon, ICONS } from './icons.js';
-import { confirmDialog } from './dialog.js';
+import { confirmDialog, chooseDialog } from './dialog.js';
+import { findRescueStaging, stagingNotice, driveRootOf } from './rescue.js';
 
 prefs.migrate();
 
@@ -131,11 +132,22 @@ function refresh() {
   const op = currentOp();
   const haveFolder = !!rootHandle;
   const haveDevice = !!transport?.connected;
-  const ready = op === 'bundle-local' ? haveFolder
-    : op === 'bundle-device' ? haveDevice
+  // Organise is one-sided too: it rearranges what is already there rather than
+  // reconciling two sides, so requiring the other one would block a tidy-up
+  // for no reason.
+  const ready = op === 'bundle-local' || op === 'organise-local' ? haveFolder
+    : op === 'bundle-device' || op === 'organise-device' || op === 'wipe' ? haveDevice
     : haveFolder && haveDevice;
   els.step2.classList.toggle('locked', !ready);
   els.scan.disabled = !ready;
+}
+
+// Everything a plan removes, counted once so the review tile and the confirm
+// dialog can never disagree about how much is at stake. The `?? 0` covers
+// planners that predate the local-move ops and never set those keys.
+function deletions(p) {
+  return p.deleteDevice.length + p.deleteLocal.length +
+    p.rmdirDevice.length + (p.rmdirLocal?.length ?? 0);
 }
 
 function resetPlan() {
@@ -233,6 +245,57 @@ async function reconnectFolder() {
   refresh();
 }
 
+// E:/r_ is a sibling of the device folder, so a scan rooted there never sees
+// it and a half-finished recovery would sit unmentioned. One cheap listing on
+// connect surfaces it. Asked once per page load, never suppressed for good:
+// a half-migrated device is worth raising again next visit.
+let stagingAsked = false;
+async function offerStagingCleanup() {
+  if (stagingAsked) return;
+  stagingAsked = true;
+  const found = await findRescueStaging(client, driveRootOf(deviceRoot())).catch(() => null);
+  const notice = found && stagingNotice(found, { deviceRoot: deviceRoot() });
+  if (!notice) return;
+  log('warn', `${found.path} holds about ${found.files} rescued file(s)`);
+
+  const choice = await chooseDialog({ ...notice, icon: 'warning', cancelLabel: 'LEAVE IT FOR NOW' });
+  if (choice === 'organise') {
+    prefs.set(prefs.KEYS.syncOp, 'organise-device');
+    renderOps();
+    resetPlan();
+    refresh();
+    say('ORGANISE DEVICE selected — scan to see what it would do.', 'ok');
+  } else if (choice === 'backup') {
+    prefs.set(prefs.KEYS.deviceRoot, found.path);
+    prefs.set(prefs.KEYS.syncOp, 'dump');
+    renderOps();
+    resetPlan();
+    renderDeviceChip();
+    refresh();
+    say(`Device folder set to ${found.path}, BACKUP selected — scan to copy them out.`, 'ok');
+  } else if (choice === 'delete') {
+    // chooseDialog resolves on one click by design, which must never be enough
+    // to erase a few hundred files.
+    const ok = await confirmDialog({
+      title: `ERASE ${found.path}?`,
+      body: `About ${found.files} rescued file(s) go. If you have not organised or backed them up, ` +
+        `they are gone — these are the files a repair pulled out of a folder that would not list.`,
+      detail: [`${found.path} and everything inside it`, 'This cannot be undone'],
+      confirmLabel: 'ERASE',
+      danger: true,
+    });
+    if (!ok) { log('warn', 'erase cancelled'); return; }
+    try {
+      await client.remove(found.path);
+      log('ok', `removed ${found.path}`);
+      toast(`${found.path} erased.`, { kind: 'ok' });
+    } catch (err) {
+      log('err', err.message);
+      toast(`Could not erase ${found.path}: ${err.message}`, { kind: 'err' });
+    }
+  }
+}
+
 async function connectDevice() {
   try {
     say('Choose your device in the Bluetooth popup…');
@@ -249,6 +312,7 @@ async function connectDevice() {
     firmwareVersion = v.version;
     log('ok', `connected to "${deviceName}" (firmware ${v.version})`);
     say('');
+    await offerStagingCleanup();
   } catch (err) {
     if (err.name === 'NotFoundError') say('No device selected.');
     else say(err.message, 'err');
@@ -305,11 +369,15 @@ const SECTIONS = [
   { key: 'download', label: 'DOWNLOAD', ico: 'download', fmt: (d) => [d.relPath, fmtBytes(d.size)] },
   { key: 'upload', label: 'UPLOAD', ico: 'upload', fmt: (u) => [u.relPath, fmtBytes(u.size)] },
   { key: 'moveDevice', label: 'RENAME ON DEVICE', ico: 'move', fmt: (m) => [`${m.from} → ${m.to}`, ''] },
+  { key: 'moveLocal', label: 'RENAME IN YOUR FOLDER', ico: 'move', fmt: (m) => [`${m.from} → ${m.to}`, ''] },
   { key: 'mkdirDevice', label: 'NEW DEVICE FOLDERS', ico: 'folderPlus', fmt: (m) => [m.relPath, ''] },
   { key: 'mkdirLocal', label: 'NEW LOCAL FOLDERS', ico: 'folderPlus', fmt: (m) => [m.relPath, ''] },
   { key: 'deleteDevice', label: 'DELETE ON DEVICE', ico: 'trash', tone: 'err', fmt: (d) => [d.relPath, ''] },
   { key: 'deleteLocal', label: 'DELETE LOCALLY', ico: 'trash', tone: 'err', fmt: (d) => [d.relPath, ''] },
   { key: 'rmdirDevice', label: 'REMOVE DEVICE FOLDERS', ico: 'trash', tone: 'err', fmt: (d) => [d.relPath, ''] },
+  { key: 'rmdirLocal', label: 'REMOVE LOCAL FOLDERS', ico: 'trash', tone: 'err', fmt: (d) => [d.relPath, ''] },
+  { key: 'unidentified', label: 'NOT RECOGNISED — LEFT ALONE', ico: 'eyeOff', fmt: (u) => [u.relPath, fmtBytes(u.size)] },
+  { key: 'kept', label: 'KEPT — THE DEVICE NEEDS THESE', ico: 'eye', fmt: (k) => [k.relPath, fmtBytes(k.size)] },
   { key: 'wouldDelete', label: 'KEPT — DELETIONS ARE OFF', ico: 'eye', fmt: (d) => [d.relPath, d.side] },
   { key: 'conflicts', label: 'CONFLICT — LEFT ALONE', ico: 'warning', tone: 'warn', fmt: (c) => [c.relPath, ''] },
   { key: 'blocked', label: 'BLOCKED — WON\u2019T FIT', ico: 'cancel', tone: 'err', fmt: (b) => [b.relPath, ''] },
@@ -393,12 +461,14 @@ function renderReview(p, op) {
 
   const s = p.stats;
   const dl = p.download.length, ul = p.upload.length;
-  const del = p.deleteDevice.length + p.deleteLocal.length + p.rmdirDevice.length;
+  const del = deletions(p);
+  const renames = p.moveDevice.length + (p.moveLocal?.length ?? 0);
   const tiles = [
     dl ? { ico: 'download', n: dl, cap: 'DOWNLOAD', sub: fmtBytes(s.downloadBytes) } : null,
     ul ? { ico: 'upload', n: ul, cap: 'UPLOAD', sub: fmtBytes(s.uploadBytes) } : null,
-    p.moveDevice.length ? { ico: 'move', n: p.moveDevice.length, cap: 'RENAME', cls: 'muted' } : null,
+    renames ? { ico: 'move', n: renames, cap: 'RENAME', cls: 'muted' } : null,
     del ? { ico: 'trash', n: del, cap: 'DELETE', cls: 'err' } : null,
+    p.unidentified?.length ? { ico: 'eyeOff', n: p.unidentified.length, cap: 'NOT RECOGNISED', cls: 'muted' } : null,
     p.conflicts.length ? { ico: 'warning', n: p.conflicts.length, cap: 'CONFLICTS', cls: 'warn' } : null,
     p.blocked.length ? { ico: 'cancel', n: p.blocked.length, cap: 'BLOCKED', cls: 'err' } : null,
     p.ambiguous.length ? { ico: 'eyeOff', n: p.ambiguous.length, cap: 'UNVERIFIED', cls: 'warn' } : null,
@@ -483,19 +553,31 @@ els.apply.addEventListener('click', async () => {
   if (!plan) return;
   const op = currentOp();
 
-  const del = plan.deleteDevice.length + plan.deleteLocal.length + plan.rmdirDevice.length;
+  const del = deletions(plan);
   if (del > 0) {
     const ok = await confirmDialog({
-      title: op === 'replace' ? 'WIPE DEVICE?' : `DELETE ${del} FILE${del === 1 ? '' : 'S'}?`,
-      body: op === 'replace'
+      title: op === 'replace' ? 'WIPE DEVICE?'
+        : op === 'wipe' ? `ERASE ${plan.deviceRoot}?`
+        : `DELETE ${del} FILE${del === 1 ? '' : 'S'}?`,
+      body: op === 'wipe'
+        // A wipe writes nothing back, so nothing is recoverable from this app
+        // afterwards. Better to say so than to lean on "can't be undone".
+        ? `${plan.deleteDevice.length} file(s) erased and nothing written back. ` +
+          `Anything you have not backed up is gone.`
+        : op === 'replace'
         ? `${plan.deleteDevice.length} files erased, then ${plan.upload.length} written · ${fmtDuration(plan.stats.estimatedSeconds)}.`
         : 'This can\u2019t be undone.',
       detail: [
         plan.deleteDevice.length ? `${plan.deleteDevice.length} on the device` : null,
         plan.deleteLocal.length ? `${plan.deleteLocal.length} in your folder` : null,
         plan.rmdirDevice.length ? `${plan.rmdirDevice.length} device folders` : null,
+        plan.rmdirLocal?.length ? `${plan.rmdirLocal.length} folders in your folder` : null,
+        plan.kept?.length ? `${plan.kept.length} device file(s) kept — the device needs them` : null,
+        plan.stats.unenumerated
+          ? `${plan.stats.unenumerated} folder(s) left standing — they never listed`
+          : null,
       ].filter(Boolean),
-      confirmLabel: op === 'replace' ? 'WIPE & WRITE' : 'DELETE',
+      confirmLabel: op === 'replace' ? 'WIPE & WRITE' : op === 'wipe' ? 'ERASE' : 'DELETE',
       danger: true,
     });
     if (!ok) { log('warn', 'apply cancelled'); return; }
@@ -504,7 +586,11 @@ els.apply.addEventListener('click', async () => {
   stopRequested = false;
   els.review.hidden = true;
   els.runPanel.hidden = false;
-  els.runTitle.textContent = op === 'dump' ? 'BACKING UP' : op === 'replace' ? 'REPLACING' : 'SYNCING';
+  els.runTitle.textContent = op === 'dump' ? 'BACKING UP'
+    : op === 'replace' ? 'REPLACING'
+    : op === 'wipe' ? 'ERASING'
+    : op.startsWith('organise') ? 'ORGANISING'
+    : 'SYNCING';
   els.errDrawer.hidden = true;
   els.errList.textContent = '';
   els.runErrs.hidden = true;

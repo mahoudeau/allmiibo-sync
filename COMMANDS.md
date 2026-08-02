@@ -147,5 +147,24 @@ console.log(JSON.stringify({...describeAmiibo(id), vehicle:parseVehicle(b)},null
   REPORT on the collection page, and in the saved run log.
 - **A scan stalls on one folder every time**: that folder probably holds too
   many files for the device to list over Bluetooth in one go — several hundred
-  in a single directory is enough on older hardware. Spreading the library
-  across subfolders fixes it permanently; listing cost is paid on every scan.
+  in a single directory is enough on older hardware. Run **ORGANISE DEVICE**
+  (Advanced sync) to spread the library into series folders; the listing cost
+  is paid on every scan, so this fixes it permanently. If the folder will not
+  list at all any more, the repair tool on the debug page gets the files out
+  first.
+- **"Creating a folder failed with status 1" in a run log**: `create_folder` is
+  not idempotent on the device, and the protocol's status byte is binary — so
+  "this folder already exists" and a real failure look identical. Sync only
+  creates folders a listing showed were missing, but a folder inside one that
+  could not be listed is invisible to that check. The upload that follows still
+  succeeds; the run log records the refusal and carries on.
+- **I want the device empty, without writing a folder back**: use **WIPE**
+  (Advanced sync) rather than REPLACE. It honours the configured device folder,
+  so pointing it at `E:/r_` clears only that. It will not delete
+  `key_retail.bin` or `settings.bin`, and it leaves any folder that would not
+  list standing — erasing one of those stays the repair tool's job.
+- **After a repair, the files are in `E:/r_` with names like `0001.bin`**: that
+  is the staging tree, and those names are deliberate — identity lives in a
+  dump's bytes, not its filename. Run **ORGANISE DEVICE** to give them their
+  real names and folders; it empties `E:/r_` as it goes. Sync and backup ignore
+  the tree until then, so nothing will copy those placeholder names anywhere.

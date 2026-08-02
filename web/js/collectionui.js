@@ -15,7 +15,8 @@ import * as localfs from './localfs.js';
 import * as prefs from './prefs.js';
 import { debounce, motionOK, toast, statusCtl, progressCtl, burst, segCtl, fmtBytes, fmtDuration } from './ui.js';
 import { icon, ICONS } from './icons.js';
-import { confirmDialog } from './dialog.js';
+import { confirmDialog, chooseDialog } from './dialog.js';
+import { findRescueStaging, stagingNotice, driveRootOf } from './rescue.js';
 import { scanAndPlan, applyThePlan, planSelection, hasWork } from './syncflow.js';
 import { expandBundles, hasBundles } from './bundlesource.js';
 import {
@@ -38,7 +39,7 @@ for (const id of [
   'skipped', 'series', 'emptyState',
   'syncBtn', 'syncPanel', 'spReview', 'spWarn', 'spCards', 'spCap', 'spCapName',
   'spCapText', 'spApply', 'spCancel', 'spRun', 'spPbar', 'spErrs', 'spStop',
-  'selectBtn', 'selBar', 'selN', 'selSend', 'selDown', 'selCancel',
+  'selectBtn', 'selBar', 'selN', 'selSend', 'selDown', 'selDel', 'selCancel',
 ]) els[id] = document.getElementById(id);
 
 const status = statusCtl(els.status);
@@ -446,7 +447,49 @@ async function connect() {
   transport.addEventListener('disconnected', () => say('Device disconnected.', 'warn'));
   deviceName = await transport.connect();
   say('');
+  await offerStagingCleanup();
   return true;
+}
+
+// A repair parks files in E:/r_, which is a *sibling* of the device folder —
+// so no ordinary scan ever sees it, and a half-finished recovery would sit
+// there unmentioned. One cheap listing on connect is what surfaces it.
+let stagingAsked = false;
+async function offerStagingCleanup() {
+  if (stagingAsked) return;
+  stagingAsked = true; // per page load only: an unfinished recovery is worth re-raising
+  const found = await findRescueStaging(client, driveRootOf(devRoot)).catch(() => null);
+  const notice = found && stagingNotice(found, { deviceRoot: devRoot });
+  if (!notice) return;
+
+  const choice = await chooseDialog({ ...notice, icon: 'warning', cancelLabel: 'LEAVE IT FOR NOW' });
+  if (choice === 'organise') {
+    prefs.set(prefs.KEYS.syncOp, 'organise-device');
+    location.href = 'sync.html';
+  } else if (choice === 'backup') {
+    devRoot = found.path;
+    prefs.set(prefs.KEYS.deviceRoot, found.path);
+    toast(`Device folder set to ${found.path} — run BACKUP to copy them out.`, { kind: 'info' });
+    renderDeviceChip();
+  } else if (choice === 'delete') {
+    // chooseDialog resolves on a single click by design, which must never be
+    // enough to erase a few hundred files.
+    const ok = await confirmDialog({
+      title: `ERASE ${found.path}?`,
+      body: `About ${found.files} rescued file(s) go. If you have not organised or backed them up, ` +
+        `they are gone — these are the files a repair pulled out of a folder that would not list.`,
+      detail: [`${found.path} and everything inside it`, 'This cannot be undone'],
+      confirmLabel: 'ERASE',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await client.remove(found.path);
+      toast(`${found.path} erased.`, { kind: 'ok' });
+    } catch (err) {
+      toast(`Could not erase ${found.path}: ${err.message}`, { kind: 'err' });
+    }
+  }
 }
 
 // The DEVICE source flow: connect, pick the folder on the device, scan it.
@@ -1264,8 +1307,25 @@ function updateSelBar() {
     [...selected].some((id) => localIds.has(id) && !deviceIds?.has(id));
   const canDown = rootHandle && deviceIndex && transport?.connected &&
     [...selected].some((id) => deviceIds?.has(id) && !localIds.has(id));
+  const canDelete = transport?.connected && deviceIndex &&
+    [...selected].some((id) => deviceIds?.has(id));
   els.selSend.disabled = !canSend;
   els.selDown.disabled = !canDown;
+  els.selDel.disabled = !canDelete;
+}
+
+// How many device files the selection actually covers. One amiibo id is not
+// one file: all 91 HHD item cards share a fabricated id, and Air Riders
+// vehicles share one four ways. The confirm has to count files, or it
+// understates a selection by ninety.
+function deviceFilesFor(ids) {
+  const wanted = new Set(ids);
+  const out = [];
+  if (!deviceIndex) return out;
+  for (const [relPath, e] of deviceIndex) {
+    if (!e.isDir && e.amiiboId && wanted.has(e.amiiboId)) out.push({ relPath, amiiboId: e.amiiboId });
+  }
+  return out;
 }
 
 els.selectBtn.addEventListener('click', () => setSelecting(!selecting));
@@ -1293,8 +1353,13 @@ async function readPickedFile(relPath) {
 }
 
 async function runSelection(direction) {
+  // A transfer only makes sense for what one side is missing. Deleting is the
+  // exception: whether your folder also holds a copy has no bearing on whether
+  // you want it off the device.
   const eligible = [...selected].filter((id) => direction === 'push'
     ? localIds.has(id) && !deviceIds?.has(id)
+    : direction === 'delete-device'
+    ? deviceIds?.has(id)
     : deviceIds?.has(id) && !localIds.has(id));
   if (!eligible.length) return;
   try {
@@ -1316,7 +1381,9 @@ async function runSelection(direction) {
       });
     say('');
     if (!hasWork(selPlan)) {
-      toast('Nothing to transfer — already on both sides.', { kind: 'warn' });
+      toast(direction === 'delete-device'
+        ? 'Nothing to delete — the device does not hold those.'
+        : 'Nothing to transfer — already on both sides.', { kind: 'warn' });
       return;
     }
     spPlan = selPlan;
@@ -1332,6 +1399,35 @@ async function runSelection(direction) {
 
 els.selSend.addEventListener('click', () => runSelection('push'));
 els.selDown.addEventListener('click', () => runSelection('pull'));
+
+els.selDel.addEventListener('click', async () => {
+  const ids = [...selected].filter((id) => deviceIds?.has(id));
+  const files = deviceFilesFor(ids);
+  if (!files.length) return;
+
+  // Selecting a single card from the HHD pack selects all 91, because they
+  // share one id and nothing in a dump distinguishes them but the UID. Name
+  // the amiibo that expand, so the number is not a surprise.
+  const many = [...new Set(files.map((f) => f.amiiboId))]
+    .map((id) => ({ id, n: files.filter((f) => f.amiiboId === id).length }))
+    .filter((x) => x.n > 1);
+
+  const ok = await confirmDialog({
+    title: `DELETE ${files.length} FILE${files.length === 1 ? '' : 'S'} FROM THE DEVICE?`,
+    body: ids.length === files.length
+      ? 'Your folder is untouched. Only the device copies go.'
+      : `${ids.length} amiibo, ${files.length} files. Your folder is untouched.`,
+    detail: [
+      ...files.slice(0, 12).map((f) => f.relPath),
+      files.length > 12 ? `… and ${files.length - 12} more` : null,
+      ...many.map((x) => `${x.n} files share the amiibo ${x.id} — all of them go`),
+    ].filter(Boolean),
+    confirmLabel: 'DELETE',
+    danger: true,
+  });
+  if (!ok) return;
+  runSelection('delete-device');
+});
 
 // ---- more menu ----------------------------------------------------------------------
 

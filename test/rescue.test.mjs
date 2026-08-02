@@ -221,6 +221,20 @@ test('stopping leaves every file either moved or untouched', async () => {
   assert.equal(movedNames.length + client.left().length, 20);
 });
 
+test('a folder that inches along forever is stopped by the pass cap', async () => {
+  // Progress on every pass, so stall detection never fires, but never enough
+  // to finish. Without a backstop this runs until the folder happens to empty.
+  const client = fakeDevice({ files: names(200), window: 1 });
+
+  const report = await rescueFolder({ client, path: STUCK });
+
+  assert.equal(report.complete, false);
+  assert.equal(report.stalled, true, 'the cap must report as a stop, not as success');
+  assert.ok(report.passes <= 50, `ran ${report.passes} passes`);
+  // Whatever it did manage is still safely moved.
+  assert.equal(report.rescued.length, report.passes);
+});
+
 test('the folder lists fine on the first try, so nothing is moved', async () => {
   const client = fakeDevice({ files: names(3), window: 10 });
 

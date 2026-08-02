@@ -80,6 +80,38 @@ export async function findRescueStaging(client, driveRoot = 'E:/') {
   };
 }
 
+/**
+ * What to say about a staging tree found on a connected device, and what the
+ * user can do about it. Returned as data rather than rendered here so the
+ * collection page and the sync page cannot drift apart on the wording.
+ *
+ * Deliberately not suppressible for good: a half-migrated device is worth
+ * raising again next visit, and "never ask" would hide it indefinitely. The
+ * callers dismiss it for the page load only.
+ */
+export function stagingNotice(found, { deviceRoot = 'E:/amiibo' } = {}) {
+  if (!found.present || found.files === 0) return null;
+  return {
+    title: 'RESCUED FILES ON THIS DEVICE',
+    body:
+      `${found.path} holds about ${found.files} file(s) in ${found.batches} folder(s), recovered ` +
+      `from a folder that would not list. They have placeholder names like 0001.bin until they ` +
+      `are organised — a dump's identity is in its contents, not its filename, so nothing is lost ` +
+      `by that. Sync and backup ignore them meanwhile. There is more in HOW TO, under "when a ` +
+      `folder won't list".`,
+    options: [
+      { value: 'organise', label: 'ORGANISE THEM NOW',
+        hint: `Give them real names and file them under ${deviceRoot}. Reads every file first.` },
+      { value: 'backup', label: 'BACK THEM UP FIRST',
+        hint: 'Copy them to your folder before anything else touches them.' },
+      { value: 'delete', label: 'DELETE THEM',
+        hint: 'Erase the staging folder. Asks again before anything goes.' },
+      { value: 'later', label: 'LEAVE IT FOR NOW',
+        hint: 'Nothing changes. You will be asked again next time you connect.' },
+    ],
+  };
+}
+
 // Where to resume. An aborted run leaves a staging tree behind; continuing at
 // the next free number is safer than reusing one, since a rename onto an
 // existing name is not something the protocol lets us reason about.

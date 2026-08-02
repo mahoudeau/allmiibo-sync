@@ -15,7 +15,9 @@ export const KEYS = {
   filter: 'allmiibo:filter',        // 'all' | 'owned' | 'missing' | 'notondevice'
   types: 'allmiibo:types',          // string[] of type names, [] = all
   openSeries: 'allmiibo:openSeries',// number[] of series the user opened
-  syncOp: 'allmiibo:syncOp',        // 'dump' | 'smart' | 'identity' | 'replace' | 'check'
+  // 'dump' | 'smart' | 'identity' | 'replace' | 'wipe' | 'check'
+  // | 'organise-device' | 'organise-local' | 'bundle-local' | 'bundle-device'
+  syncOp: 'allmiibo:syncOp',
   syncOpts: 'allmiibo:syncOpts',    // { [op]: { ...checkbox state } } — per-op, never shared
   deviceRoot: 'allmiibo:deviceRoot',// 'E:/amiibo'
   advancedToast: 'allmiibo:advToast', // one-time "advanced on" toast shown

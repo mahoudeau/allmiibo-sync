@@ -360,6 +360,23 @@ export async function removeLocalFile(rootHandle, relPath) {
   await dir.removeEntry(name);
 }
 
+export async function removeLocalDir(rootHandle, relPath) {
+  const [dirPath, name] = split(relPath);
+  const dir = await resolveDir(rootHandle, dirPath);
+  // Never recursive: a plan may only remove a folder it has already emptied,
+  // so a non-empty one here means the plan was wrong and should say so.
+  await dir.removeEntry(name);
+}
+
+// The File System Access API has no rename or move, so this is a copy followed
+// by a delete. The write completes before the delete is attempted, so an
+// interruption leaves the file at one path or both — never at neither.
+export async function moveLocalFile(rootHandle, from, to) {
+  const bytes = await readLocalFile(rootHandle, from);
+  await writeLocalFile(rootHandle, to, bytes);
+  await removeLocalFile(rootHandle, from);
+}
+
 // ---- sync state ---------------------------------------------------------
 
 export async function loadState(rootHandle) {

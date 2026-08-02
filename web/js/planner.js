@@ -759,12 +759,20 @@ const DOWNLOAD_MS = 430;
 const COMMAND_MS = 240;
 const CHUNK = 242;
 
+// Local work is disk speed, not Bluetooth, but it is not free either: the File
+// System Access API has no rename, so a local move is a read, a write and a
+// delete. A guess, unlike the device figures above, which are measured — its
+// only job is to stop a large local-only plan reporting "0s".
+const LOCAL_OP_MS = 15;
+
 export function estimateSeconds(plan) {
   let ms = 0;
   for (const u of plan.upload) ms += OPEN_CLOSE_MS + Math.ceil(u.size / CHUNK) * WRITE_CHUNK_MS;
   ms += plan.download.length * DOWNLOAD_MS;
   ms += (plan.moveDevice.length + plan.deleteDevice.length + plan.mkdirDevice.length +
          plan.rmdirDevice.length) * COMMAND_MS;
+  ms += ((plan.moveLocal?.length ?? 0) + (plan.rmdirLocal?.length ?? 0) +
+         plan.mkdirLocal.length + plan.deleteLocal.length) * LOCAL_OP_MS;
   return Math.round(ms / 1000);
 }
 
@@ -874,6 +882,219 @@ export function compareByContent({ local, device, excludes = DEFAULT_EXCLUDES, i
 // Flat, ordered list of operations for the executor: folders before the files
 // that need them, uploads and downloads next, deletions last (files before the
 // folders that contained them).
+// Device-managed trees, always out of scope for organise whatever root it
+// walks. This matters more than it looks: the .bin files in amiibolink/ and
+// chameleon/slots/ are real 540-byte dumps, so anything identifying files by
+// content recognises them and would happily refile them as library amiibo,
+// breaking slot emulation. Until now they were safe only by accident of scope
+// — planner.js has long noted they are "only protected by being outside the
+// default root" — and a cross-root organise is the first thing to walk past
+// that accident.
+export const DEVICE_MANAGED = ['amiibolink/', 'chameleon/'];
+
+// Everything the sync excludes, minus the rescue staging tree. That exclusion
+// exists so SYNC and BACKUP never treat parked files as library content, but
+// organise is the operation whose whole job is to empty it — honouring it here
+// would make the round trip silently do nothing, which reads as "organise
+// found no work".
+function organiseExcludes(excludes) {
+  const base = (excludes ?? DEFAULT_EXCLUDES).filter((x) => x !== STAGING_PREFIX);
+  return [...base, ...DEVICE_MANAGED];
+}
+
+/**
+ * Plan a tidy-up: give every recognised dump its canonical name and folder.
+ *
+ * The layout is not decided here. amiiboRelPath already picks where a dump
+ * belongs — pinned path, HHD by UID, Air Riders by vehicle, then a ladder of
+ * name forms measured against the byte cap — and it has only ever been called
+ * at ingest, for files with no home yet. Organise calls it for files that
+ * already have one, so the two can never disagree about where a dump goes.
+ *
+ * `walkRoot` is where the index was read from; `destRoot` is where files
+ * should end up. They differ after a rescue: the files sit in `E:/r_` and
+ * belong under `E:/amiibo`, which are siblings, so an organise rooted at
+ * either would never see both. Walking the drive root instead keeps `from` and
+ * `to` relative to one root, which is exactly what applyPlan's moveDevice
+ * already expects — no executor change, and no absolute paths in a plan.
+ *
+ * Whole-drive scope is safe here in a way it is not for sync: organise never
+ * deletes a file, and only sweeps folders it emptied itself.
+ *
+ * @param {object} input
+ * @param {Map}    input.index      the side being organised
+ * @param {'device'|'local'} input.side
+ * @param {string} input.walkRoot   root the index was read from
+ * @param {string} [input.destRoot] where files should end up (default walkRoot)
+ */
+export function planOrganise({ index, side, walkRoot, destRoot = walkRoot, options = {} }) {
+  const excludes = organiseExcludes(options.excludes);
+  const isDevice = side === 'device';
+  const plan = {
+    mode: `organise-${side}`,
+    deviceRoot: walkRoot,
+    destRoot,
+    mkdirDevice: [],
+    mkdirLocal: [],
+    upload: [],
+    download: [],
+    moveDevice: [],
+    moveLocal: [],
+    deleteDevice: [],
+    deleteLocal: [],
+    rmdirDevice: [],
+    rmdirLocal: [],
+    wouldDelete: [],
+    conflicts: [],
+    blocked: [],
+    unchanged: [],
+    ambiguous: [],
+    // Files we cannot name, left exactly where they are. Not an error and not
+    // work — but worth showing, or a tidy-up looks like it missed things.
+    unidentified: [],
+    warnings: [],
+  };
+
+  // destRoot expressed relative to walkRoot: '' when they are the same,
+  // 'amiibo' when walking E:/ and filing into E:/amiibo.
+  const prefix = destPrefix(walkRoot, destRoot);
+  const moves = isDevice ? plan.moveDevice : plan.moveLocal;
+  const mkdirs = isDevice ? plan.mkdirDevice : plan.mkdirLocal;
+  const rmdirs = isDevice ? plan.rmdirDevice : plan.rmdirLocal;
+
+  const protectedDirs = unenumeratedDirs(index);
+  const dirs = new Set();
+  const claimed = new Map(); // target relPath -> the file that got there first
+  const emptied = new Set(); // source folders that may end up empty
+
+  for (const [relPath, e] of index) {
+    if (isExcluded(relPath, excludes)) continue;
+    if (e.isDir) { dirs.add(relPath); continue; }
+
+    if (!e.amiiboId) {
+      plan.unidentified.push({ relPath, size: e.size });
+      continue;
+    }
+
+    // Measured against where the file will actually live, so the name ladder
+    // shortens for a deeper destination rather than emitting an over-long path.
+    const target = amiiboRelPath(e.amiiboId, {
+      deviceRoot: destRoot,
+      uid: e.uid ?? null,
+      vehicle: e.vehicle ?? null,
+    });
+    if (!target) {
+      plan.blocked.push({ relPath, action: 'move', reason: 'no name for it fits the device path limit' });
+      continue;
+    }
+    const to = prefix ? `${prefix}/${target}` : target;
+
+    if (to === relPath) { plan.unchanged.push(relPath); continue; }
+
+    // Two dumps of one amiibo want the same name. Keeping the first and saying
+    // so beats inventing a suffix: the database's own disambiguation rules
+    // (dbsource.js) own that namespace, and a counter here would collide with
+    // them the moment one is added.
+    const already = claimed.get(to);
+    if (already) {
+      plan.blocked.push({
+        relPath, action: 'move',
+        reason: `another dump already claims ${to} (${already})`,
+      });
+      continue;
+    }
+    // A file already sitting where a *different* file wants to go: leave both.
+    if (index.has(to)) {
+      plan.blocked.push({ relPath, action: 'move', reason: `${to} is already taken` });
+      continue;
+    }
+    claimed.set(to, relPath);
+
+    queueDirs(mkdirs, to, dirs, isDevice ? walkRoot : null);
+    moves.push({ from: relPath, to });
+    const parent = relPath.slice(0, relPath.lastIndexOf('/'));
+    if (relPath.includes('/')) emptied.add(parent);
+  }
+
+  // Sweep folders the moves emptied — deepest first, and never one whose
+  // contents we never enumerated (remove() is recursive, §9.4).
+  const survivors = new Set([...index.keys()].filter((p) => !index.get(p).isDir));
+  for (const m of moves) survivors.delete(m.from);
+  for (const m of moves) survivors.add(m.to);
+
+  const doomed = [...emptied]
+    .filter((dir) => !protectedDirs.has(dir))
+    .filter((dir) => !isExcluded(dir, excludes))
+    .filter((dir) => ![...survivors].some((p) => p.startsWith(`${dir}/`)))
+    // Every ancestor of an emptied folder is a candidate too, so a staging tree
+    // collapses completely rather than leaving r_/ standing.
+    .flatMap((dir) => [dir, ...parentDirs(dir)])
+    .filter((dir) => dir && !protectedDirs.has(dir) && !isExcluded(dir, excludes))
+    .filter((dir) => ![...survivors].some((p) => p.startsWith(`${dir}/`)));
+
+  for (const dir of [...new Set(doomed)].sort((a, b) => depth(b) - depth(a) || b.localeCompare(a))) {
+    rmdirs.push({ relPath: dir });
+  }
+
+  if (plan.unidentified.length) {
+    plan.warnings.push(
+      `${plan.unidentified.length} file(s) are not recognised amiibo dumps, so there is no name to ` +
+        `give them — they are left exactly where they are.`
+    );
+  }
+  if (isDevice) {
+    const unlisted = unenumeratedWarning(index, ' Nothing inside them was organised.');
+    if (unlisted) plan.warnings.push(unlisted);
+  }
+
+  plan.unenumerated = isDevice ? unenumeratedList(index) : [];
+  plan.stats = {
+    unenumerated: plan.unenumerated.length,
+    upload: 0,
+    download: 0,
+    moveDevice: plan.moveDevice.length,
+    moveLocal: plan.moveLocal.length,
+    deleteDevice: 0,
+    deleteLocal: 0,
+    mkdirDevice: plan.mkdirDevice.length,
+    mkdirLocal: plan.mkdirLocal.length,
+    rmdirDevice: plan.rmdirDevice.length,
+    rmdirLocal: plan.rmdirLocal.length,
+    wouldDelete: 0,
+    unchanged: plan.unchanged.length,
+    conflicts: 0,
+    blocked: plan.blocked.length,
+    ambiguous: 0,
+    unidentified: plan.unidentified.length,
+    uploadBytes: 0,
+    downloadBytes: 0,
+  };
+  plan.stats.estimatedSeconds = estimateSeconds(plan);
+  return plan;
+}
+
+// 'E:/' + 'E:/amiibo' -> 'amiibo'. Equal roots give ''.
+function destPrefix(walkRoot, destRoot) {
+  const a = walkRoot.replace(/\/+$/, '');
+  const b = destRoot.replace(/\/+$/, '');
+  if (a === b) return '';
+  if (!b.startsWith(`${a}/`)) {
+    throw new Error(`destRoot ${destRoot} is not inside walkRoot ${walkRoot}`);
+  }
+  return b.slice(a.length + 1);
+}
+
+// Queue every missing ancestor of `relPath`, shallowest first. On the device a
+// path that cannot be addressed is skipped rather than queued.
+function queueDirs(out, relPath, known, deviceRoot) {
+  for (const dir of parentDirs(relPath)) {
+    if (known.has(dir)) continue;
+    if (deviceRoot && checkDestination(deviceRoot, `${dir}/x`)) continue;
+    known.add(dir);
+    out.push({ relPath: dir });
+  }
+}
+
 export function flattenPlan(plan) {
   const ops = [];
   const deviceDeletes = [
@@ -882,6 +1103,7 @@ export function flattenPlan(plan) {
   ];
 
   for (const m of plan.mkdirLocal) ops.push({ op: 'mkdirLocal', ...m });
+  for (const m of plan.moveLocal ?? []) ops.push({ op: 'moveLocal', ...m });
 
   // Normally the device only loses files once their replacements are safely
   // on it. When the incoming data will not fit alongside what is there, that
@@ -895,6 +1117,8 @@ export function flattenPlan(plan) {
 
   if (!plan.deleteFirst) ops.push(...deviceDeletes);
   for (const d of plan.deleteLocal) ops.push({ op: 'deleteLocal', ...d });
+  // Last: a folder can only go once everything that was in it has moved out.
+  for (const d of plan.rmdirLocal ?? []) ops.push({ op: 'rmdirLocal', ...d });
   return ops;
 }
 
@@ -1305,6 +1529,122 @@ export function planReplace({ local, device, deviceRoot, options = {} }) {
     blocked: plan.blocked.length,
     ambiguous: 0,
     uploadBytes,
+    downloadBytes: 0,
+  };
+  plan.stats.estimatedSeconds = estimateSeconds(plan);
+  return plan;
+}
+
+/**
+ * Plan a wipe: remove everything under the device folder, writing nothing.
+ *
+ * REPLACE already clears the device, but only as the first half of writing a
+ * local folder back — so it needs a folder to write, and it always writes one.
+ * This is the other case: clearing a device because you want it clear, or
+ * because a repair left a staging tree behind you have already backed up. It
+ * honours the configured device folder, so pointing it at `E:/r_` clears only
+ * that.
+ *
+ * What it will not remove:
+ *
+ *   - Excluded files. `key_retail.bin` holds the amiibo signing keys and
+ *     `settings.bin` is device configuration; deleting either breaks the
+ *     device rather than merely emptying it. They are reported as kept.
+ *   - A folder whose listing never completed. Its files are not in the index,
+ *     so they cannot be deleted individually, and `remove` on the folder is
+ *     recursive (§9.4) — it would take contents nobody has seen. The folder is
+ *     left standing and the plan says so. Erasing one of those stays an
+ *     explicitly confirmed job for the repair tool.
+ */
+export function planWipe({ device, deviceRoot, options = {} }) {
+  const excludes = options.excludes || DEFAULT_EXCLUDES;
+  const protectedDirs = unenumeratedDirs(device);
+
+  const plan = {
+    mode: 'wipe',
+    deviceRoot,
+    mkdirDevice: [],
+    mkdirLocal: [],
+    upload: [],
+    download: [],
+    moveDevice: [],
+    moveLocal: [],
+    deleteDevice: [],
+    deleteLocal: [],
+    rmdirDevice: [],
+    rmdirLocal: [],
+    wouldDelete: [],
+    conflicts: [],
+    blocked: [],
+    unchanged: [],
+    ambiguous: [],
+    kept: [],
+    warnings: [],
+    deleteFirst: true,
+  };
+
+  const dirs = [];
+  for (const [relPath, e] of device) {
+    if (isExcluded(relPath, excludes)) {
+      if (!e.isDir) plan.kept.push({ relPath, size: e.size, reason: 'device state' });
+      continue;
+    }
+    if (e.isDir) {
+      if (protectedDirs.has(relPath)) continue;
+      dirs.push(relPath);
+    } else {
+      plan.deleteDevice.push({ relPath, size: e.size });
+    }
+  }
+
+  // A folder holding something we are keeping has to stay too, or the recursive
+  // remove takes the thing we deliberately spared.
+  const survivors = [...device.keys()].filter(
+    (p) => !device.get(p).isDir && isExcluded(p, excludes)
+  );
+  const doomed = dirs.filter((dir) => !survivors.some((p) => p.startsWith(`${dir}/`)));
+  doomed.sort((a, b) => depth(b) - depth(a) || b.localeCompare(a));
+  for (const relPath of doomed) plan.rmdirDevice.push({ relPath });
+
+  if (/^[IE]:\/?$/.test(deviceRoot.trim())) {
+    plan.warnings.push(
+      `This is the whole drive (${deviceRoot}), so amiibolink/, chameleon/ and every other ` +
+        `device folder go too. Point at a subfolder such as E:/amiibo unless you really mean ` +
+        `to clear everything.`
+    );
+  }
+  if (plan.kept.length) {
+    plan.warnings.push(
+      `${plan.kept.length} device file(s) are kept: they are device state, not library content, ` +
+        `and the device needs them.`
+    );
+  }
+  const unlisted = unenumeratedWarning(
+    device,
+    ' They are left standing, so this does not empty the folder completely.'
+  );
+  if (unlisted) plan.warnings.push(unlisted);
+
+  plan.unenumerated = unenumeratedList(device);
+  plan.stats = {
+    unenumerated: plan.unenumerated.length,
+    upload: 0,
+    download: 0,
+    moveDevice: 0,
+    moveLocal: 0,
+    deleteDevice: plan.deleteDevice.length,
+    deleteLocal: 0,
+    mkdirDevice: 0,
+    mkdirLocal: 0,
+    rmdirDevice: plan.rmdirDevice.length,
+    rmdirLocal: 0,
+    wouldDelete: 0,
+    unchanged: 0,
+    conflicts: 0,
+    blocked: 0,
+    ambiguous: 0,
+    kept: plan.kept.length,
+    uploadBytes: 0,
     downloadBytes: 0,
   };
   plan.stats.estimatedSeconds = estimateSeconds(plan);

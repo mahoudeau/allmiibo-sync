@@ -12,6 +12,8 @@ import {
   writeLocalFile,
   makeLocalDir,
   removeLocalFile,
+  removeLocalDir,
+  moveLocalFile,
   saveState,
   sha256,
 } from './localfs.js';
@@ -285,9 +287,24 @@ export async function applyPlan({
         delete state.entries[op.relPath];
         return;
 
+      case 'moveLocal': {
+        await moveLocalFile(rootHandle, op.from, op.to);
+        const carried = state.entries[op.from];
+        delete state.entries[op.from];
+        if (carried) state.entries[op.to] = carried;
+        return;
+      }
+
       case 'deleteLocal':
         await removeLocalFile(rootHandle, op.relPath);
         delete state.entries[op.relPath];
+        return;
+
+      case 'rmdirLocal':
+        // Only ever called on a folder the plan has already emptied, and
+        // removeLocalDir is not recursive, so a mistake fails loudly here
+        // rather than taking a subtree with it.
+        await removeLocalDir(rootHandle, op.relPath);
         return;
 
       case 'rmdirDevice':

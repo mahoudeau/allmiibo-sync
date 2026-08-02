@@ -267,13 +267,47 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
     </ul>
   </section>
 
+  <section class="helpSec" id="stuck">
+    <h2><span class="ico" data-ico="warning"></span>WHEN A FOLDER WON&rsquo;T LIST</h2>
+    <p>Older devices can choke on a folder holding several hundred files. Asking
+       for the list takes longer than the app is willing to wait, so a scan
+       stops before it starts. If that happens, nothing is broken and nothing is
+       lost &mdash; the files are still there.</p>
+    <p>Two things fix it. <b>ORGANISE DEVICE</b> (Advanced sync) spreads a big
+       pile into one folder per series, which is the permanent cure: the listing
+       cost is paid on every single scan. If the folder has got bad enough that
+       it won&rsquo;t list at all any more, Settings &rarr; <b>DEBUG TOOLS</b>
+       &rarr; <b>REPAIR</b> gets the files out first.</p>
+    <p><b>What REPAIR does.</b> It reads as far as your device manages, moves
+       those files into a folder called <code>E:/r_</code>, and asks again
+       &mdash; each go reaches further, because the folder is shorter. Nothing
+       is deleted and nothing leaves the device, so you don&rsquo;t need to pick
+       a folder on your computer first.</p>
+    <p><b>Why the rescued files are called <code>0001.bin</code>.</b> An amiibo
+       is identified by what is inside the file, never by its name, so the
+       original names carry nothing the app needs &mdash; and short made-up ones
+       avoid every problem long or odd ones cause mid-rescue. Run
+       <b>ORGANISE DEVICE</b> afterwards and they get their real names and
+       folders. Sync and backup ignore <code>E:/r_</code> until then, so those
+       placeholder names never spread anywhere.</p>
+    <p>Whenever you connect with files still parked in <code>E:/r_</code>, the
+       app offers to organise them, back them up, or delete them.</p>
+    <p><b>What can&rsquo;t be recovered.</b> If your device can&rsquo;t read a
+       single entry from the folder, there is nothing any app can do: the only
+       way to open a file is to know its name, and the only way to learn a name
+       is the list that isn&rsquo;t working. REPAIR will say so plainly rather
+       than pretend otherwise, and erasing the folder at that point destroys
+       files nobody has seen.</p>
+  </section>
+
   <section class="helpSec">
     <h2><span class="ico" data-ico="bug"></span>DEBUG TOOLS</h2>
     <p>Settings → <b>DEBUG TOOLS</b> opens the device internals page, written
        in protocol language. It holds a read-only <b>probe</b> that walks the
-       filesystem, and a <b>write test</b> confined to a scratch folder it
-       cleans up afterwards. Useful when something misbehaves, and safe to
-       ignore otherwise.</p>
+       filesystem, a <b>write test</b> confined to a scratch folder it cleans up
+       afterwards, and <b>REPAIR</b> for a folder that will not list (see
+       <a href="#stuck">above</a>). The first two change nothing; REPAIR does.
+       Useful when something misbehaves, and safe to ignore otherwise.</p>
   </section>
 
   <section class="helpSec">

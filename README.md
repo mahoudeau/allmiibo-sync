@@ -54,7 +54,7 @@ and 2.16.0 (January 2026) added on-device emulation for v3 amiibo.
 - **Interface**: an 8-bit skin with three themes, an original pirate mascot
   in twelve colourways, and an Advanced toggle that keeps the expert layer out
   of the way until asked for. ✅
-- **Tests**: 715 across twenty-nine files; the protocol suite runs against a
+- **Tests**: 766 across thirty-two files; the protocol suite runs against a
   simulated device, the admin suite against a real HTTP server on an ephemeral
   port, the UI suites against a real DOM, the rest are pure. Nothing reaches the
   network. ✅
@@ -178,7 +178,7 @@ any other files.
 
 You only need this page if the Collection's SYNC is too polite. The
 **Advanced** toggle (header → Settings) adds it to the navigation; it walks
-three steps (connect, choose, review) and offers all five operations:
+three steps (connect, choose, review) and offers every operation:
 
 | Operation | Direction | Deletes | Matches on | Visible |
 |---|---|---|---|---|
@@ -186,9 +186,48 @@ three steps (connect, choose, review) and offers all five operations:
 | **SYNC** | both | opt-in | path, against the last sync | always |
 | **MATCH** | both | no | amiibo identity | Advanced |
 | **REPLACE** | local → device | **yes** | path | Advanced |
+| **WIPE** | device only | **yes** | nothing, takes it all | Advanced |
+| **ORGANISE DEVICE** | device → itself | empty folders | amiibo identity | Advanced |
+| **ORGANISE FOLDER** | folder → itself | empty folders | amiibo identity | Advanced |
 | **CHECK** | read-only report | no | file content | Advanced |
 | **PACK FOLDER** | local → one file | no | amiibo identity | Advanced |
 | **PACK DEVICE** | device → one file | no | amiibo identity | Advanced |
+
+**ORGANISE** renames and refiles one side into the layout the app would have
+chosen itself, which is also the cure for the failure mode that makes a device
+stop listing: several hundred files in one directory. It moves files, never
+copies or deletes them, and sweeps only the folders its own moves emptied. The
+device variant reads every file first, because a dump's identity is in its
+bytes and never in its filename — budget roughly 0.4 s per file. Both are
+one-sided, so neither needs the other half connected.
+
+Three things it will not do. A file it cannot identify stays exactly where it
+is and is listed rather than guessed at. A second dump of an amiibo that
+already claimed its name is reported as blocked, not silently suffixed. And
+`amiibolink/` and `chameleon/` are never touched: those hold genuine 540-byte
+dumps, so identification recognises them, and refiling them would break slot
+emulation.
+
+**WIPE** clears the device folder and writes nothing back — REPLACE also clears
+it, but only as the first half of writing your folder over the top, so it needs
+a folder and always writes one. WIPE is for wanting the device empty, or for
+clearing a staging folder a repair left behind. It keeps `key_retail.bin` and
+`settings.bin` (deleting the signing keys breaks the device rather than
+emptying it), leaves any folder that would not list standing, and says so in
+both cases before you confirm.
+
+You can also **delete chosen amiibo** from the device: turn on SELECT on the
+Collection, pick them, then DELETE FROM DEVICE. Your folder is untouched. The
+confirm counts *files*, not amiibo, because one id is not one file — the 91 HHD
+item cards share a single fabricated id and Air Riders vehicles share one four
+ways, so selecting "one amiibo" can be ninety-one deletions, and the dialog
+names the ones that expand.
+
+If a repair has parked files in `E:/r_`, connecting on either page offers to
+organise them, back them up, or delete them. `E:/r_` is a *sibling* of the
+device folder, so no ordinary scan would ever mention it. Choosing to delete
+opens a second, explicit confirm — the picker resolves on one click, which must
+never be enough to erase a few hundred files.
 
 Options live inside the operation they belong to and are remembered per
 operation:
