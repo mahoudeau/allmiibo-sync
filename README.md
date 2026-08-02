@@ -256,6 +256,16 @@ Settings → **DEBUG TOOLS** opens the device-internals page (the old
   end of PROTOCOL.md.
 - The **write test** writes only inside `E:/_synctest`, aborts if that folder
   is not empty, and cleans up after itself even when a check fails.
+- The **repair** tool is for a folder the device will not finish listing —
+  usually several hundred files in one directory on older hardware. Unlike the
+  other two it changes the device. It reads as far as the device manages, moves
+  those files into `E:/r_` in batches of fifty under generated names, then
+  lists again; each pass reaches further because the folder is shorter. Nothing
+  is deleted and nothing leaves the device, so no local folder is needed.
+  Erasing the folder afterwards is a separate, confirmed step, and the dialog
+  is explicit that whatever the device could never read was never moved and
+  goes with it. Takes a typed path, since the folder picker cannot navigate
+  into a folder that will not open.
 
 ### The interface
 
@@ -1120,7 +1130,7 @@ web/amiibo.html           per-amiibo detail page
 web/sync.html             Advanced sync (every operation and option)
 web/help.html             HOW TO page: every feature explained in-app
 web/legal.html            legal & licensing, the README's Legal section in-app
-web/debug.html            device internals: probe + write test on one page
+web/debug.html            device internals: probe + write test + repair
 web/probe.html            redirect stub -> debug.html (old links keep working)
 web/write-test.html       redirect stub -> debug.html
 web/design-lab.html       the design moodboard the NES skin was picked from,
@@ -1179,6 +1189,8 @@ web/js/sprite.js          the pirate mascot as pixel-map -> SVG
 web/js/tutorial.js        the guided tour: spotlight overlay + per-page steps
 web/js/probe.js           read-only probe logic
 web/js/writetest.js       write-test logic
+web/js/rescue.js          drain a folder that will not list (engine, no DOM)
+web/js/repair.js          repair-tool UI on the debug page
 
 content/amiibo-overrides.json  curated corrections, merged by the generator
 content/backups/          the admin's timestamped saves (gitignored)

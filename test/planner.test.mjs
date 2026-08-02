@@ -1387,3 +1387,46 @@ test('a backup warns that a subtree was not copied', () => {
   assert.equal(p.stats.unenumerated, 1);
   assert.ok(p.warnings.some((w) => w.includes('Nothing inside them was backed up')));
 });
+
+// ---- the rescue staging tree is scaffolding, not library content ----------
+
+test('a trailing-slash exclude covers a whole subtree, not just the folder', () => {
+  // "r_" is the directory, but its files are "r_/1/0001.bin", whose basename
+  // matches nothing — so matching the folder entry alone would let them sync.
+  assert.equal(isExcluded('r_'), true);
+  assert.equal(isExcluded('r_/1'), true);
+  assert.equal(isExcluded('r_/1/0001.bin'), true);
+
+  // Nothing that merely starts with the same characters.
+  assert.equal(isExcluded('r_extra/thing.bin'), false);
+  assert.equal(isExcluded('Zelda/r_thing.bin'), false);
+});
+
+test('every pre-existing exclude still behaves exactly as before', () => {
+  assert.equal(isExcluded('settings.bin'), true);
+  assert.equal(isExcluded('Zelda/settings.bin'), true, 'basename match');
+  assert.equal(isExcluded('key_retail.bin'), true);
+  assert.equal(isExcluded('.allmiibo-sync.json'), true);
+  assert.equal(isExcluded('Zelda/Link.bin'), false);
+  assert.equal(isExcluded('Zelda'), false);
+});
+
+test('a rescue staging tree is never pushed back to the device', () => {
+  const p = plan(
+    { 'r_/1/0001.bin': file(540, 'h1'), 'r_/1': dir(), r_: dir(), 'Zelda/Link.bin': file(540, 'h2') },
+    {},
+    {},
+    { mode: 'push' }
+  );
+
+  assert.deepEqual(p.upload.map((u) => u.relPath), ['Zelda/Link.bin']);
+});
+
+test('a backup does not drag the staging tree onto your disk', () => {
+  const p = planDump({
+    device: index({ 'r_/1/0001.bin': file(540, 'h1'), 'x.bin': file(540, 'h2') }),
+    deviceRoot: ROOT,
+  });
+
+  assert.deepEqual(p.download.map((d) => d.relPath), ['x.bin']);
+});

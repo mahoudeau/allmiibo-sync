@@ -545,6 +545,47 @@ bar, and **no timeout should ever be derived from them**.
   filesystem equivalent — preserved on update, not synced, unless a sidecar
   file is introduced later.
 
+### 7.4 Recovering a folder that will not finish listing
+
+**What is recoverable, and what is not.** `read_dir` is the only enumeration
+primitive, and `open_file` takes a full path — so a filename is the only handle
+on a file, and a listing that returns *nothing* leaves that folder's contents
+unreachable by any client. There is no fallback: no index-based access, no
+wildcards, no cursor. Erasing such a folder destroys data no one can read, and
+a tool that offers to do it should say exactly that.
+
+**A listing that stalls part-way is a different case.** Frames arrive in order
+and each carries its own payload, so everything received before the device went
+quiet is exactly what it sent. Those are real entries, and they are addressable.
+The client must therefore keep the reassembly buffer on a timeout instead of
+dropping it — that accumulation is the only handle recovery has.
+
+**The drain.** Move the recovered entries out of the folder and list it again.
+The response is now shorter, so it reaches further; repeat until the listing
+completes or a pass yields nothing new. Notes from implementing it:
+
+- **Move, do not copy-and-delete.** `rename` is one command against open + read
+  + close + remove's four, and a failed `rename` leaves the file exactly where
+  it was — there is never a moment when a file exists nowhere. It also needs no
+  host-side storage, so recovery does not depend on the user choosing a folder.
+- **Generate the destination names.** The source names carry nothing a client
+  needs (identity is in the file's own bytes, not its name), while costing
+  sanitisation, collision handling and path-budget arithmetic in the middle of
+  a recovery. Short generated names sidestep all of it: `E:/r_/1/0001.bin` is
+  17 bytes against the 63-byte cap, so no file can be skipped for not fitting.
+- **Cap what you create.** Parking several hundred files in one staging folder
+  rebuilds the oversized listing you are dismantling. Batch them.
+- **Truncate defensively.** A length prefix severed mid-field can decode to a
+  plausible but wrong name, so stop parsing at the first read past the end and
+  discard the last surviving entry too. It costs nothing: the folder is
+  re-listed anyway.
+- **A stall is the ceiling, not a bug.** If the device dies at the same entry
+  every time, everything before it is out and the rest is unreachable. Stop and
+  say so rather than inviting another attempt.
+- **Nothing is created twice.** `create_folder` is not idempotent (§9.3), so
+  only create what a listing showed absent, and resume an interrupted run at
+  the next free name rather than reusing one.
+
 ---
 
 ## 8. Open questions

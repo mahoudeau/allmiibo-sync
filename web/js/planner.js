@@ -35,10 +35,18 @@ export const MODES = ['push', 'pull', 'two-way'];
 // Device-managed files that must never be written, deleted or pulled.
 // settings.bin is device configuration and key_retail.bin holds the amiibo
 // signing keys; chameleon/ is separate emulator state.
+// A trailing slash means "this subtree", not "a file with this name".
+export const STAGING_PREFIX = 'r_/';
+
 export const DEFAULT_EXCLUDES = [
   'settings.bin',
   'key_retail.bin',
   '.allmiibo-sync.json',
+  // Where the repair tool parks files pulled out of a folder that would not
+  // list. They are scaffolding under generated names, not library content: a
+  // backup would copy them down as 0001.bin, and a push would send them back.
+  // ORGANISE is what dissolves the tree, and it looks past this deliberately.
+  STAGING_PREFIX,
   // Operating-system metadata. Without these a push uploads Finder and
   // Explorer droppings to the device.
   '.DS_Store',
@@ -49,7 +57,11 @@ export const DEFAULT_EXCLUDES = [
 
 export function isExcluded(relPath, excludes = DEFAULT_EXCLUDES) {
   const name = relPath.slice(relPath.lastIndexOf('/') + 1);
-  return excludes.includes(name) || excludes.includes(relPath);
+  if (excludes.includes(name) || excludes.includes(relPath)) return true;
+  // An entry ending in "/" excludes a whole subtree. Matching the folder entry
+  // alone would not do it: "r_" is the directory, but the files underneath are
+  // "r_/1/0001.bin", whose basename matches nothing.
+  return excludes.some((x) => x.endsWith('/') && `${relPath}/`.startsWith(x));
 }
 
 // ---- choosing a path for an amiibo that has no home yet ------------------

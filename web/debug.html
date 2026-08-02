@@ -97,10 +97,56 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
       <button id="w_save" disabled>Save report JSON</button>
     </div>
   </section>
+
+  <section class="tool" id="repair">
+    <h2>REPAIR</h2>
+    <p class="sub">For a folder the device won't finish listing. Moves what it can still read into
+      <code>E:/r_</code> in batches of 50 — nothing is deleted and nothing leaves the device, so no
+      folder needs choosing. Then ORGANISE gives them real names.</p>
+    <p class="sub">Erasing is separate, and permanent: anything the device could never read was never
+      moved, and goes with the folder.</p>
+
+    <div class="row">
+      <button id="r_connect" class="primary">Connect</button>
+      <button id="r_disconnect" disabled>Disconnect</button>
+      <label>Folder <input id="r_path" type="text" value="E:/amiibo" size="24"></label>
+      <button id="r_rescue" disabled>Rescue</button>
+      <button id="r_stop" hidden>Stop</button>
+    </div>
+
+    <div id="r_status" class="status">Ready</div>
+
+    <div class="pbar" id="r_pbar" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+      <div class="track"><div class="fill"></div></div>
+      <div class="track sub" hidden><div class="fill"></div></div>
+      <div class="pLbl"><span class="left"></span><span class="right"></span></div>
+    </div>
+
+    <section>
+      <h2>Results</h2>
+      <pre id="r_results">(not yet run)</pre>
+    </section>
+
+    <section>
+      <h2>Log</h2>
+      <div id="r_log" class="logbox"></div>
+    </section>
+
+    <div class="row">
+      <button id="r_erase" disabled class="danger">Erase the folder</button>
+      <label><input id="r_force" type="checkbox"> Erase without rescuing first</label>
+    </div>
+
+    <div class="row">
+      <button id="r_copy" disabled>Copy report</button>
+      <button id="r_save" disabled>Save report JSON</button>
+    </div>
+  </section>
 </main>
 <script type="module" src="./js/header.js"></script>
 <script type="module" src="./js/probe.js"></script>
 <script type="module" src="./js/writetest.js"></script>
+<script type="module" src="./js/repair.js"></script>
 <script type="module" src="./js/footer.js"></script>
 </body>
 </html>
