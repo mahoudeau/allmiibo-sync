@@ -184,13 +184,25 @@ test('the page renders one panel per release, newest first', () => {
   assert.deepEqual(sections.map((s) => s.id), RELEASES.map((r) => `v${r.version}`));
 });
 
-test('the jump list links to every release and is not a nav', () => {
+test('the index table carries every release, and links to each one', () => {
   const page = mountHtml(PAGE);
   renderChangelog(page.document.getElementById('out'));
 
-  const links = [...page.document.querySelectorAll('.clJump a')];
-  assert.deepEqual(links.map((a) => a.getAttribute('href')),
-    RELEASES.map((r) => `#v${r.version}`));
+  const rows = [...page.document.querySelectorAll('.clIndex tbody tr')];
+  assert.equal(rows.length, RELEASES.length);
+
+  rows.forEach((row, i) => {
+    const release = RELEASES[i];
+    const cells = [...row.querySelectorAll('td')].map((td) => td.textContent.trim());
+    assert.deepEqual(cells, [release.version, formatDate(release.date), release.title]);
+    assert.equal(row.querySelector('a').getAttribute('href'), `#v${release.version}`);
+  });
+
+  // Every link has a section to land on.
+  for (const a of page.document.querySelectorAll('.clIndex a')) {
+    const id = a.getAttribute('href').slice(1);
+    assert.ok(page.document.getElementById(id), `nothing to jump to: ${id}`);
+  }
   assert.equal(page.document.querySelectorAll('nav').length, 0);
 });
 

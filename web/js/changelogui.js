@@ -62,16 +62,23 @@ function releaseHtml(release) {
   </section>`;
 }
 
-/** Jump list, built as a plain list. The injected header owns the only
- *  navigation element on a page, and pages.test.mjs enforces that. */
-function jumpHtml(releases) {
-  const links = releases.map((r) =>
-    `<li><a href="#v${r.version}">${r.version}</a> <span class="muted">${formatDate(r.date)}</span></li>`);
-  return `<ul class="clJump">${links.join('')}</ul>`;
+/** The index at the top: one row per release, version linking to its section.
+ *  A table rather than a run of links, so the dates and titles line up and you
+ *  can read down a column. */
+function indexHtml(releases) {
+  const rows = releases.map((r) => `<tr>
+        <td><a href="#v${r.version}">${r.version}</a></td>
+        <td class="muted">${formatDate(r.date)}</td>
+        <td>${inlineHtml(r.title)}</td>
+      </tr>`).join('');
+  return `<div class="clIndexWrap"><table class="clIndex">
+      <thead><tr><th>Version</th><th>Date</th><th>Release</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
 }
 
 export function renderChangelog(root, releases = RELEASES) {
-  root.innerHTML = jumpHtml(releases) + releases.map(releaseHtml).join('');
+  root.innerHTML = indexHtml(releases) + releases.map(releaseHtml).join('');
 }
 
 // Not run under test, where the module is imported for renderChangelog alone.

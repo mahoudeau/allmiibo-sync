@@ -37,21 +37,31 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
   .muted { color:var(--muted); }
 
   /* One release is one panel. The title sits under the version, so scanning
-     down the left edge gives you the numbers and nothing else. */
-  .clTitle { font-family:var(--pixel); font-size:.55rem; color:var(--accent);
-             margin:-.3rem 0 .9rem; }
-  .clCat { display:flex; align-items:center; gap:.4rem; font-family:var(--pixel);
-           font-size:.5rem; color:var(--muted); margin:1rem 0 .3rem;
+     down the left edge gives you the numbers and nothing else.
+     Four levels of pixel type in one panel, each clearly a step down from the
+     one above: version, title, category, group. */
+  .helpSec h2 { font-size:.8rem; margin-bottom:.5rem; }
+  .clTitle { font-family:var(--pixel); font-size:.72rem; line-height:1.5;
+             color:var(--accent); margin:0 0 1.4rem; }
+  .clCat { display:flex; align-items:center; gap:.5rem; font-family:var(--pixel);
+           font-size:.62rem; line-height:1.5; color:var(--fg); margin:1.6rem 0 .5rem;
            text-transform:uppercase; }
-  .clCat svg { width:.9rem; height:.9rem; }
-  .helpSec h3 { font-family:var(--pixel); font-size:.5rem; color:var(--fg);
-                margin:.8rem 0 .1rem; }
+  .clCat svg { width:1.1rem; height:1.1rem; }
+  .helpSec h3 { font-family:var(--pixel); font-size:.52rem; line-height:1.5;
+                color:var(--muted); margin:1.1rem 0 .3rem; }
 
-  /* Jump list, built as a plain list. The injected header owns the only
-     navigation element on the page, and pages.test.mjs enforces that. */
-  .clJump { display:flex; flex-wrap:wrap; gap:.4rem 1.1rem; list-style:none;
-            margin:0 0 1.4rem; padding:0; font-size:.85rem; }
-  .clJump a { color:var(--fg); }
+  /* The index. Scrolls inside itself rather than widening the page, the same
+     way the example paths on the HOW TO page do. */
+  .clIndexWrap { overflow-x:auto; margin:0 0 1.6rem; }
+  .clIndex { width:100%; border-collapse:collapse; font-size:.9rem;
+             white-space:nowrap; }
+  .clIndex th { text-align:left; font-family:var(--pixel); font-size:.5rem;
+                color:var(--muted); text-transform:uppercase; font-weight:normal;
+                border-bottom:2px solid var(--border);
+                padding:0 1.1rem .45rem 0; }
+  .clIndex td { border-bottom:1px solid var(--border); padding:.5rem 1.1rem .5rem 0; }
+  .clIndex tr:last-child td { border-bottom:0; }
+  .clIndex a { font-family:var(--pixel); font-size:.55rem; color:var(--accent); }
 </style>
 </head>
 <body>
