@@ -136,6 +136,13 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
     <p>To move specific amiibo instead, press <b>SELECT</b>, tap the ones you
        want, then <b>SEND TO DEVICE</b> or <b>DOWNLOAD</b> from the bar at the
        bottom. Only amiibo missing on the other side are transferred.</p>
+    <p>In Advanced mode the same bar offers <b>DELETE FROM DEVICE</b>, which
+       removes the selected amiibo from the device and leaves your folder
+       alone. It counts <i>files</i>, not amiibo, and tells you when those two
+       numbers differ. Some amiibo stand for more than one dump: every Happy
+       Home Designer card shares a single identity, and each Air Riders
+       character covers four vehicles. So picking one card really does mean
+       deleting all of them, and the confirmation says so first.</p>
   </section>
 
   <section class="helpSec">
@@ -262,34 +269,48 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
           device and writes your folder fresh, and asks twice before doing so.
           <b>CHECK</b> reads everything and reports differences without
           changing a thing.</li>
+      <li><b>ORGANISE DEVICE</b> and <b>ORGANISE FOLDER</b> tidy one side
+          without touching the other: every dump gets the name and folder the
+          app would have chosen for it in the first place. Nothing is copied
+          and nothing is deleted. Files are moved, and only folders the move
+          leaves empty get cleared away. This is also the cure for a device
+          that has become slow to read, since a few hundred files in one
+          folder is what causes that. Anything it cannot recognise is listed
+          and left exactly where it is, never guessed at.</li>
+      <li><b>WIPE</b> empties the device folder and writes nothing back. That
+          is the difference from REPLACE, which also clears the device but only
+          on the way to writing your folder over the top. WIPE will not delete
+          the files your device itself needs, and it leaves alone any folder it
+          could not read. It tells you about both before you confirm.</li>
       <li>Extra detail appears here and there: raw plans, run logs, and format
-          trivia on detail pages.</li>
+          trivia on detail pages. On the Collection, <b>SELECT</b> gains
+          <b>DELETE FROM DEVICE</b>.</li>
     </ul>
   </section>
 
   <section class="helpSec" id="stuck">
     <h2><span class="ico" data-ico="warning"></span>WHEN A FOLDER WON&rsquo;T LIST</h2>
-    <p>Older devices can choke on a folder holding several hundred files. Asking
-       for the list takes longer than the app is willing to wait, so a scan
-       stops before it starts. If that happens, nothing is broken and nothing is
-       lost &mdash; the files are still there.</p>
+    <p>Older devices can choke on a folder holding several hundred files.
+       Asking for the list takes longer than the app is willing to wait, so a
+       scan stops before it starts. If that happens, nothing is broken and
+       nothing is lost. Your files are still there.</p>
     <p>Two things fix it. <b>ORGANISE DEVICE</b> (Advanced sync) spreads a big
        pile into one folder per series, which is the permanent cure: the listing
        cost is paid on every single scan. If the folder has got bad enough that
        it won&rsquo;t list at all any more, Settings &rarr; <b>DEBUG TOOLS</b>
        &rarr; <b>REPAIR</b> gets the files out first.</p>
     <p><b>What REPAIR does.</b> It reads as far as your device manages, moves
-       those files into a folder called <code>E:/r_</code>, and asks again
-       &mdash; each go reaches further, because the folder is shorter. Nothing
-       is deleted and nothing leaves the device, so you don&rsquo;t need to pick
-       a folder on your computer first.</p>
+       those files into a folder called <code>E:/r_</code>, then asks again.
+       Each go reaches further, because the folder is shorter than it was.
+       Nothing is deleted and nothing leaves the device, so you don&rsquo;t
+       need to pick a folder on your computer first.</p>
     <p><b>Why the rescued files are called <code>0001.bin</code>.</b> An amiibo
        is identified by what is inside the file, never by its name, so the
-       original names carry nothing the app needs &mdash; and short made-up ones
-       avoid every problem long or odd ones cause mid-rescue. Run
-       <b>ORGANISE DEVICE</b> afterwards and they get their real names and
-       folders. Sync and backup ignore <code>E:/r_</code> until then, so those
-       placeholder names never spread anywhere.</p>
+       original names carry nothing the app needs. Short made-up ones also
+       avoid every problem that long or awkward names cause in the middle of a
+       rescue. Run <b>ORGANISE DEVICE</b> afterwards and they get their real
+       names and folders. Sync and backup ignore <code>E:/r_</code> until then,
+       so those placeholder names never spread anywhere.</p>
     <p>Whenever you connect with files still parked in <code>E:/r_</code>, the
        app offers to organise them, back them up, or delete them.</p>
     <p><b>What can&rsquo;t be recovered.</b> If your device can&rsquo;t read a
@@ -300,14 +321,85 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
        files nobody has seen.</p>
   </section>
 
+  <section class="helpSec" id="troubleshooting">
+    <h2><span class="ico" data-ico="warning"></span>TROUBLESHOOTING</h2>
+    <p><b>&ldquo;Web Bluetooth unavailable&rdquo;.</b> Use Chrome or Edge.
+       Safari and Firefox have not implemented it, so the Collection still
+       works with your folder but no device can be connected.</p>
+
+    <p><b>The device won&rsquo;t connect.</b> It accepts exactly one connection
+       at a time, so close any other tab or app holding it, including the
+       official web tools. Failing that, turn the device off and on.</p>
+
+    <p><b>It connected, then dropped.</b> Devices power themselves down when
+       the link goes quiet. The app pings yours every ten seconds to prevent
+       that, but a long run out of range will still drop. Reconnect and start
+       again: a transfer that was interrupted is resumable, and anything
+       already copied stays copied.</p>
+
+    <p><b>A scan sticks or fails on one folder.</b> Usually too many files in
+       one place, and fixable. See
+       <a href="#stuck">when a folder won&rsquo;t list</a>.</p>
+
+    <p><b>&ldquo;Some device folders could not be listed&rdquo;.</b> Reading
+       them failed twice, so nothing inside them was counted and the plan you
+       are looking at is incomplete. Sync will not delete anything in them
+       either: clearing a folder on the device takes its contents with it, and
+       nobody has seen what is in there. A slow connection is the usual cause,
+       so scan again to retry.</p>
+
+    <p><b>Everything shows as an upload after picking a folder.</b> Your folder
+       and the device folder are probably a level apart. Say your folder
+       <i>contains</i> an <span class="kbd">amiibo</span> folder while the
+       device is already pointed at <span class="kbd">E:/amiibo</span>: every
+       path is then shifted by one, and nothing lines up. Point one of them at
+       the other level. The plan warns you when the two sides have nothing in
+       common.</p>
+
+    <p><b>Transfers are slow.</b> They are: this is Bluetooth to a very small
+       device, at roughly a second per amiibo, and slower as the drive fills.
+       A full library is tens of minutes. Long runs can be stopped and picked
+       up later, and the app only ever transfers what differs.</p>
+
+    <p><b>A run stopped part way.</b> Open the <b>RUN LOG</b> on the Advanced
+       sync page and press <b>SAVE JSON</b>. Every operation is in there with
+       its timing and outcome, including exactly what the device refused and
+       why. That file is the thing to share when asking for help.</p>
+
+    <p><b>Something is wrong and you want to look properly.</b> Settings →
+       <b>DEBUG TOOLS</b>, below.</p>
+  </section>
+
   <section class="helpSec">
     <h2><span class="ico" data-ico="bug"></span>DEBUG TOOLS</h2>
-    <p>Settings → <b>DEBUG TOOLS</b> opens the device internals page, written
-       in protocol language. It holds a read-only <b>probe</b> that walks the
-       filesystem, a <b>write test</b> confined to a scratch folder it cleans up
-       afterwards, and <b>REPAIR</b> for a folder that will not list (see
-       <a href="#stuck">above</a>). The first two change nothing; REPAIR does.
-       Useful when something misbehaves, and safe to ignore otherwise.</p>
+    <p>Settings → <b>DEBUG TOOLS</b> opens the device internals page. It talks
+       in the device&rsquo;s own terms rather than in amiibo, which makes it
+       the right place to look when something misbehaves, and safe to ignore
+       entirely otherwise. Each tool connects on its own, one at a time.</p>
+    <ul>
+      <li><b>PROBE</b> is strictly read-only: it creates nothing, changes
+          nothing and deletes nothing. It reports the firmware version, how
+          full the drive is, and a full listing of every folder and file, then
+          optionally reads one file back to check the reported sizes are
+          honest. It ends with a JSON report you can copy or save. If you are
+          reporting a problem, that report is the single most useful thing to
+          send.</li>
+      <li><b>WRITE TEST</b> checks that writing actually works, without
+          risking anything you own. Everything it does happens inside a scratch
+          folder called <span class="kbd">E:/_synctest</span>; it refuses to
+          run at all if that folder already has something in it, and it clears
+          up after itself even when a check fails. It measures real transfer
+          speed while it is there, which is where the timing estimates
+          elsewhere come from.</li>
+      <li><b>REPAIR</b> is the only tool here that changes your device. It is
+          for a folder that will not finish listing: it moves out what it can
+          still read, in batches, so the folder gets short enough to read
+          again. Nothing is deleted by that and nothing leaves the device.
+          Erasing the folder afterwards is a separate step that asks first, and
+          it says plainly whether anything was actually rescued. That matters,
+          because if nothing could be read, erasing destroys files nobody has
+          seen. Full story <a href="#stuck">above</a>.</li>
+    </ul>
   </section>
 
   <section class="helpSec">

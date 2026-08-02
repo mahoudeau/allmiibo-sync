@@ -54,7 +54,7 @@ unable to read back a file it had just written: four such records in a
 
 **So records are normalised on the way in.** Packing recomputes BCC0 and BCC1 so
 every record is a well-formed NTAG215 image, which is what the Ally files
-themselves contain — their Air Riders entries are re-generated NTAG215 tags with
+themselves contain: their Air Riders entries are re-generated NTAG215 tags with
 fresh UIDs rather than truncated I2C dumps. Nothing is given up by this: the
 vehicle is already lost the moment a 2048-byte dump becomes a 540-byte record.
 
@@ -86,7 +86,7 @@ Global header
 
 Then N embedded files, N >= 0, each
   Offset  Size  Description
-  0       4     Total size (big-endian) — the bytes following this field
+  0       4     Total size (big-endian), counting the bytes after this field
   4       2     Header size (big-endian), H
   6       H     Header bytes, laid out by version
   6+H     E     Embedded file bytes, E = total size - 2 - H

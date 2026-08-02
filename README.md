@@ -66,7 +66,7 @@ Four hardware findings shape the sync design:
   and every operation is logged.
 - **`remove` deletes folders recursively**, with no "not empty" guard. Files
   are deleted individually, and a folder the walk could not list is never a
-  deletion candidate — a childless folder in a device listing means "never
+  deletion candidate. A childless folder in a device listing means "never
   looked", not "empty".
 - **`rename` moves between folders**, so a relocated file need not be re-uploaded.
 - **Devices vary by ~4× on identical operations.** The same 160-byte read took
@@ -198,7 +198,7 @@ chosen itself, which is also the cure for the failure mode that makes a device
 stop listing: several hundred files in one directory. It moves files, never
 copies or deletes them, and sweeps only the folders its own moves emptied. The
 device variant reads every file first, because a dump's identity is in its
-bytes and never in its filename — budget roughly 0.4 s per file. Both are
+bytes and never in its filename, so budget roughly 0.4 s per file. Both are
 one-sided, so neither needs the other half connected.
 
 Three things it will not do. A file it cannot identify stays exactly where it
@@ -208,7 +208,7 @@ already claimed its name is reported as blocked, not silently suffixed. And
 dumps, so identification recognises them, and refiling them would break slot
 emulation.
 
-**WIPE** clears the device folder and writes nothing back — REPLACE also clears
+**WIPE** clears the device folder and writes nothing back. REPLACE also clears
 it, but only as the first half of writing your folder over the top, so it needs
 a folder and always writes one. WIPE is for wanting the device empty, or for
 clearing a staging folder a repair left behind. It keeps `key_retail.bin` and
@@ -218,16 +218,16 @@ both cases before you confirm.
 
 You can also **delete chosen amiibo** from the device: turn on SELECT on the
 Collection, pick them, then DELETE FROM DEVICE. Your folder is untouched. The
-confirm counts *files*, not amiibo, because one id is not one file — the 91 HHD
+confirm counts *files*, not amiibo, because one id is not one file: the 91 HHD
 item cards share a single fabricated id and Air Riders vehicles share one four
-ways, so selecting "one amiibo" can be ninety-one deletions, and the dialog
-names the ones that expand.
+ways, so selecting "one amiibo" can be ninety-one deletions. The dialog names
+the ones that expand.
 
 If a repair has parked files in `E:/r_`, connecting on either page offers to
 organise them, back them up, or delete them. `E:/r_` is a *sibling* of the
 device folder, so no ordinary scan would ever mention it. Choosing to delete
-opens a second, explicit confirm — the picker resolves on one click, which must
-never be enough to erase a few hundred files.
+opens a second, explicit confirm, because the picker resolves on one click and
+that must never be enough to erase a few hundred files.
 
 Options live inside the operation they belong to and are remembered per
 operation:
@@ -295,7 +295,7 @@ Settings → **DEBUG TOOLS** opens the device-internals page (the old
   end of PROTOCOL.md.
 - The **write test** writes only inside `E:/_synctest`, aborts if that folder
   is not empty, and cleans up after itself even when a check fails.
-- The **repair** tool is for a folder the device will not finish listing —
+- The **repair** tool is for a folder the device will not finish listing,
   usually several hundred files in one directory on older hardware. Unlike the
   other two it changes the device. It reads as far as the device manages, moves
   those files into `E:/r_` in batches of fifty under generated names, then
@@ -429,10 +429,11 @@ as "not in the database" on the collection page, which is the cost of holding an
 addition out.
 
 One overlay key reaches no generated table at all: `artwork`, which records an
-artwork change you declined by the blob hash you declined. It is not database
-content — the pictures are gitignored and the database says nothing about them —
-so it lives in the overlay only because that is where decisions live, and it is
-written in the same save as everything else so one apply is one restore point.
+artwork change you declined, keyed by the blob hash you declined. It is not
+database content, since the pictures are gitignored and the database says
+nothing about them. It lives in the overlay because that is where decisions
+live, and it is written in the same save as everything else, so one apply is
+one restore point.
 
 **Upstream can only warn; the overlay author can fail.** A routine refresh must
 not break because a third party edited their repository, so an override for an ID
@@ -452,9 +453,9 @@ Neither is an official product, so with it off the headline completion figure
 stays comparable.
 
 **NEW AMIIBO** in the admin creates one, for something upstream does not list
-yet. It asks for the 16-hex ID and a name, and shows what the ID decodes to as
-you type — the series and the type are what those bytes *mean*, and typing them
-blind is how an amiibo ends up filed under the wrong series. It refuses an ID
+yet. It asks for the 16-hex ID and a name, and decodes the ID as you type. The
+series and the type are what those bytes *mean*, and typing them blind is how
+an amiibo ends up filed under the wrong series. It refuses an ID
 upstream already has, one already in the overlay, and one whose series or type
 byte has no name, because the generator hard-fails on that and the error would
 otherwise arrive at save time talking about the build rather than about the ID.
@@ -475,28 +476,28 @@ carry it. The cog on a series header opens its editor, where three things are
 curated.
 
 **The name.** Replaces the upstream label everywhere, including in the search
-index — a renamed series has to be findable by what it is now called.
+index, since a renamed series has to be findable by what it is now called.
 
 **The folder on the device.** This is the expensive one. The token names a real
 directory (`E:/amiibo/SSB/`), so changing it renames that folder on every
 device already synced and the next sync moves every file inside. The field says
 so as you type, in before-and-after device paths, and publishing a token change
-asks separately from the ordinary save — with the paths and the file count on
+asks separately from the ordinary save, with the paths and the file count on
 the dialog. It is validated as one folder name, held to the same rules a
 filename is.
 
 **The image.** There is no series logo anywhere and no public dataset of one, so
 the site picks a representative amiibo by name-matching a hardcoded table. The
 editor lets that be chosen instead, from the amiibo in that series and only
-those — a face from elsewhere would read as an artwork bug rather than a bad
+those. A face from elsewhere would read as an artwork bug rather than a bad
 pin. It is emitted as `AMIIBO_SERIES_FACE` and `seriesRepresentative()` prefers
 it over the guess. Uploading bespoke artwork is a separate matter and waits on
 the image pipeline.
 
 **NEW SERIES** names a byte upstream has not named. That is the whole of
-"creating" one, and its purpose is to unblock authoring an amiibo into a series
-the database does not know yet — which the authoring form refuses until the byte
-has a name, and says so.
+"creating" one. Its purpose is to unblock authoring an amiibo into a series the
+database does not know yet, which the authoring form refuses until the byte has
+a name, and says so.
 
 ### Naming a file for an amiibo
 
@@ -715,37 +716,37 @@ Update: 2 amiibo to add, 0 to change, 0 to remove · 1 series to add
 Nothing you have curated is affected · No files move on your device
 ```
 
-Named counts, zeros intact — Terraform's `Plan: N to add, N to change, N to
-destroy`. The second line is the only part that changes colour, because it is
-the only part that says whether the update needs care.
+Named counts with the zeros left in, after Terraform's `Plan: N to add, N to
+change, N to destroy`. The second line is the only part that changes colour,
+because it is the only part that says whether the update needs care.
 
 **What DECLINE does** depends on what is being declined, and is always "not this
 time" rather than "never":
 
 | | ACCEPT | DECLINE |
 |---|---|---|
-| a name, date, filename or folder token changed | upstream wins — writes nothing | pins the published value |
+| a name, date, filename or folder token changed | upstream wins, writing nothing | pins the published value |
 | an amiibo upstream dropped | drops your overlay entry for it | keeps it, as an authored entry |
 | an amiibo upstream added | it is added | held out by `excluded`, and **offered again next update** |
 
 Accepting is free: re-applying the overlay is what the build already does, so it
 writes nothing at all. Only declining grows the overlay, and only by what is
-needed to hold the line. A declined change also records `upstreamWas` — what
-upstream said at the moment the line was drawn — so a later update can tell a
-pin still doing its job from one upstream has come round to. A record with no
+needed to hold the line. A declined change also records `upstreamWas`, meaning
+what upstream said at the moment the line was drawn, so a later update can tell
+a pin still doing its job from one upstream has come round to. A record with no
 pin beside it is a validation error, which is what makes dropping a pin
 self-checking.
 
 **Some changes have no second answer, and say so instead of pretending.** A
 brand-new series has no previous name to fall back to, and the generator refuses
-a series byte without one — so it is shown as a consequence of accepting the
+a series byte without one. So it is shown as a consequence of accepting the
 amiibo that need it, with no buttons. Declining every amiibo in a new series
 declines the series with them.
 
 **Nothing blocks APPLY.** Anything left untouched is accepted, and the confirm
 step says how many that is (`3 left untouched, and will be accepted`). The
 previous version refused to proceed until every row had been clicked, including
-rows whose only possible answer was yes — which is the failure NN/g describes as
+rows whose only possible answer was yes. That is the failure NN/g describes as
 *"do not use confirmation dialogs for routine actions"*. Renames on the device
 keep their own confirmation, with the actual paths
 (`E:/amiibo/SSB/Mario.bin`), because that is the one consequence that reaches
@@ -766,16 +767,17 @@ It had not been part of it at all. The image pass lived only in
 silently left the site with 948 entries and 946 images, with nothing reporting
 it because nothing looked.
 
-**UPDATE asks what to cover first** — data, pictures, or both — because the two
-move on different schedules upstream and each has to be reachable alone. That is
-a scope question, not a second feature: whichever is chosen lands on the same
-screen with the same ACCEPT and DECLINE. Pictures alone fetch no sources at all,
-since the comparison is against the published database and one image index.
+**UPDATE asks what to cover first**: data, pictures, or both. The two move on
+different schedules upstream, so each has to be reachable alone. That is a scope
+question, not a second feature, and whichever is chosen lands on the same screen
+with the same ACCEPT and DECLINE. Pictures alone fetch no sources at all, since
+the comparison is against the published database and one image index.
 
-**A picture is reviewed by looking at it**, so an artwork row is the pair — what
-the site serves now, and what upstream would replace it with — and not two
-hashes. An arrival shows the one picture there is, because an empty box beside
-it would be a broken image rather than a comparison.
+**A picture is reviewed by looking at it**, so an artwork row is a pair of
+pictures rather than a pair of hashes: what the site serves now, and what
+upstream would replace it with. An arrival shows the one picture there is,
+because an empty box beside it would be a broken image rather than a
+comparison.
 
 **Every picture is a question, arrivals included.** An earlier version stated
 arrivals as a count and fetched them regardless, reasoning that there is no
@@ -785,9 +787,9 @@ a review.
 
 **Noticing a change costs one request and no image bytes.** GitHub's git trees
 API returns the whole `images/` directory with a blob hash per file, and that
-hash — `sha1("blob <len>\0" + bytes)` — is computable from a local file. So the
-comparison is a hash of what is on disk against a list that arrived in one
-response:
+hash is `sha1("blob <len>\0" + bytes)`, which is computable from a local file.
+So the comparison is a hash of what is on disk against a list that arrived in
+one response:
 
 ```
 GET /repos/8bitDream/AmiiboAPI/git/trees/dev:images
@@ -801,17 +803,17 @@ it. Nothing live is touched until then.
 
 **A refusal names the version refused**, recorded in the overlay as
 `artwork: { "<id>": { "declined": "<blob hash>" } }`. This is the one place the
-artwork model deliberately differs from the data model: declining an *arrival*
-means "not this time" and comes back next update, but declining a *change* means
-"I prefer the picture I have" — and being asked about the same picture every
-month is nagging, not review. Recording the specific hash is what stops that
+artwork model deliberately differs from the data model. Declining an *arrival*
+means "not this time" and comes back next update. Declining a *change* means "I
+prefer the picture I have", and being asked about the same picture every month
+is nagging, not review. Recording the specific hash is what stops that
 from becoming "never": once upstream changes the picture again, the record no
 longer matches and the new version is a new question. A declined arrival records
 nothing at all, because there is no version of it here to hold on to.
 
 **A check that could not run says so.** A rate-limited index and an unchanged
 image set look identical from the outside and mean opposite things, so a failure
-is reported as its own line rather than as an absence — read the lenient way, a
+is reported as its own line rather than as an absence. Read the lenient way, a
 403 makes every local picture look like a removal, and the screen would
 confidently propose deleting all 948. The data review is unaffected either way:
 GitHub throttling the image index is no reason to be unable to review a rename.
@@ -823,8 +825,9 @@ one request. It cannot fail an update: the database is written and promoted
 before any picture is requested, and what happened comes back in the receipt.
 
 A pictures-only update goes to its own endpoint and **never touches the
-database** — pictures are not generated from the sources, so there is nothing
-there for it to change. That case is why the scope question exists: upstream
+database**, since pictures are not generated from the sources and there is
+nothing there for it to change. That case is why the scope question exists:
+upstream
 ships artwork on its own schedule, so an amiibo added in July can get its
 picture in August with no data change to carry it. Grace Ashcroft and Leon S.
 Kennedy were in exactly that state. A full sweep of an empty install is still a
@@ -843,7 +846,7 @@ still fetched and the receipt says so plainly rather than leaving you to notice
 missing thumbnails:
 
 ```
-Artwork: 2 fetched. Tiers NOT generated — no image tool on this machine.
+Artwork: 2 fetched. Tiers NOT generated: no image tool on this machine.
 Run `npm run fetch-images` locally and redeploy to build them.
 ```
 
@@ -851,8 +854,8 @@ Run `npm run fetch-images` locally and redeploy to build them.
 
 The generated database is an **ES module**, evaluated once per document and
 cached by the browser. Applying rewrites that file on the server, but the page
-already holds the version it loaded at boot — so re-fetching the API and
-redrawing showed the old counts and the old rows, which is exactly what it did.
+still holds the version it loaded at boot, so re-fetching the API and redrawing
+showed the old counts and the old rows, which is exactly what it did.
 Nothing short of a new document picks up a new database. The receipt is parked
 in `sessionStorage` and read back on the next boot, so the reload does not throw
 away what just happened.
@@ -860,9 +863,9 @@ away what just happened.
 #### Why a fetch does not take effect
 
 A refresh writes into `tools/.cache/pending/` and never over the live pair. That
-is the one structural decision here and it earns its keep three times: a bad
-fetch cannot destroy a working cache; a `generate()` that fails afterwards needs
-no rollback; and — the one that actually matters — an ordinary save regenerates
+is the one structural decision here and it earns its keep three times. A bad
+fetch cannot destroy a working cache. A `generate()` that fails afterwards needs
+no rollback. And the one that actually matters: an ordinary save regenerates
 from the live cache, so a refresh that overwrote it would make **the next
 unrelated save publish unreviewed upstream data**.
 
@@ -872,7 +875,7 @@ error page more often than it 404s, and such a page would be written perfectly
 atomically.
 
 The apply order is the safety story, and one part of it looks wrong until it is
-said out loud — the cache is promoted **before** the database is written. If the
+said out loud: the cache is promoted **before** the database is written. If the
 rebuild then fails, the cache is new and the database is old, and a retry
 produces the same reviewed result. The other order would leave the database
 ahead of the cache, so the next ordinary save would silently *revert* published
@@ -880,11 +883,11 @@ data. Reverting is the worse failure.
 
 Four gates, each covered by a test that fails when it is removed:
 
-- **Undecided** — a change you did not look at cannot publish as if accepted.
-- **Fingerprint** — the preview is stamped with what it was computed from. If a
+- **Undecided.** A change you did not look at cannot publish as if accepted.
+- **Fingerprint.** The preview is stamped with what it was computed from. If a
   second tab saved, or someone re-fetched, apply is refused rather than applied
   to a world that moved.
-- **Post-decision build** — the decisions are applied and the result built
+- **Post-decision build.** The decisions are applied and the result built
   before anything is written. Two amiibo landing on one device path is refused
   with the reason. The only shape that reaches this gate is a rotation: upstream
   swaps two names in one series, which is self-consistent upstream, and keeping
@@ -901,7 +904,7 @@ invisible until one of them called a device-wide rename harmless.
 The BACKUPS drawer lists those timestamped copies, newest first, and offers each
 one for download or restore. **A restore is a save**: it runs the same dry run,
 is refused the same way if the result would not build, and takes its own backup
-of what it replaces before writing — so restoring the wrong one is itself
+of what it replaces before writing, so restoring the wrong one is itself
 undoable. Both go through one function in the server for exactly that reason;
 two code paths to the same file is how one of them quietly loses a gate.
 
@@ -910,8 +913,8 @@ burying "you will lose your work" inside "restore this backup?".
 
 EXPORT downloads the live overlay. It fetches it rather than navigating to the
 URL: navigation bypasses the error handling, so an expired session used to save
-the 401 response body under the name of a backup — a corrupt file you would not
-discover until you needed it.
+the 401 response body under the name of a backup. That is a corrupt file you
+would not discover until you needed it.
 
 Only a file whose name is a backup stamp can be read from the backup directory.
 The pattern is defined once, in `server/store.mjs`, and imported by the route;
@@ -1058,8 +1061,9 @@ npm test
   refuses a save that would not build, leaving both files untouched; caps body
   size; blocks four shapes of path traversal. Also the backup routes: a restore
   meets the same gate as a save and is itself undoable, and only a file whose
-  name is a backup stamp can be read from the backup directory — asserted by
-  planting one that is not and requiring it to stay unreadable, since Node's
+  name is a backup stamp can be read from the backup directory. That last one
+  is asserted by planting a file that is not and requiring it to stay
+  unreadable, since Node's
   URL parser never decodes `%2F` and so a traversal string cannot reach that
   code to begin with.
 - `admin.test.mjs`: the leak guards. No committed *or uncommitted* file may name
@@ -1073,7 +1077,7 @@ npm test
 - `dbdiff.test.mjs`: what an upstream refresh would change, and what each answer
   writes. Built by mutating a real generated database rather than a fixture,
   because the thing under test parses that exact format. Covers the two silent
-  bugs it inherited from the CLI — release dates read as none at all, and a
+  bugs it inherited from the CLI: release dates read as none at all, and a
   delta row appearing for an existing ID read as a new filename rather than a
   device-side rename. Also the full life of a declined addition: an exclusion is
   written, both databases then omit the entry so a names-only comparison would
@@ -1084,13 +1088,13 @@ npm test
   touched. Also the plausibility gate, which is what stops a 200 carrying an
   HTML error page from being written perfectly atomically over a working cache.
 - `server-upstream.test.mjs`: the refresh over real HTTP, with its own COPY of
-  the cache — applying promotes the pending sources over the live ones, and the
+  the cache. Applying promotes the pending sources over the live ones, and the
   repository's `tools/.cache` is what every other test and `npm run update-db`
   depend on. Each of the four apply gates is covered by a test that fails when
   the gate is removed.
 - `artwork.test.mjs`: fetching pictures and building the tiers, with `fetch` and
-  the child-process runner both injected — so no test needs an image tool
-  installed, and the Linux path (`mogrify`) is exercised on a Mac. The case with
+  the child-process runner both injected, so no test needs an image tool
+  installed and the Linux path (`mogrify`) is exercised on a Mac. The case with
   most riding on it is the one with no tool at all: the artwork still arrives
   and the report says the tiers were skipped, because the alternative is missing
   thumbnails and nothing anywhere explaining them.
@@ -1101,9 +1105,9 @@ npm test
 
 **No test reaches the network.** Everything is served from an ephemeral local
 origin, which the suite is checked for: preloading a wrapper around `fetch` into
-every test process and running all 664 tests reports zero requests off the
-machine — verified by first making a deliberate one and watching it get caught,
-since a guard that cannot fire proves nothing.
+every test process and running the whole suite reports zero requests off the
+machine. That was verified by first making a deliberate one and watching it get
+caught, since a guard that cannot fire proves nothing.
 
 The last seven run the interface itself, against a real DOM from `linkedom`.
 They exist because every UI bug in this project's history lived in a gap
@@ -1120,25 +1124,25 @@ module failed to load. `npm test` said everything passed each time.
   the script reaches for exists, every `data-ico` names a real icon, the
   sign-in form is visible before any script runs, and the grid is styled in one
   place rather than once per page.
-- `admin-boot.test.mjs`: the admin actually run — `adminui.js` imported against
-  the real page with a stubbed API, then driven: sign in, search, filter, edit,
+- `admin-boot.test.mjs`: the admin actually run. `adminui.js` is imported
+  against the real page with a stubbed API, then driven: sign in, search, filter, edit,
   revert, publish. This is the file that would have caught the white screen. Its
   review section is driven step by step against a preview `dbdiff` generates
   from a mutated real database, so the screen and the fixture cannot drift: the
   headline count is asserted to equal the number of rows the steps render, which
   is the arithmetic the previous screen got wrong.
 - `admin-style.test.mjs`: the CSS as text, since there is no layout engine. Its
-  centrepiece is a class-clash detector — every class the admin borrows checked
-  against every class `app.css` styles unqualified. It exists because `.fRow`
+  centrepiece is a class-clash detector: every class the admin borrows is
+  checked against every class `app.css` styles unqualified. It exists because `.fRow`
   was such a class, owned by the site footer, and the admin's form rows
   inherited a flex row that put each label, input and error side by side.
-- `amiibodetail-page.test.mjs`: the detail page rendered for three fixtures — a
-  plain figure, the Kirby Air Riders vehicle set and the 91-card HHD entry —
+- `amiibodetail-page.test.mjs`: the detail page rendered for three fixtures (a
+  plain figure, the Kirby Air Riders vehicle set and the 91-card HHD entry)
   and compared against a committed snapshot. It was written against the page
   *before* its renderer moved into `amiibopanel.js`, so it is the acceptance
   test for that extraction: the public page draws byte-for-byte what it drew.
 - `amiibopanel.test.mjs`: the renderer underneath it. Chiefly that every image
-  URL comes from the injected hook — four inline `./data/images/...` literals
+  URL comes from the injected hook. Four inline `./data/images/...` literals
   were the reason the panel could not be shared, since the site is served from
   `./` and the admin from `/`. Also that "nothing scanned" stays distinct from
   "scanned, and not owned", which a boolean would collapse.

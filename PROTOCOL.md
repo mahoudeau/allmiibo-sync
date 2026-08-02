@@ -2,22 +2,22 @@
 
 Reverse-engineered from the official Web Bluetooth clients:
 
-- `https://bt.allmiibo.com/` — Vue app, bundle `/js/app.5be9472d.js`
-- `https://pixl.amiibo.xyz/` — bundle `/index.js?815c0d29c8e2d63e8fcc`
+- `https://bt.allmiibo.com/`: Vue app, bundle `/js/app.5be9472d.js`
+- `https://pixl.amiibo.xyz/`: bundle `/index.js?815c0d29c8e2d63e8fcc`
 
 Both clients speak the **identical** wire protocol. The PIXL bundle additionally
-implements `vfs_read_file` (opcode 20), which the allmiibo page never calls —
-this is the missing half that makes device→local sync possible.
+implements `vfs_read_file` (opcode 20), which the allmiibo page never calls.
+That is the missing half that makes device→local sync possible.
 
 The device firmware is open source, which makes it the authority for anything
 the clients left ambiguous:
 
 - [`solosky/pixl.js`](https://github.com/solosky/pixl.js)
-- `fw/application/src/mod/df/df_proto_vfs.c` — command handlers
-- `fw/application/src/mod/vfs/vfs.h` — limits, mode flags, error codes
+- `fw/application/src/mod/df/df_proto_vfs.c`: command handlers
+- `fw/application/src/mod/vfs/vfs.h`: limits, mode flags, error codes
 
-Everything below has been cross-checked against that firmware. Confirmed
-against hardware running **Pixl.js 2.11.2 and 2.16.0** — the wire protocol is
+Everything below has been cross-checked against that firmware, and confirmed
+against hardware running **Pixl.js 2.11.2 and 2.16.0**. The wire protocol is
 unchanged across those five releases (October 2024 to January 2026), including
 the addition of v3 amiibo emulation in 2.16.0.
 
@@ -33,9 +33,9 @@ Goals:
 1. Keep a local directory tree (subfolders + files) in sync with the device's
    internal filesystem.
 2. Explicit direction control:
-   - `push` — local is master; device mirrors local.
-   - `pull` — device is master; local mirrors device.
-   - `two-way` — reconcile both sides against a stored sync state.
+   - `push`: local is master; device mirrors local.
+   - `pull`: device is master; local mirrors device.
+   - `two-way`: reconcile both sides against a stored sync state.
 3. Recursive: create/remove folders on the device as needed, not by hand.
 4. Idempotent: re-running a sync with no changes transfers nothing.
 5. Dry-run mode that prints the full plan before touching either side.
@@ -51,7 +51,7 @@ Nordic UART Service (NUS):
 
 | Role | UUID | Properties |
 |---|---|---|
-| Service | `6e400001-b5a3-f393-e0a9-e50e24dcca9e` | — |
+| Service | `6e400001-b5a3-f393-e0a9-e50e24dcca9e` | none |
 | RX (host → device) | `6e400002-b5a3-f393-e0a9-e50e24dcca9e` | Write |
 | TX (device → host) | `6e400003-b5a3-f393-e0a9-e50e24dcca9e` | Notify |
 
@@ -84,8 +84,8 @@ WRITE_CHUNK  = MAX_PAYLOAD - 1         = 242   // minus 1 byte for file_id
 ### 3.2 Request (host → device)
 
 A request is a single GATT write: header with `status = 0`, `chunk = 0`,
-followed by the command payload. Requests are never split — every command's
-payload fits within `MAX_PAYLOAD`.
+followed by the command payload. Requests are never split, since every
+command's payload fits within `MAX_PAYLOAD`.
 
 ### 3.3 Response (device → host)
 
@@ -99,12 +99,12 @@ Reassembly (mirroring the client's accumulator):
 1. First notification of a multi-part response: append the **entire buffer,
    including its 4-byte header**.
 2. Subsequent notifications: append **payload only** (skip the 4-byte header).
-3. On the final notification: append payload, then parse the accumulated buffer
-   — its leading 4 bytes are the header from step 1.
+3. On the final notification: append payload, then parse the accumulated
+   buffer, whose leading 4 bytes are the header from step 1.
 
 A single-notification response is parsed directly.
 
-`status` is binary — the firmware only ever emits these two values:
+`status` is binary. The firmware only ever emits these two values:
 
 ```c
 typedef enum { DF_STATUS_OK = 0, DF_STATUS_ERR = 1 } df_status_t;
@@ -121,7 +121,7 @@ where that happens. A failed command therefore says *that* it failed, never
 
 The client keeps a FIFO queue with **strictly one command in flight**. The next
 request is only written after the previous response fully arrives. Do not
-pipeline — the device has no request IDs to correlate replies.
+pipeline: the device has no request IDs to correlate replies.
 
 **A response deadline must measure silence, not elapsed time.** A large
 `read_dir` legitimately streams for a minute on a slow link (§7.2), so a
@@ -200,7 +200,7 @@ applying that to the value returned by `vfs_get_drive_list` yields `"Ext"`,
 which fails `validate_path`. See §7.1.
 
 The firmware strips the first two bytes (`VFS_DRIVE_LABEL_LEN`) and passes the
-remainder — `/folder/file.bin` — to the filesystem driver.
+remainder, `/folder/file.bin`, to the filesystem driver.
 
 Size limits, from `vfs.h` (these include the NUL terminator, hence the
 clients' 47/63):
@@ -209,10 +209,10 @@ clients' 47/63):
 |---|---|---|
 | `VFS_MAX_NAME_LEN` | 48 | filename ≤ 47 bytes |
 | `VFS_MAX_PATH_LEN` | 64 | path ≤ 63 bytes |
-| `VFS_MAX_META_LEN` | 128 | — |
+| `VFS_MAX_META_LEN` | 128 | none |
 | `VFS_MAX_FOLDER_SIZE` | 32 | entries per folder |
 
-### 4.5 Over-long paths are silently truncated — enforce client-side
+### 4.5 Over-long paths are silently truncated, so enforce client-side
 
 **This is the single most important reason to validate paths before sending.**
 An over-long path does not produce an error. `buff_get_string` in
@@ -237,14 +237,14 @@ truncated path**, reporting `DF_STATUS_OK`.
 Consequences, worst first:
 
 - **`vfs_remove` deletes the wrong entry.** Truncation can land the path on a
-  different file, or on a *directory* — and removal is recursive (§9.4). An
+  different file, or on a *directory*, and removal is recursive (§9.4). An
   unvalidated remove can therefore destroy an entire subtree while reporting
   success.
 - **`vfs_open_file` in write mode creates a file at the truncated path**,
   typically losing the `.bin` extension, and silently.
 - `vfs_rename` moves to the wrong destination.
 
-There is no memory-safety issue — the clamp is correct and NUL-termination is
+There is no memory-safety issue: the clamp is correct and NUL-termination is
 guaranteed. The hazard is purely that the device does something other than what
 was asked, without saying so.
 
@@ -255,8 +255,8 @@ destructive ones.
 
 The firmware's own ceiling is 65 bytes for a full path: a 66-byte buffer less
 the NUL. After `get_file_path` strips the 2-byte drive label, the driver sees
-≤ 63 characters, which matches `SPIFFS_OBJ_NAME_LEN` (64). SPIFFS is flat — the
-whole path *is* the object name.
+≤ 63 characters, which matches `SPIFFS_OBJ_NAME_LEN` (64). SPIFFS is flat, so
+the whole path *is* the object name.
 
 Both official clients nonetheless enforce **63 bytes**, two below what the
 firmware would accept. This project keeps 63, for two reasons:
@@ -266,7 +266,7 @@ firmware would accept. This project keeps 63, for two reasons:
 2. Two bytes of headroom is not worth being the only tool that can address a
    given file.
 
-The filename cap of 47 bytes is enforced only by the clients — the firmware
+The filename cap of 47 bytes is enforced only by the clients. The firmware
 does not check it separately on the request path, though `vfs_obj_t.name` is a
 48-byte field that directory listings `strncpy` into, so a longer name would be
 truncated in listings regardless.
@@ -277,19 +277,19 @@ truncated in listings regardless.
 
 | Opcode | Name | Request payload | Response payload |
 |---|---|---|---|
-| 1 | `get_version` | — | `string ver`, optional `string ble_addr` |
-| 2 | `enter_dfu` | — | — |
-| 16 | `vfs_get_drive_list` | — | `u8 count`, then entries (see 5.1) |
-| 17 | `vfs_drive_format` | `u8 label_char` | — |
+| 1 | `get_version` | none | `string ver`, optional `string ble_addr` |
+| 2 | `enter_dfu` | none | none |
+| 16 | `vfs_get_drive_list` | none | `u8 count`, then entries (see 5.1) |
+| 17 | `vfs_drive_format` | `u8 label_char` | none |
 | 18 | `vfs_open_file` | `string path`, `u8 mode` | `u8 file_id` |
-| 19 | `vfs_close_file` | `u8 file_id` | — |
+| 19 | `vfs_close_file` | `u8 file_id` | none |
 | 20 | `vfs_read_file` | `u8 file_id` | `u8[] contents` (all remaining bytes) |
-| 21 | `vfs_write_file` | `u8 file_id`, `u8[] data` | — |
+| 21 | `vfs_write_file` | `u8 file_id`, `u8[] data` | none |
 | 22 | `vfs_read_dir` | `string path` | repeated dir entries until exhausted |
-| 23 | `vfs_create_folder` | `string path` | — |
-| 24 | `vfs_remove` | `string path` | — |
-| 25 | `vfs_rename` | `string from`, `string to` | — |
-| 26 | `vfs_update_meta` | `string path`, `meta` | — |
+| 23 | `vfs_create_folder` | `string path` | none |
+| 24 | `vfs_remove` | `string path` | none |
+| 25 | `vfs_rename` | `string from`, `string to` | none |
+| 26 | `vfs_update_meta` | `string path`, `meta` | none |
 
 Opcodes 3–15 are unused by both clients.
 
@@ -300,7 +300,7 @@ u8     status       // 0 = available, 1 = unavailable
 u8     label        // 'I' or 'E'
 string name         // human-readable, e.g. "External Flash"
 u32    total_size
-u32    free_size    // remaining, NOT used — see below
+u32    free_size    // remaining, NOT used (see below)
 ```
 
 `count` is `vfs_drive_enabled(INT) + vfs_drive_enabled(EXT)`, so it can be 2.
@@ -308,15 +308,15 @@ The official client reads only the first entry; parse all of them.
 
 Observed on hardware (Pixl.js 2.11.2): `count = 1`, `status = 0`,
 `label = 'E'`, `name = "External Flash"`, `total_size = 1,920,401`,
-`free_size = 966,601` — i.e. 953,800 bytes used.
+`free_size = 966,601`, meaning 953,800 bytes used.
 
 > **The second u32 is free space, not used space.** The official Pixl.js client
 > renders the drive row as `free/total`, truncated to two decimals. An empty
 > device reported `total_size = 1,920,401` and `free_size = 1,918,644`, which
-> that client showed as "1.82 MB/1.83 MB" (1,918,644 ÷ 1024² = 1.8298, floored)
-> — leaving 1,757 bytes actually used, about what littlefs spends on its
-> superblock. Reading the field as "used" inverts the drive and makes a nearly
-> empty device look full.
+> that client showed as "1.82 MB/1.83 MB" (1,918,644 ÷ 1024² = 1.8298,
+> floored). That leaves 1,757 bytes actually used, about what littlefs spends
+> on its superblock. Reading the field as "used" inverts the drive and makes a
+> nearly empty device look full.
 
 > **Firmware quirk.** In the internal-drive branch, `df_proto_vfs.c` calls
 > `vfs_get_driver(VFS_DRIVE_EXT)` where it plainly means `VFS_DRIVE_INT`, so a
@@ -327,7 +327,7 @@ Observed on hardware (Pixl.js 2.11.2): `count = 1`, `status = 0`,
 
 The mode is a **u32**, read by the firmware with `buff_get_u32`. Both official
 clients write a single byte and get away with it only because the frame buffer
-is zeroed beneath them — send all four bytes.
+is zeroed beneath them. Send all four bytes.
 
 Flags are `enum vfs_mode_t` in `vfs.h`:
 
@@ -344,7 +344,7 @@ The combinations the clients use:
 | Mode | Value | Meaning |
 |---|---|---|
 | `"r"` | `8` | `READONLY` |
-| `"w"` | `22` | `WRITEONLY \| CREATE \| TRUNC` — creates if absent, truncates if present |
+| `"w"` | `22` | `WRITEONLY \| CREATE \| TRUNC`; creates if absent, truncates if present |
 
 Note that `"w"` **truncates an existing file**, so a failed write leaves the
 destination empty rather than untouched.
@@ -372,8 +372,8 @@ data = vfs_read_file(r.file_id)  // single command; response is chunked
 vfs_close_file(r.file_id)
 ```
 
-The whole file returns in one logical response — the chunking layer reassembles
-it. Always close, including on error.
+The whole file returns in one logical response, which the chunking layer
+reassembles. Always close, including on error.
 
 ### 6.3 Write a file (host → device)
 
@@ -396,7 +396,7 @@ error, still issue `vfs_close_file`.
 vfs_create_folder(path)
 ```
 
-Not recursive — create parents first, one level at a time. The handler is a
+Not recursive: create parents first, one level at a time. The handler is a
 thin wrapper over the driver's `create_dir`, returning `DF_STATUS_ERR` on any
 failure. Whether an already-existing folder counts as a failure is left to the
 filesystem driver and is still unconfirmed on hardware.
@@ -404,7 +404,7 @@ filesystem driver and is still unconfirmed on hardware.
 ### 6.5 Remove
 
 `vfs_remove` first calls `stat_file`, then dispatches to `remove_dir` or
-`remove_file` based on the entry type — so one command handles both. A missing
+`remove_file` based on the entry type, so one command handles both. A missing
 path returns `DF_STATUS_ERR`. Whether `remove_dir` succeeds on a non-empty
 folder depends on the driver (LittleFS refuses; SPIFFS has no real
 directories) and is still unconfirmed.
@@ -421,7 +421,7 @@ Build the root as `` `${drive.label}:/` ``. Reusing the official UI's
 
 The failure mode is quiet: `open_dir` fails, the handler returns
 `DF_STATUS_ERR`, and a client that treats an error as "empty directory" reports
-a perfectly healthy device as having no files. Confirmed on hardware — a walk
+a perfectly healthy device as having no files. Confirmed on hardware: a walk
 from `"Ext"` returned zero entries against a drive with 966 KB in use.
 
 ### 7.2 Observed layout (Pixl.js 2.11.2, external flash)
@@ -435,8 +435,8 @@ E:/amiibo/<cat>/[<sub>/] <name>.bin         browsable library, up to 3 levels
 E:/amiibo/fav/          (empty)
 E:/amiibo/data/         (empty)
 E:/chameleon/slots/     00.bin, 01.bin, config.bin
-E:/key_retail.bin       160 B — amiibo signing keys
-E:/settings.bin          17 B — device settings, hidden
+E:/key_retail.bin       160 B, amiibo signing keys
+E:/settings.bin          17 B, device settings, hidden
 ```
 
 846 files are exactly 540 bytes (NTAG215) and 10 are 572; the rest are device
@@ -449,19 +449,19 @@ entries each and listed without error. The *firmware* imposes no limit.
 
 **But a large folder is a large response, and that is a client problem.** An
 entry costs roughly 38 bytes on the wire, so 100 entries is ~4 KB and 760 is
-~29 KB — streamed 243 bytes at a time at 0.5–2 KB/s. Reported from the field: a
+~29 KB, streamed 243 bytes at a time at 0.5–2 KB/s. Reported from the field: a
 device holding ~760 dumps in one flat `E:/amiibo` timed out on every scan
 against a client that gave the whole response 15 s, while its drive reported
 846,372 bytes used and the walk had accounted for only 4,657. Nothing was wrong
 with the device or the folder. A client must measure its timeout per
-notification (§3.4), and a library should still be spread across subfolders —
+notification (§3.4), and a library should still be spread across subfolders:
 listing a 760-entry folder costs a minute you pay on every single scan.
 
 **The path budget is the binding constraint.** The 63-byte cap covers the whole
 path including the `E:/` prefix. Observed maxima: longest full path **exactly
 63 bytes** (`E:/amiibo/others/Monster Hunter/Palamute _Canyne Malzeno X_.bin`),
 with four files in the 60–63 range and none over. The longest *filename* is
-only 39 bytes against a 47-byte cap — so paths run out of room long before
+only 39 bytes against a 47-byte cap, so paths run out of room long before
 names do, and nesting is what costs you. A sync tool must validate each
 destination path before transferring and report what will not fit, rather than
 failing partway through a copy.
@@ -485,7 +485,7 @@ them they exercise both TLV tags: `E:/chameleon/slots/00.bin` has
 decoded correctly, so the TLV parser is confirmed against hardware.
 
 **The firmware does NOT sanitise filenames.** Twelve names contain `_` where
-the source clearly had something else — `Mr. Game _ Watch.bin`,
+the source clearly had something else: `Mr. Game _ Watch.bin`,
 `Banjo _ Kazooie.bin`, `Rosalina _ Luma.bin`, `Zelda _ Loftwing.bin` (`&`);
 `Link (Majora_s Mask).bin` (`'`); `[MOD _ MAX LEVEL] Wolf Link.bin` (`/`).
 
@@ -501,14 +501,14 @@ holds, stored literally:
 
 `&` and `'` survive verbatim on this device, while other files on the *same*
 device have those characters replaced. A filesystem cannot be selectively
-lossy — so the substitution happened in the dump packs before upload, not in
+lossy, so the substitution happened in the dump packs before upload, not in
 the firmware.
 
 **Consequence: sync needs no name-mapping layer.** Compare names byte-for-byte.
 (The one character that genuinely cannot appear in a name is `/`, since it is
 the path separator.)
 
-Non-ASCII survives intact — `Link (Link’s Awakening).bin` (U+2019, 29 bytes /
+Non-ASCII survives intact: `Link (Link’s Awakening).bin` (U+2019, 29 bytes /
 27 characters), `Tatsuhisa “Luke” Kamijō.bin`, `Gakuto Sōgetsu.bin`. Names are
 plain UTF-8 with no transliteration, but multi-byte characters cost more against
 the byte caps than their character count suggests.
@@ -522,7 +522,7 @@ comparison, with content hashing reserved for ambiguous cases, matters more
 than it would on a faster link.
 
 **These figures are one device's.** The same 160-byte `key_retail.bin` took
-**649 ms** on an older unit (Pixl.js 2.13.0, coin-cell hardware) — a 3.7×
+**649 ms** on an older unit (Pixl.js 2.13.0, coin-cell hardware), a 3.7×
 spread on an identical operation. Everything timing-related in this document
 was measured on the fast one, so treat it as a floor: the planner's
 `OPEN_CLOSE_MS` / `DOWNLOAD_MS` / `COMMAND_MS` are estimates for a progress
@@ -542,14 +542,14 @@ bar, and **no timeout should ever be derived from them**.
   `--prefer local|device` to force.
 - `vfs_rename` exists, so detected moves can avoid a re-upload.
 - The `hidden` metadata flag and `notes` are device-side state with no local
-  filesystem equivalent — preserved on update, not synced, unless a sidecar
-  file is introduced later.
+  filesystem equivalent. They are preserved on update but not synced, unless a
+  sidecar file is introduced later.
 
 ### 7.4 Recovering a folder that will not finish listing
 
 **What is recoverable, and what is not.** `read_dir` is the only enumeration
-primitive, and `open_file` takes a full path — so a filename is the only handle
-on a file, and a listing that returns *nothing* leaves that folder's contents
+primitive, and `open_file` takes a full path, so a filename is the only handle
+on a file. A listing that returns *nothing* leaves that folder's contents
 unreachable by any client. There is no fallback: no index-based access, no
 wildcards, no cursor. Erasing such a folder destroys data no one can read, and
 a tool that offers to do it should say exactly that.
@@ -558,7 +558,7 @@ a tool that offers to do it should say exactly that.
 and each carries its own payload, so everything received before the device went
 quiet is exactly what it sent. Those are real entries, and they are addressable.
 The client must therefore keep the reassembly buffer on a timeout instead of
-dropping it — that accumulation is the only handle recovery has.
+dropping it, because that accumulation is the only handle recovery has.
 
 **The drain.** Move the recovered entries out of the folder and list it again.
 The response is now shorter, so it reaches further; repeat until the listing
@@ -566,8 +566,9 @@ completes or a pass yields nothing new. Notes from implementing it:
 
 - **Move, do not copy-and-delete.** `rename` is one command against open + read
   + close + remove's four, and a failed `rename` leaves the file exactly where
-  it was — there is never a moment when a file exists nowhere. It also needs no
-  host-side storage, so recovery does not depend on the user choosing a folder.
+  it was, so there is never a moment when a file exists nowhere. It also needs
+  no host-side storage, so recovery does not depend on the user choosing a
+  folder.
 - **Generate the destination names.** The source names carry nothing a client
   needs (identity is in the file's own bytes, not its name), while costing
   sanitisation, collision handling and path-budget arithmetic in the middle of
@@ -592,24 +593,24 @@ completes or a pass yields nothing new. Notes from implementing it:
 
 Resolved against firmware and hardware:
 
-- ~~Meaning of non-zero `status` values~~ — binary only, `OK = 0`, `ERR = 1` (§3.3).
-- ~~Open-mode flag semantics~~ — `enum vfs_mode_t`, and the field is a u32 (§5.2).
-- ~~Whether more than one drive is reported~~ — up to 2, labels `I` and `E` (§5.1).
-- ~~Root path format~~ — `E:/` / `I:/`, built from `label` (§4.4).
-- ~~Directory type value~~ — `VFS_TYPE_REG = 0`, `VFS_TYPE_DIR = 1`.
+- ~~Meaning of non-zero `status` values~~: binary only, `OK = 0`, `ERR = 1` (§3.3).
+- ~~Open-mode flag semantics~~: `enum vfs_mode_t`, and the field is a u32 (§5.2).
+- ~~Whether more than one drive is reported~~: up to 2, labels `I` and `E` (§5.1).
+- ~~Root path format~~: `E:/` / `I:/`, built from `label` (§4.4).
+- ~~Directory type value~~: `VFS_TYPE_REG = 0`, `VFS_TYPE_DIR = 1`.
 
-- ~~Whether `VFS_MAX_FOLDER_SIZE` (32) caps entries per folder~~ — it does not;
+- ~~Whether `VFS_MAX_FOLDER_SIZE` (32) caps entries per folder~~: it does not;
   100-entry folders list fine (§7.2).
-- ~~Whether `read_file` returns exactly the size `read_dir` reported~~ — yes,
+- ~~Whether `read_file` returns exactly the size `read_dir` reported~~: yes,
   verified byte-for-byte on a 160-byte file.
 
-- ~~Does the firmware sanitise filenames on write?~~ — no. Confirmed twice:
+- ~~Does the firmware sanitise filenames on write?~~: no. Confirmed twice:
   by inference from the library (§7.2) and directly by writing `&`, `'`, `"`,
   `*`, `?` and `:` and reading every one back byte-for-byte (§9).
-- ~~`vfs_create_folder` on an existing path~~ — returns `DF_STATUS_ERR` (§9).
-- ~~`vfs_remove` on a non-empty directory~~ — **succeeds, recursively** (§9).
-- ~~Can `vfs_rename` move between folders?~~ — yes (§9).
-- ~~Practical throughput~~ — ~2 KB/s (§9).
+- ~~`vfs_create_folder` on an existing path~~: returns `DF_STATUS_ERR` (§9).
+- ~~`vfs_remove` on a non-empty directory~~: **succeeds, recursively** (§9).
+- ~~Can `vfs_rename` move between folders?~~: yes (§9).
+- ~~Practical throughput~~: ~2 KB/s (§9).
 
 Still open:
 
@@ -622,8 +623,8 @@ Still open:
   seconds of silence; whether that traffic actually defers the power-off
   needs confirming on hardware.
 - The largest `read_dir` response the firmware will emit, and how long it may
-  take before the *first* notification of a big listing — the device has to
-  scan the directory before it can answer. Unmeasured beyond ~760 entries; the
+  take before the *first* notification of a big listing, since the device has
+  to scan the directory before it can answer. Unmeasured beyond ~760 entries; the
   client's absolute ceiling is 120 s, picked with roughly 2× headroom over the
   only large sample there is.
 - Whether a `read_dir` that stalls part-way does so deterministically at the
@@ -650,8 +651,9 @@ All five probes round-tripped byte-for-byte:
 | `Star*Q?.bin` | yes |
 | `Colon:Test.bin` | yes |
 
-Characters that are illegal on FAT (`*`, `?`, `:`, `"`) are accepted — the
-underlying filesystem is not FAT. Only `/` is unavailable, being the separator.
+Characters that are illegal on FAT (`*`, `?`, `:`, `"`) are accepted, because
+the underlying filesystem is not FAT. Only `/` is unavailable, being the
+separator.
 
 ### 9.2 Content round-trips exactly
 
@@ -672,14 +674,15 @@ There is no "directory not empty" guard.
 
 **Implication:** this is the most dangerous call in the protocol. A single
 mistargeted `remove` can erase an entire library. A sync tool must never remove
-a directory as a shortcut for removing its contents — delete files
+a directory as a shortcut for removing its contents. Delete files
 individually, and treat directory removal as a separate, explicitly confirmed
 step.
 
 **Corollary: never remove a folder whose listing you did not complete.** A walk
-records a directory before reading it, so one that failed to list — a timeout,
-a path too long for its children to be addressable, a cancelled scan — sits in
-the index with no children, shaped exactly like an empty folder. Because
+records a directory before reading it, so one that failed to list sits in the
+index with no children, shaped exactly like an empty folder. That covers a
+timeout, a path too long for its children to be addressable, and a cancelled
+scan. Because
 `remove` is recursive, treating the two alike erases a subtree nobody has ever
 seen. **A childless directory in an index means "never looked", not "empty",**
 and the difference has to be recorded at walk time; it cannot be recovered
@@ -692,12 +695,12 @@ in the subfolder.
 
 **Implication:** a file that moved between folders can be relocated with one
 command instead of a re-upload. At 2 KB/s that is the difference between
-~0.3 s and ~0.5 s for a 540-byte dump, and far more for anything larger — a
+~0.3 s and ~0.5 s for a 540-byte dump, and far more for anything larger, so a
 move detector keyed on content hash is worth having.
 
 ### 9.6 Throughput is ~2 KB/s
 
-16,384 bytes took 8,010 ms — **2.00 KB/s**, about 118 ms per 242-byte chunk
+16,384 bytes took 8,010 ms, so **2.00 KB/s**, about 118 ms per 242-byte chunk
 (8,160 ms / 1.96 KB/s on 2.16.0).
 
 **Write speed degrades as the drive fills.** Across one 1049-upload run onto a
@@ -705,7 +708,7 @@ freshly cleared drive, the first hundred uploads averaged 1.04 s and the last
 hundred 1.68 s; a push onto a nearly full drive averaged 2.5 s per dump. Flash
 allocation, not BLE, is the moving part. Deletes on a mostly empty drive run
 ~66 ms against ~240 ms when full, for the same reason. Estimates calibrated at
-one fill level will misestimate at another — err on the full-drive figures.
+one fill level will misestimate at another, so err on the full-drive figures.
 
 **A failed upload leaves the file at whatever length was committed.** Observed
 after a push died of a full drive: files of 0 bytes (open succeeded, no chunk
@@ -796,7 +799,7 @@ Match on the amiibo ID instead.
 
 The ID identifies a *model*, not always a distinct figure:
 
-- Skylanders light and dark variants share an ID and differ only in data —
+- Skylanders light and dark variants share an ID and differ only in data.
   `Hammer Slam Bowser` and `Dark Hammer Slam Bowser` are both
   `0005ff00023a0702`.
 - Animal Crossing Happy Home Designer item cards share a single ID
@@ -821,7 +824,7 @@ trailing ID byte of `0x02`.
 
 ### 10.6 v3 amiibo (NTAG I2C 2K)
 
-Releases from Kirby Air Riders (November 2025) onward use a different tag —
+Releases from Kirby Air Riders (November 2025) onward use a different tag:
 **NXP NTAG I²C Plus 2K**, dumping to **2048 bytes**. The firmware already
 anticipates the size as `NTAG_I2C_2K_DATA_SIZE`.
 
@@ -830,7 +833,7 @@ Two things break naive parsers:
 **The trailing ID byte is not always `0x02`.** These carry `0x03`; it is an
 amiibo *format version*, not a constant. Of the 932 database entries, 930 are
 v2 and 2 are v3. A validity check of `id[7] === 0x02` silently rejects the
-entire series — use the dump length instead.
+entire series, so use the dump length instead.
 
 **The ID is still at byte 84.** Confirmed against real dumps and against xSke's
 page-level analysis, where pages `0x15`–`0x16` (= bytes 84–91) hold
@@ -840,12 +843,12 @@ ID, so the offset is unaffected.
 #### Vehicle identity lives outside the amiibo ID
 
 An Air Riders amiibo is two pieces: the character figure carries the tag, the
-vehicle acts as its antenna. **The amiibo ID identifies the character only** —
-all four vehicles for one character share an ID.
+vehicle acts as its antenna. **The amiibo ID identifies the character only**,
+so all four vehicles for one character share an ID.
 
 The vehicle is in the tag's SRAM buffer at pages `0xF0`–`0xFF`. Measured across
 16 dumps (4 characters × 4 vehicles), files for one character differ *only*
-within that range — 21–22 bytes — and the signature is identical across
+within that range, by 21 to 22 bytes, and the signature is identical across
 characters:
 
 | Bytes 979–984 | Byte 988 | Vehicle |
@@ -857,7 +860,7 @@ characters:
 
 Bytes 975–978 vary per physical tag, so they are not part of the signature.
 
-Consequences: four dumps of one character are **not duplicates** — they are
+Consequences: four dumps of one character are **not duplicates**. They are
 distinct vehicle pairings sharing an ID. Any tool matching purely on amiibo ID
 must report same-ID-different-bytes rather than collapsing it.
 
