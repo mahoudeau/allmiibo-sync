@@ -1,12 +1,15 @@
 // Service worker for allmiibo-sync — makes the site work offline.
 //
-// Uses a cache-on-install, network-first-with-cache-fallback strategy:
-// - On install: cache all static assets the site needs to render
-// - On fetch: try network first, fall back to cache
+// Three caches:
+//   static-v1     — precached at install (HTML, CSS, JS, fonts, icons, data)
+//   runtime-v1    — artwork and other images fetched at runtime
 //
-// Cache version is tied to the build stamp so a deploy clears old caches.
+// Bump the version suffix to clear all caches on deploy.
 
-const VERSION = 'v1';
+const VERSION_SUFFIX = 'v1';
+
+const STATIC = `static-${VERSION_SUFFIX}`;
+const RUNTIME = `runtime-${VERSION_SUFFIX}`;
 
 // Everything needed to render the full site offline.
 const PRECACHE = [
@@ -18,6 +21,7 @@ const PRECACHE = [
   '/changelog.html',
   '/legal.html',
   '/amiibo.html',
+  '/offline.html',
   '/manifest.webmanifest',
   '/favicon.svg',
 
@@ -84,7 +88,8 @@ const PRECACHE = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(VERSION).then((cache) => cache.addAll(PRECACHE))
+    caches.open(STATIC)
+      .then((cache) => cache.addAll(PRECACHE))
       .then(() => self.skipWaiting())
   );
 });
@@ -92,24 +97,52 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k)))
+      Promise.all(
+        keys.filter((k) => k !== STATIC && k !== RUNTIME).map((k) => caches.delete(k))
+      )
     ).then(() => self.clients.claim())
   );
 });
 
 self.addEventListener('fetch', (event) => {
-  // Only handle GET requests to our own origin.
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET' || url.origin !== self.location.origin) return;
 
+  // Artwork and images: cache in the runtime store, capped at ~500 entries.
+  // Network-first so users always see up-to-date artwork when online.
+  if (url.pathname.startsWith('/data/images/')) {
+    event.respondWith(
+      caches.open(RUNTIME).then((cache) =>
+        fetch(event.request)
+          .then((response) => {
+            if (response.ok) {
+              cache.put(event.request, response.clone());
+              // Prune oldest entries if we hit the cap.
+              cache.keys().then((keys) => {
+                if (keys.length > 500) {
+                  cache.delete(keys[0]);
+                }
+              });
+            }
+            return response;
+          })
+          .catch(() => cache.match(event.request))
+      )
+    );
+    return;
+  }
+
+  // Everything else: network-first, fall back to static cache.
   event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        // Cache a copy of successful responses for next time.
-        const clone = response.clone();
-        caches.open(VERSION).then((cache) => cache.put(event.request, clone));
-        return response;
-      })
-      .catch(() => caches.match(event.request))
+    caches.match(event.request).then((cached) => {
+      return fetch(event.request)
+        .then((response) => {
+          if (response.ok) {
+            caches.open(STATIC).then((cache) => cache.put(event.request, response.clone()));
+          }
+          return response;
+        })
+        .catch(() => cached || caches.match('/offline.html'))
+    });
   );
 });

@@ -597,3 +597,41 @@ dialog.nesDialog::backdrop { animation: fadeIn .1s steps(2, end); }
     transition-duration: .01ms !important;
   }
 }
+
+/* ---- small screens ------------------------------------------------------ */
+
+@media (max-width: 480px) {
+  body { padding: .75rem .6rem 2rem; }
+
+  h1 { font-size: .8rem; }
+  h2 { font-size: .55rem; }
+
+  /* Buttons: shrink so they don't overflow */
+  button { font-size: .5rem; padding: .45em .7em; min-height: 2rem; }
+  button .ico { width: .9rem; height: .9rem; }
+
+  /* Toolbar: stack search, filters and sort vertically */
+  .toolbar { flex-direction: column; align-items: stretch; gap: .5rem; }
+  .toolbar select { width: 100%; }
+
+  /* Cards grid: fit more per row on tiny screens */
+  .cards { grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr)); gap: .5rem; }
+
+  /* Sync panel actions stack */
+  .spActions { flex-direction: column; }
+  .spActions button { width: 100%; }
+
+  /* Hero cards let content breathe */
+  .hero { flex-direction: column; padding: .8rem; }
+
+  /* Toast stays within the smaller viewport */
+  .toast { max-width: calc(100vw - 1rem); left: .5rem; right: .5rem; transform: none; }
+
+  /* Settings panel fits */
+  .settingsPanel { max-width: 100%; }
+}
+
+@media (max-width: 360px) {
+  /* Even smaller: cards stack in a single tight column */
+  .cards { grid-template-columns: 1fr; }
+}

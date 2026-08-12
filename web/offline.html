@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offline · allmiibo-sync</title>
+<meta name="theme-color" content="#2b2b2a">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./css/app.css">
+<style>
+  .offBox {
+    text-align: center;
+    padding: 4rem 1.5rem;
+    max-width: 28rem;
+    margin: 2rem auto;
+    border: 2px solid var(--border);
+    background: var(--panel);
+    box-shadow: 5px 5px 0 var(--shadow);
+  }
+  .offBox .ico { width: 3rem; height: 3rem; color: var(--muted); margin-bottom: 1.2rem; }
+  .offBox h1 { font-size: .75rem; margin-bottom: .8rem; }
+  .offBox p { color: var(--muted); font-size: .92rem; margin: .5rem 0; }
+  .offBox a { color: var(--accent2); }
+</style>
+</head>
+<body>
+<main>
+  <div class="offBox">
+    <span class="ico" data-ico="warn"></span>
+    <h1>You're offline</h1>
+    <p>This page isn't cached, and there's no internet connection.</p>
+    <p><a href="./">Back to title screen</a> &mdash; it works offline.</p>
+    <p style="margin-top:1.5rem;font-size:.8rem">
+      The Collection, help pages and changelog are cached too.
+      Artwork loads as you browse while online.
+    </p>
+  </div>
+</main>
+<script type="module">
+import { ICONS } from './js/icons.js';
+for (const el of document.querySelectorAll('[data-ico]')) el.innerHTML = ICONS[el.dataset.ico] ?? '';
+</script>
+</body>
+</html>
