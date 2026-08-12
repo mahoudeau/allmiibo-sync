@@ -19,7 +19,7 @@ export const FILTERS = Object.freeze([
   { value: 'notondevice', label: 'NOT ON DEVICE', needsDevice: true },
 ]);
 
-export const SORT_MODES = Object.freeze(['release', 'name', 'completion']);
+export const SORT_MODES = Object.freeze(['release', 'release-desc', 'name', 'completion']);
 
 /**
  * Normalise a stored filter value.
@@ -106,6 +106,14 @@ export function sortSeries(groups, mode, releases) {
   } else if (mode === 'completion') {
     out.sort((a, b) =>
       completionRatio(b) - completionRatio(a) || a.seriesName.localeCompare(b.seriesName));
+  } else if (mode === 'release-desc') {
+    out.sort((a, b) => {
+      const da = seriesDate(a, releases);
+      const db = seriesDate(b, releases);
+      if (da && db && da !== db) return db.localeCompare(da);
+      if (!da !== !db) return da ? -1 : 1; // undated still last
+      return b.series - a.series;
+    });
   } else {
     out.sort((a, b) => {
       const da = seriesDate(a, releases);
