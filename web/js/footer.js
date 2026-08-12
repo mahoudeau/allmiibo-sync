@@ -39,3 +39,8 @@ mountFooter({
       <a href="./changelog.html" title="What changed in this release">v${RELEASE}</a>
       <span class="fVer" title="Deployed build">(${VERSION})</span>`,
 });
+
+// Register the service worker so the site works offline.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js');
+}

@@ -35,7 +35,7 @@ for (const id of [
   'srcStrip',
   'pageMeta', 'folderChip', 'deviceChip', 'stop', 'hero', 'collProg', 'status', 'pbar',
   'search', 'searchClear', 'searchIco', 'filters', 'sortMode', 'segView',
-  'moreMenu', 'moreIco', 'copyMissing', 'showReport', 'exportLog', 'expandAll', 'collapseAll',
+  'moreMenu', 'moreIco', 'copyMissing', 'showReport', 'exportLog', 'exportCsv', 'expandAll', 'collapseAll',
   'skipped', 'series', 'emptyState',
   'syncBtn', 'syncPanel', 'spReview', 'spWarn', 'spCards', 'spCap', 'spCapName',
   'spCapText', 'spApply', 'spCancel', 'spRun', 'spPbar', 'spErrs', 'spStop',
@@ -1515,6 +1515,40 @@ els.exportLog.addEventListener('click', () => {
     toast('Scan log saved — filenames and sizes only, no file contents.');
   } catch (err) {
     toast(`Couldn't save the log: ${err.message}`, { kind: 'err' });
+  }
+});
+
+els.exportCsv.addEventListener('click', () => {
+  els.moreMenu.open = false;
+  if (!collection || !collection.series) {
+    toast('Nothing to export yet.', { kind: 'warn' });
+    return;
+  }
+  const rows = [['Series', 'Name', 'ID', 'Owned (local)', 'On device', 'In database']];
+  for (const group of collection.series) {
+    for (const item of group.items) {
+      rows.push([
+        group.seriesName,
+        item.name,
+        item.id,
+        item.hasLocal ? 'Yes' : 'No',
+        item.hasDevice ? 'Yes' : 'No',
+        item.inDatabase ? 'Yes' : 'No',
+      ]);
+    }
+  }
+  const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  try {
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `allmiibo-collection-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.append(a);
+    a.click();
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(a.href); }, 2000);
+    toast(`Exported ${rows.length - 1} amiibo.`);
+  } catch (err) {
+    toast(`Couldn't export: ${err.message}`, { kind: 'err' });
   }
 });
 
