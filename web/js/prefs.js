@@ -11,7 +11,7 @@ export const KEYS = {
   pirate: 'allmiibo:pirate',        // '0'..'11'                (raw)
   view: 'allmiibo:view',            // 'cards' | 'list' — default 'cards'
   srcMode: 'allmiibo:srcMode',      // 'local' | 'device' — hero add-source mode
-  sort: 'allmiibo:sort',            // 'release' | 'name' | 'completion'
+  sort: 'allmiibo:sort',            // 'release' | 'release-desc' | 'name' | 'completion'
   filter: 'allmiibo:filter',        // 'all' | 'owned' | 'missing' | 'notondevice'
   types: 'allmiibo:types',          // string[] of type names, [] = all
   openSeries: 'allmiibo:openSeries',// number[] of series the user opened

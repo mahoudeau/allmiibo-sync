@@ -175,6 +175,22 @@ test('sorting returns a new array and leaves the input alone', () => {
   assert.deepEqual(groups.map((g) => g.seriesName), before);
 });
 
+test('sorting by release is newest first in release-desc mode, with undated series last', () => {
+  const old = group(0, 'Old', [item('a')]);
+  const newer = group(1, 'New', [item('c')]);
+  const undated = group(2, 'Undated', [item('zz')]);
+  assert.deepEqual(
+    sortSeries([undated, newer, old], 'release-desc', RELEASES).map((g) => g.seriesName),
+    ['New', 'Old', 'Undated']
+  );
+});
+
+test('release-desc ties break on the series byte descending, so the order is stable', () => {
+  const a = group(5, 'Later Byte', [item('a')]);
+  const b = group(2, 'Earlier Byte', [item('a')]);
+  assert.deepEqual(sortSeries([b, a], 'release-desc', RELEASES).map((g) => g.series), [5, 2]);
+});
+
 test('an unknown sort mode falls back to release order', () => {
   const old = group(0, 'Old', [item('a')]);
   const newer = group(1, 'New', [item('c')]);

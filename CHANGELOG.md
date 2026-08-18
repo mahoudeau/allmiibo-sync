@@ -8,6 +8,18 @@ Every release of [allmiibo-sync](https://allmiibo.mathieu.dev), newest first.
 The same history, minus the sections that only concern this repository, is on
 the site under [What's new](https://allmiibo.mathieu.dev/changelog.html).
 
+## 1.0.1 · 18 August 2026
+
+**Newest first**
+
+### Added
+
+- Sort series newest first. The sort menu now offers **Newest first** and **Oldest first** by release date, and series with no dated entry still sort last either way
+
+### Changed
+
+- The title screen now says browsing and tracking work in any browser, and that only device sync needs Chrome or Edge, instead of warning everyone else away
+
 ## 1.0.0 · 2 August 2026
 
 **First public release**

@@ -1616,7 +1616,7 @@ async function offerTour(page) {
 
   // restore prefs
   const savedSort = prefs.get(prefs.KEYS.sort, 'release');
-  if (['release', 'name', 'completion'].includes(savedSort)) els.sortMode.value = savedSort;
+  if (['release', 'release-desc', 'name', 'completion'].includes(savedSort)) els.sortMode.value = savedSort;
   const view = prefs.get(prefs.KEYS.view, 'cards');
   viewCtl.set(view);
   els.series.classList.toggle('cards', view === 'cards');

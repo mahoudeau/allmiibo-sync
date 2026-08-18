@@ -29,6 +29,18 @@
 
 export const RELEASES = [
   {
+    version: '1.0.1',
+    date: '2026-08-18',
+    title: 'Newest first',
+    added: [
+      'Sort series newest first. The sort menu now offers **Newest first** and **Oldest first** by release date, and series with no dated entry still sort last either way',
+    ],
+    changed: [
+      'The title screen now says browsing and tracking work in any browser, and that only device sync needs Chrome or Edge, instead of warning everyone else away',
+    ],
+  },
+
+  {
     version: '1.0.0',
     date: '2026-08-02',
     title: 'First public release',
