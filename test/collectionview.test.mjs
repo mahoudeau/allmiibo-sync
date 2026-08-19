@@ -18,6 +18,7 @@ import {
   completionRatio,
   sortSeries,
   searchText,
+  collectionCsv,
 } from '../web/js/collectionview.js';
 
 const item = (id, extra = {}) => ({ id, name: `Amiibo ${id}`, inDatabase: true, ...extra });
@@ -210,4 +211,36 @@ test('the search text covers name, ID, series and filenames', () => {
   assert.match(text, /smash/);
   assert.match(text, /my mario\.bin/, 'so searching for what is on disk works');
   assert.equal(text, text.toLowerCase(), 'lowercased once, not per keystroke');
+});
+
+// ---- CSV export ---------------------------------------------------------
+
+test('collectionCsv starts with a UTF-8 BOM so Excel reads non-ASCII names', () => {
+  const csv = collectionCsv(null);
+  assert.ok(csv.startsWith('\uFEFF'), 'BOM is the first character');
+});
+
+test('collectionCsv writes one row per amiibo plus a header', () => {
+  const col = {
+    series: [
+      group(0, 'Pokémon', [item('a', { hasLocal: true }), item('b', {})]),
+      group(1, 'Zelda', [item('c', { hasLocal: true, hasDevice: true })]),
+    ],
+  };
+  const csv = collectionCsv(col).slice(1); // drop the BOM
+  const lines = csv.split('\n');
+  assert.equal(lines.length, 4, 'header + three amiibo');
+  assert.match(lines[0], /^"Series","Name","ID","Owned","On device","In database"$/);
+  assert.match(lines[1], /"Pokémon"/, 'series name is present');
+  assert.match(lines[1], /"yes"/, 'owned flag is present');
+  assert.match(lines[3], /"yes","yes","yes"/, 'owned + device + in database');
+});
+
+test('collectionCsv quotes fields and escapes embedded quotes', () => {
+  const col = {
+    series: [group(0, 'Série "A"', [item('x', { name: 'Mario "Gold"' })])],
+  };
+  const csv = collectionCsv(col).slice(1);
+  assert.match(csv, /"Série ""A"""/, 'quotes inside a field are doubled');
+  assert.match(csv, /"Mario ""Gold"""/);
 });
