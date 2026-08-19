@@ -126,3 +126,25 @@ button.item:active { transform:none; box-shadow:none; }
 .cards .item:hover { transform: translate(-3px, -3px);
   box-shadow: 3px 3px 0 var(--shadow); border-color: var(--accent); }
 details.series[open] > .items { animation: rise .14s steps(3, end); }
+
+/* ---- small screens ------------------------------------------------------ */
+
+/* Narrow phones: the cards grid defaults to 8.5rem cells, which leave a lone
+   column and a lot of empty margin on a 360px screen. Shrink the cells so two
+   or three fit per row, and let the list view drop its two-column min. */
+@media (max-width: 480px) {
+  .cards .items { grid-template-columns:repeat(auto-fill,minmax(5.5rem,1fr)); gap:.45rem; }
+  .items { grid-template-columns:1fr; padding:.4rem .5rem .6rem; }
+  .cards .item { padding:.55rem .3rem .45rem; }
+  .cards .item .art { width:64px; height:64px; }
+
+  /* Series headers: less padding, and the artwork can drop on the very
+     narrowest screens so the name and counts keep their room. */
+  details.series > summary { padding:.5rem .6rem; }
+  .seriesArt { width:22px; height:22px; }
+}
+
+@media (max-width: 360px) {
+  .cards .items { grid-template-columns:1fr 1fr; }
+  .seriesArt { display:none; }
+}
