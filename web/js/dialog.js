@@ -102,9 +102,27 @@ export function chooseDialog({
   });
 }
 
-// confirmDialog({ title, body, detail, confirmLabel, cancelLabel, danger, icon })
+// confirmDialog({ title, body, detail, confirmLabel, cancelLabel, danger, icon, twice })
 // -> Promise<boolean>. `detail` may be a string[] rendered as mono lines.
-export function confirmDialog({
+//
+// `twice` puts a second, terser dialog behind the first, and the answer is yes
+// only when both are. Every destructive flow passes it: one click on the wrong
+// button, or muscle memory carrying an "OK" it has learned, must not be enough
+// to erase files. The second dialog says nothing new on purpose — its only job
+// is to be a second, deliberate act.
+export async function confirmDialog({ twice = false, ...opts } = {}) {
+  const first = await showConfirm(opts);
+  if (!first || !twice) return first;
+  return showConfirm({
+    title: 'ARE YOU SURE?',
+    body: 'Second and final confirmation. This cannot be undone.',
+    confirmLabel: opts.confirmLabel ?? 'APPLY',
+    cancelLabel: 'KEEP EVERYTHING',
+    danger: true,
+  });
+}
+
+function showConfirm({
   title,
   body = '',
   detail = null,

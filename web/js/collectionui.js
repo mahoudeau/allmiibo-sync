@@ -481,6 +481,7 @@ async function offerStagingCleanup() {
       detail: [`${found.path} and everything inside it`, 'This cannot be undone'],
       confirmLabel: 'ERASE',
       danger: true,
+      twice: true,
     });
     if (!ok) return;
     try {
@@ -1445,6 +1446,7 @@ els.selDel.addEventListener('click', async () => {
     ].filter(Boolean),
     confirmLabel: 'DELETE',
     danger: true,
+    twice: true,
   });
   if (!ok) return;
   runSelection('delete-device');

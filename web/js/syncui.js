@@ -283,6 +283,7 @@ async function offerStagingCleanup() {
       detail: [`${found.path} and everything inside it`, 'This cannot be undone'],
       confirmLabel: 'ERASE',
       danger: true,
+      twice: true,
     });
     if (!ok) { log('warn', 'erase cancelled'); return; }
     try {
@@ -579,6 +580,7 @@ els.apply.addEventListener('click', async () => {
       ].filter(Boolean),
       confirmLabel: op === 'replace' ? 'WIPE & WRITE' : op === 'wipe' ? 'ERASE' : 'DELETE',
       danger: true,
+      twice: true,
     });
     if (!ok) { log('warn', 'apply cancelled'); return; }
   }

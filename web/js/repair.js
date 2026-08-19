@@ -207,6 +207,7 @@ els.erase.addEventListener('click', async () => {
     ],
     confirmLabel: rescued ? 'ERASE THE REST' : 'ERASE UNREAD',
     danger: true,
+    twice: true,
   });
   if (!ok) { log('warn', 'erase cancelled'); return; }
 
