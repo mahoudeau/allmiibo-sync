@@ -6,6 +6,17 @@ on:
   pull_request:
     branches: [main]
 
+# The suite builds nothing and publishes nothing, so it needs to read and
+# no more.
+permissions:
+  contents: read
+
+# A new push to a pull request makes the run before it pointless. Pushes to
+# main are left alone, so every commit on the default branch keeps its result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -25,4 +36,31 @@ jobs:
 
       - run: npm ci
 
-      - run: npm test
+      # Piped through tee to keep the counts for the step below. pipefail so a
+      # failing suite still fails the step rather than being swallowed by tee.
+      - name: Run tests
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-output.txt
+
+      # A skipped test is not a passing test. tools/.cache is gitignored and
+      # nothing here can fill it without reaching upstream, so the database
+      # tests cannot run on a clean checkout: 93 of them, as measured. Say so
+      # on every run, and fail if that number grows, because a new test that
+      # silently skips forever is the failure this guards against.
+      - name: Report what did not run
+        if: always()
+        env:
+          EXPECTED_SKIPS: 93
+        run: |
+          tests=$(awk '/^# tests /{print $3; exit}' test-output.txt)
+          skipped=$(awk '/^# skipped /{print $3; exit}' test-output.txt)
+          if [ -z "$tests" ] || [ -z "$skipped" ]; then
+            echo "::error::could not read the test counts from the output"
+            exit 1
+          fi
+          echo "Ran $((tests - skipped)) of $tests tests. $skipped skipped, because tools/.cache is absent here." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$skipped" -gt "$EXPECTED_SKIPS" ]; then
+            echo "::error::$skipped tests skipped, expected at most $EXPECTED_SKIPS. Something new is skipping silently."
+            exit 1
+          fi
