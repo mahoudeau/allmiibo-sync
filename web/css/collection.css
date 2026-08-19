@@ -129,6 +129,35 @@ details.series[open] > .items { animation: rise .14s steps(3, end); }
 
 /* ---- small screens ------------------------------------------------------ */
 
+/* The toolbar is a single row of natural-width controls, which on a phone
+   wraps into a ragged stack: search, then two pills and a stray third, then a
+   sort box half the width of the screen.
+
+   Give every wide control a row of its own and let SELECT and the ⋯ button
+   share the last one, pushed right by an auto margin on SELECT. Assigning the
+   rows rather than letting them fall out of flex-wrap is deliberate: guessing
+   whether three controls fit a 375px line is how the ⋯ ended up alone and
+   left-aligned, which is the one place it cannot go. Its menu is anchored
+   right:0 against the button, so a button at the left of a row opens the menu
+   off the left of the screen. Only SELECT carries the auto margin, so the ⋯
+   stays welded to its right rather than the two splitting the gap.
+
+   The admin links this file and draws the same toolbar. It has no ⋯ and no
+   SELECT, so those two lines are inert there and its own buttons keep the
+   flex-wrap behaviour they have now. */
+@media (max-width: 480px) {
+  .toolbar { gap:.5rem; }
+  .toolbar .searchBox,
+  .toolbar .pillRow,
+  .toolbar select,
+  .toolbar .segCtl { flex:1 1 100%; min-width:0; }
+  /* Grown from their natural width, not forced equal: a device scan adds a
+     fourth pill, NOT ON DEVICE, and equal columns would crush it. */
+  .toolbar .pill { flex:1 1 auto; justify-content:center; }
+  .toolbar #selectBtn { margin-left:auto; }
+  .toolbar .moreMenu { margin-left:0; }
+}
+
 /* Narrow phones: the cards grid defaults to 8.5rem cells, which leave a lone
    column and a lot of empty margin on a 360px screen. Shrink the cells so two
    or three fit per row, and let the list view drop its two-column min. */
