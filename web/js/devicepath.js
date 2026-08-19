@@ -31,16 +31,22 @@ export function devicePath(deviceRoot, relPath) {
 }
 
 // Returns null if the destination fits, or a human-readable reason if not.
+// The reason reaches users verbatim in the plan review, so it names the
+// number, the limit, and what to do about it. Bytes, not letters: the
+// firmware caps the UTF-8 encoding, so an accented letter counts twice.
 export function checkDestination(deviceRoot, relPath) {
   const full = devicePath(deviceRoot, relPath);
   const bytes = utf8Bytes(full);
   if (bytes > MAX_PATH_BYTES) {
-    return `path is ${bytes} bytes, over the ${MAX_PATH_BYTES}-byte limit`;
+    return `its full path on the device would be ${bytes} bytes and the device can only ` +
+      `address ${MAX_PATH_BYTES}. Shorten the file or folder name ` +
+      `(accented letters count as two bytes).`;
   }
   const name = full.slice(full.lastIndexOf('/') + 1);
   const nameBytes = utf8Bytes(name);
   if (nameBytes > MAX_NAME_BYTES) {
-    return `filename is ${nameBytes} bytes, over the ${MAX_NAME_BYTES}-byte limit`;
+    return `its name is ${nameBytes} bytes and the device can only store ${MAX_NAME_BYTES}. ` +
+      `Rename the file with a shorter name (accented letters count as two bytes).`;
   }
   return null;
 }

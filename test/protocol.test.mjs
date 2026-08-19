@@ -357,11 +357,11 @@ test('oversized paths and filenames are rejected before hitting the wire', async
   const t = new FakeTransport();
   const c = client(t);
 
-  await assert.rejects(() => c.openFile('0:/' + 'a'.repeat(70), 'read'), /path exceeds 63 bytes/);
+  await assert.rejects(() => c.openFile('0:/' + 'a'.repeat(70), 'read'), /paths up to 63 bytes .* is 73/);
   assert.equal(t.writes.length, 0);
 
   // 50-byte filename inside a short path: under the path cap, over the name cap.
-  await assert.rejects(() => c.openFile('0:/' + 'b'.repeat(50), 'read'), /filename exceeds 47 bytes/);
+  await assert.rejects(() => c.openFile('0:/' + 'b'.repeat(50), 'read'), /names up to 47 bytes .* is 50/);
   assert.equal(t.writes.length, 0);
 });
 
@@ -372,12 +372,12 @@ test('every path-taking command validates before reaching the wire', async () =>
 
   // The firmware truncates silently rather than erroring, so a command sent
   // with an over-long path acts on a *different* path than intended.
-  await assert.rejects(() => c.remove(tooLong), /exceeds/);
-  await assert.rejects(() => c.createFolder(tooLong), /exceeds/);
-  await assert.rejects(() => c.openFile(tooLong, 'write'), /exceeds/);
-  await assert.rejects(() => c.rename(tooLong, 'E:/ok.bin'), /exceeds/);
-  await assert.rejects(() => c.rename('E:/ok.bin', tooLong), /exceeds/);
-  await assert.rejects(() => c.updateMeta(tooLong, { notes: '', flags: {} }), /exceeds/);
+  await assert.rejects(() => c.remove(tooLong), /can only address paths/);
+  await assert.rejects(() => c.createFolder(tooLong), /can only address paths/);
+  await assert.rejects(() => c.openFile(tooLong, 'write'), /can only address paths/);
+  await assert.rejects(() => c.rename(tooLong, 'E:/ok.bin'), /can only address paths/);
+  await assert.rejects(() => c.rename('E:/ok.bin', tooLong), /can only address paths/);
+  await assert.rejects(() => c.updateMeta(tooLong, { notes: '', flags: {} }), /can only address paths/);
 
   assert.equal(t.writes.length, 0, 'nothing may be transmitted');
 });

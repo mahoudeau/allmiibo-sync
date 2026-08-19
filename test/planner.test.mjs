@@ -49,13 +49,13 @@ test('checkDestination enforces the 63-byte path cap on the full path', () => {
   // Real path from the device, exactly at the limit.
   assert.equal(checkDestination('E:/amiibo', 'others/Monster Hunter/Palamute _Canyne Malzeno X_.bin'), null);
   const over = checkDestination('E:/amiibo', 'others/Monster Hunter/Palamute _Canyne Malzeno XX_.bin');
-  assert.match(over, /64 bytes, over the 63-byte limit/);
+  assert.match(over, /64 bytes and the device can only address 63/);
 });
 
 test('checkDestination counts UTF-8 bytes, not characters', () => {
   const name = `${'ō'.repeat(24)}.bin`; // 24 chars, 48 bytes, plus .bin
   const why = checkDestination('E:/amiibo', name);
-  assert.match(why, /filename is \d+ bytes/);
+  assert.match(why, /name is \d+ bytes and the device can only store 47/);
 });
 
 test('device-managed files are excluded by default', () => {
@@ -325,7 +325,7 @@ test('a move to an over-long destination is blocked, not attempted', () => {
   );
   assert.deepEqual(p.moveDevice, []);
   assert.equal(p.blocked.length, 1);
-  assert.match(p.blocked[0].reason, /over the 63-byte limit/);
+  assert.match(p.blocked[0].reason, /device can only address 63/);
 });
 
 // ---- pull ---------------------------------------------------------------

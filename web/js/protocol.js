@@ -62,14 +62,27 @@ export class ProtocolError extends Error {
   }
 }
 
+// These surface to users verbatim in sync error lists, so they carry the
+// numbers and the remedy, not just the verdict. "Bytes" is the honest unit:
+// the firmware caps the UTF-8 encoding, so an accented letter counts twice.
 export function assertPath(path) {
-  if (utf8Length(path) > MAX_PATH_BYTES) {
-    throw new Error(`path exceeds ${MAX_PATH_BYTES} bytes: ${path}`);
+  const pathBytes = utf8Length(path);
+  if (pathBytes > MAX_PATH_BYTES) {
+    throw new Error(
+      `the device can only address paths up to ${MAX_PATH_BYTES} bytes and ` +
+        `"${path}" is ${pathBytes}. Shorten the file or folder name ` +
+        `(accented letters count as two bytes).`
+    );
   }
   if (path.length > 3) {
     const name = path.slice(path.lastIndexOf('/') + 1);
-    if (utf8Length(name) > MAX_NAME_BYTES) {
-      throw new Error(`filename exceeds ${MAX_NAME_BYTES} bytes: ${name}`);
+    const nameBytes = utf8Length(name);
+    if (nameBytes > MAX_NAME_BYTES) {
+      throw new Error(
+        `the device can only store names up to ${MAX_NAME_BYTES} bytes and ` +
+          `"${name}" is ${nameBytes}. Shorten it ` +
+          `(accented letters count as two bytes).`
+      );
     }
   }
 }

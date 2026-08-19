@@ -126,7 +126,7 @@ test('a pinned path must be relative, safe and end in .bin', () => {
 test('a pinned path must fit the device limit at the reference root', () => {
   rejects(
     overlay({ amiibos: { [ID]: { kind: 'override', path: 'Mario Sports Superstars/Pink Gold Peach - Horse Racing.bin' } } }),
-    /over the 63-byte limit/
+    /device can only address 63/
   );
 });
 

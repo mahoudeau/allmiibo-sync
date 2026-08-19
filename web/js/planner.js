@@ -23,6 +23,7 @@ import {
   checkDestination,
   sanitizeLocalName,
   sanitizeLocalRelPath,
+  MAX_PATH_BYTES,
 } from './devicepath.js';
 
 // Re-exported so every existing call site keeps importing them from here. They
@@ -984,7 +985,12 @@ export function planOrganise({ index, side, walkRoot, destRoot = walkRoot, optio
       vehicle: e.vehicle ?? null,
     });
     if (!target) {
-      plan.blocked.push({ relPath, action: 'move', reason: 'no name for it fits the device path limit' });
+      plan.blocked.push({
+        relPath, action: 'move',
+        reason: `even its shortest name will not fit in the ${MAX_PATH_BYTES} bytes the device ` +
+          `can address below ${destRoot}. Use a shallower destination folder, or shorten its name ` +
+          `(accented letters count as two bytes).`,
+      });
       continue;
     }
     const to = prefix ? `${prefix}/${target}` : target;
