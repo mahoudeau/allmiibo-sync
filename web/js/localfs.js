@@ -368,13 +368,40 @@ export async function removeLocalDir(rootHandle, relPath) {
   await dir.removeEntry(name);
 }
 
-// The File System Access API has no rename or move, so this is a copy followed
-// by a delete. The write completes before the delete is attempted, so an
-// interruption leaves the file at one path or both — never at neither.
+// A real rename where the browser provides one, otherwise a copy followed by
+// a delete — with one guard that is not optional. The filesystems Chrome
+// actually runs on (macOS, Windows) are case-insensitive, so for a move that
+// only changes letter case the "copy" opens the very file it is copying, and
+// the delete that follows would destroy the only copy. isSameEntry is the
+// browser's own word for "these two handles are one file", so the delete is
+// gated on it; a case-only move without native move() is left alone rather
+// than half-done. The write still completes before any delete is attempted,
+// so an interruption leaves the file at one path or both — never at neither.
 export async function moveLocalFile(rootHandle, from, to) {
-  const bytes = await readLocalFile(rootHandle, from);
-  await writeLocalFile(rootHandle, to, bytes);
-  await removeLocalFile(rootHandle, from);
+  const [fromDirPath, fromName] = split(from);
+  const [toDirPath, toName] = split(to);
+  const fromDir = await resolveDir(rootHandle, fromDirPath);
+  const source = await fromDir.getFileHandle(fromName);
+  const toDir = await resolveDir(rootHandle, toDirPath, { create: true });
+
+  if (typeof source.move === 'function') {
+    await source.move(toDir, toName);
+    return;
+  }
+
+  const bytes = new Uint8Array(await (await source.getFile()).arrayBuffer());
+  const target = await toDir.getFileHandle(toName, { create: true });
+  if (await source.isSameEntry(target)) return;
+  const w = await target.createWritable();
+  await w.write(bytes);
+  await w.close();
+  // Read the copy back before deleting the original: a write that silently
+  // came up short must not cost the source file.
+  const back = await target.getFile();
+  if (back.size !== bytes.length) {
+    throw new Error(`copy of ${from} came back ${back.size} bytes instead of ${bytes.length}`);
+  }
+  await fromDir.removeEntry(fromName);
 }
 
 // ---- sync state ---------------------------------------------------------
