@@ -29,6 +29,23 @@
 
 export const RELEASES = [
   {
+    version: '1.0.2',
+    date: '2026-08-19',
+    title: 'What the testers found, again',
+    added: [
+      '**SELECT ALL** on every series header while picking a selection, so a whole series no longer means a click per card. It takes what the current filter shows, and a second click takes it back',
+    ],
+    changed: [
+      'Every delete, wipe and erase now asks twice. The second dialog says nothing new on purpose: its only job is to be a second, deliberate act',
+      'A file whose path or name is too long for the device now hears how long it is, what the device can address, and what to do about it, instead of a bare limit',
+    ],
+    fixed: [
+      '**ORGANISE FOLDER could destroy files instead of filing them.** On the filesystems Chrome actually runs on, a move that only fixes letter case ("splatoon" to "Splatoon") opens the file as its own destination, and the delete that completes a move erased the only copy, then swept the folder as emptied. Moves are now real renames where the browser provides one, and a move that would land on itself leaves the file where it is',
+      '**One stalled transfer poisoned every transfer behind it.** A backup hitting a slow patch failed dozens of files in a row with "GATT operation already in progress", each in a millisecond. Writes now wait for the one before them instead of racing it, a command’s deadline starts when it actually reaches the device, and a transfer that still fails is retried once before the run gives up on the file',
+    ],
+  },
+
+  {
     version: '1.0.1',
     date: '2026-08-18',
     title: 'Newest first',
