@@ -56,13 +56,26 @@ export class BleTransport extends EventTarget {
   async write(frame) {
     if (!this.rx) throw new Error('not connected');
     const u = frame instanceof Uint8Array ? frame : new Uint8Array(frame);
-    // writeValueWithResponse gives us backpressure; the device is slow enough
-    // that write-without-response risks silently dropping frames.
-    if (this.rx.writeValueWithResponse) {
-      await this.rx.writeValueWithResponse(u);
-    } else {
-      await this.rx.writeValue(u);
-    }
+    // Chrome allows one GATT operation per device at a time; a write issued
+    // while another is still pending fails instantly with "GATT operation
+    // already in progress" rather than queueing. That pending write can
+    // outlive its own command — a stall long enough to trip the idle timeout
+    // leaves the GATT layer busy after the protocol has moved on — so every
+    // write chains behind the last, and a stuck one delays its successor
+    // instead of poisoning it.
+    const run = async () => {
+      if (!this.rx) throw new Error('not connected');
+      // writeValueWithResponse gives us backpressure; the device is slow
+      // enough that write-without-response risks silently dropping frames.
+      if (this.rx.writeValueWithResponse) {
+        await this.rx.writeValueWithResponse(u);
+      } else {
+        await this.rx.writeValue(u);
+      }
+    };
+    const p = (this._writeTail ?? Promise.resolve()).catch(() => {}).then(run);
+    this._writeTail = p;
+    return p;
   }
 
   _onNotify(event) {

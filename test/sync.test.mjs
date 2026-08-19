@@ -8,8 +8,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { walkDevice, UNENUMERATED } from '../web/js/sync.js';
+import { walkDevice, applyPlan, UNENUMERATED } from '../web/js/sync.js';
 import { ProtocolError } from '../web/js/protocol.js';
+import { memRoot, listTree } from './helpers/fshandles.mjs';
 
 const ROOT = 'E:/amiibo';
 
@@ -140,4 +141,147 @@ test('a nested failure flags only the folder that failed', async () => {
   assert.ok(!index.get('A').unenumerated, 'the parent kept a flag it had earned removal of');
   assert.equal(index.get('A/B').unenumerated, UNENUMERATED.failed);
   assert.ok(index.has('A/a.bin'));
+});
+
+// ---- applying an organise plan on a case-insensitive folder ---------------
+//
+// The wild failure this pins down: an organise planned "splatoon/X.bin ->
+// Splatoon/X.bin" as a real move, the copy opened the source file itself, and
+// the delete destroyed the only copy — then the folder, now genuinely empty,
+// was swept. Whatever the browser offers, the run must end with the dump still
+// existing, and a folder that was not really emptied must fail its rmdir
+// loudly instead of vanishing.
+test('an organise move that only changes case never loses the file', async () => {
+  for (const nativeMove of [false, true]) {
+    const root = memRoot({
+      caseInsensitive: true,
+      nativeMove,
+      seed: { 'splatoon/Inkling.bin': new Uint8Array(540).fill(7) },
+    });
+
+    const result = await applyPlan({
+      client: {},
+      rootHandle: root,
+      deviceRoot: 'E:/amiibo',
+      state: { version: 1, entries: {} },
+      ops: [
+        { op: 'moveLocal', from: 'splatoon/Inkling.bin', to: 'Splatoon/Inkling.bin' },
+        { op: 'rmdirLocal', relPath: 'splatoon' },
+      ],
+    });
+
+    const tree = await listTree(root);
+    const survivors = Object.entries(tree).filter(([p, v]) => v === 540);
+    assert.equal(survivors.length, 1, `the dump survived (nativeMove: ${nativeMove})`);
+    // The folder still holds the file on this filesystem, so its rmdir must
+    // fail loudly rather than the plan pretending the sweep was clean.
+    assert.equal(result.failed, 1, `rmdir failed loudly (nativeMove: ${nativeMove})`);
+    assert.equal(tree.splatoon, 'dir');
+  }
+});
+
+test('a download that fails once is retried and the file is not lost from the run', async () => {
+  let readAttempts = 0;
+  const client = {
+    async readFile() {
+      if (++readAttempts === 1) throw new Error('GATT operation already in progress.');
+      return new Uint8Array(540).fill(9);
+    },
+  };
+  const root = memRoot();
+
+  const result = await applyPlan({
+    client,
+    rootHandle: root,
+    deviceRoot: 'E:/amiibo',
+    state: { version: 1, entries: {} },
+    ops: [{ op: 'download', relPath: 'Zelda/Link.bin', size: 540 }],
+  });
+
+  assert.equal(readAttempts, 2);
+  assert.equal(result.completed, 1);
+  assert.equal(result.failed, 0);
+  assert.equal(result.log[0].ok, true);
+  assert.equal((await listTree(root))['Zelda/Link.bin'], 540);
+});
+
+test('an upload that fails once is retried too', async () => {
+  let writeAttempts = 0;
+  const client = {
+    async writeFile() {
+      if (++writeAttempts === 1) throw new Error('GATT operation already in progress.');
+    },
+  };
+  const root = memRoot({ seed: { 'Zelda/Link.bin': new Uint8Array(540).fill(9) } });
+
+  const result = await applyPlan({
+    client,
+    rootHandle: root,
+    deviceRoot: 'E:/amiibo',
+    state: { version: 1, entries: {} },
+    ops: [{ op: 'upload', relPath: 'Zelda/Link.bin', size: 540 }],
+  });
+
+  assert.equal(writeAttempts, 2);
+  assert.equal(result.completed, 1);
+  assert.equal(result.failed, 0);
+});
+
+// ---- the tester's organise, end to end ------------------------------------
+//
+// Real planner, real executor, fake disk. A library whose series folders
+// differ from canonical only by letter case (the tester's Splatoon/Skylanders/
+// Fire Emblem/HHD folders), plus one genuinely misplaced dump. Whatever the
+// browser offers for moving files, the invariant is absolute: organise never
+// ends with fewer dumps than it started with.
+test('a full organise of a case-mangled library never loses a dump', async () => {
+  const { planOrganise, flattenPlan, amiiboRelPath } = await import('../web/js/planner.js');
+  const MARIO = '0000000000000002';
+  const LINK = '0100000000040002';
+  const marioPath = amiiboRelPath(MARIO, { deviceRoot: 'E:/amiibo' }); // canonical
+  const linkPath = amiiboRelPath(LINK, { deviceRoot: 'E:/amiibo' });
+  // The same path with its series folder lower-cased: distinct string, same
+  // folder on the tester's disk.
+  const [marioDir, marioName] = [marioPath.slice(0, marioPath.lastIndexOf('/')), marioPath.split('/').pop()];
+  const mangled = `${marioDir.toLowerCase()}/${marioName}`;
+  assert.notEqual(mangled, marioPath, 'the canonical path must be case-distinct for this test');
+
+  for (const nativeMove of [false, true]) {
+    const root = memRoot({
+      caseInsensitive: true,
+      nativeMove,
+      seed: {
+        [mangled]: new Uint8Array(540).fill(1),
+        'loose.bin': new Uint8Array(540).fill(2),
+      },
+    });
+
+    const index = new Map([
+      [marioDir.toLowerCase(), { size: 0, isDir: true }],
+      [mangled, { size: 540, isDir: false, amiiboId: MARIO }],
+      ['loose.bin', { size: 540, isDir: false, amiiboId: LINK }],
+    ]);
+    const plan = planOrganise({ index, side: 'local', walkRoot: 'E:/amiibo' });
+    assert.equal(plan.moveLocal.length, 2, 'both dumps planned as moves');
+
+    const result = await applyPlan({
+      client: {},
+      rootHandle: root,
+      deviceRoot: 'E:/amiibo',
+      state: { version: 1, entries: {} },
+      ops: flattenPlan(plan),
+    });
+
+    const tree = await listTree(root);
+    const dumps = Object.values(tree).filter((v) => v === 540);
+    assert.equal(dumps.length, 2, `a dump vanished (nativeMove: ${nativeMove})`);
+    // On this disk the folder keeps its original (lowercase) on-disk name, so
+    // the filed path is compared the way the filesystem itself would.
+    const filed = Object.entries(tree)
+      .find(([p, v]) => v === 540 && p.toLowerCase() === linkPath.toLowerCase());
+    assert.ok(filed, `the misplaced dump was filed (nativeMove: ${nativeMove})`);
+    // The case-mangled folder was not really emptied, so its sweep must fail
+    // loudly rather than the run reporting a clean tidy-up.
+    assert.ok(result.failed >= 1, `the folder sweep failed loudly (nativeMove: ${nativeMove})`);
+  }
 });

@@ -187,7 +187,6 @@ export class AllmiiboClient {
     job.frames = 0;
     this.lastActivityAt = Date.now();
 
-    this._arm(job);
     if (Number.isFinite(this.maxResponseMs) && this.maxResponseMs > 0) {
       job.ceiling = setTimeout(() => {
         this._timedOut(new ProtocolError(
@@ -205,7 +204,17 @@ export class AllmiiboClient {
       .bytes(job.payload)
       .toUint8Array();
 
-    this.transport.write(frame).catch((err) => this._fail(err));
+    // The idle deadline measures the device's silence, so it starts when the
+    // command has actually reached the device — a write stuck behind a stalled
+    // predecessor must not eat into the response's time. The ceiling above is
+    // armed already: it bounds the whole exchange, stalled write included.
+    // Response frames can land before the write promise settles; _onFrame arms
+    // the timer itself in that case, and the guard keeps a late settle from
+    // re-arming a job that already finished.
+    this.transport.write(frame).then(
+      () => { if (this._inFlight === job) this._arm(job); },
+      (err) => { if (this._inFlight === job) this._fail(err); }
+    );
   }
 
   _fail(err) {

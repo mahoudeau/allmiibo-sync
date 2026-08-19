@@ -256,9 +256,14 @@ export async function applyPlan({
 
       case 'upload': {
         const bytes = await readFile(op.relPath);
+        // One retry, the walkDevice/hashDeviceIndex idiom: over a session long
+        // enough to move a library, one transient BLE failure is not evidence
+        // the file cannot transfer — and without this, it costs the run a file.
         await client.writeFile(full(op.relPath), bytes, (written, total) =>
           onProgress(op.relPath, written, total)
-        );
+        ).catch(() => client.writeFile(full(op.relPath), bytes, (written, total) =>
+          onProgress(op.relPath, written, total)
+        ));
         state.entries[op.relPath] = {
           size: bytes.length,
           hash: op.hash || (await sha256(bytes)),
@@ -267,7 +272,9 @@ export async function applyPlan({
       }
 
       case 'download': {
-        const bytes = await client.readFile(full(op.relPath));
+        // Same single retry as upload above.
+        const bytes = await client.readFile(full(op.relPath))
+          .catch(() => client.readFile(full(op.relPath)));
         await writeLocalFile(rootHandle, op.localPath ?? op.relPath, bytes);
         state.entries[op.relPath] = { size: bytes.length, hash: await sha256(bytes) };
         onProgress(op.relPath, bytes.length, bytes.length);

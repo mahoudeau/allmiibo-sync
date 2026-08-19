@@ -616,3 +616,21 @@ test('parsePartialDir discards a tail cut anywhere in an entry', () => {
   // A clean cut on an entry boundary keeps all but the last complete entry.
   assert.equal(parsePartialDir(framed.subarray(0, 4 + 18 * 4)).length, 3);
 });
+
+test('a write stuck behind a stalled predecessor does not eat the idle deadline', async () => {
+  // The tester's cascade began here: the idle timer used to start when the
+  // command was queued, so a write that stalled longer than timeoutMs timed
+  // its own command out — and the next command's write then overlapped the
+  // stalled one at the GATT layer. The deadline now starts when the write
+  // lands: this command's write takes 4x timeoutMs and must still succeed.
+  const t = new FakeTransport();
+  t.onWrite = () => new Promise((res) => setTimeout(res, 120));
+  const c = new AllmiiboClient(t, { timeoutMs: 30, keepAliveMs: 0 });
+
+  const version = c.getVersion();
+  // Respond only once the write has actually completed.
+  setTimeout(() => t.respond(CMD.GET_VERSION, 0, new ByteWriter(8).string('1.0').toUint8Array()), 140);
+
+  const { version: v } = await version;
+  assert.equal(v, '1.0');
+});
