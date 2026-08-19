@@ -926,6 +926,7 @@ function buildDom() {
     isOpen: (g) => opened.has(g.series),
     onToggle: onGroupToggle,
     chevron: ICONS.chevronRight,
+    selectable: true,
   });
   rowIndex = rows;
   groupEls = built;
@@ -1331,9 +1332,29 @@ function deviceFilesFor(ids) {
 els.selectBtn.addEventListener('click', () => setSelecting(!selecting));
 els.selCancel.addEventListener('click', () => setSelecting(false));
 
+// One click for a whole series. Only what the filter is showing is taken:
+// selecting things you cannot see is how a delete grows a surprise.
+function toggleSeriesSelection(details) {
+  const rows = rowIndex.filter((r) => r.groupEl === details && !r.el.hidden);
+  if (!rows.length) return;
+  const allIn = rows.every((r) => selected.has(r.item.id));
+  for (const r of rows) {
+    if (allIn) { selected.delete(r.item.id); r.el.classList.remove('selected'); }
+    else { selected.add(r.item.id); r.el.classList.add('selected'); }
+  }
+  updateSelBar();
+}
+
 // In selection mode, cells toggle instead of navigating.
 els.series.addEventListener('click', (e) => {
   if (!selecting) return;
+  const selAll = e.target.closest('button.selAll');
+  if (selAll) {
+    // preventDefault also keeps the <summary> from folding the series shut.
+    e.preventDefault();
+    toggleSeriesSelection(selAll.closest('details.series'));
+    return;
+  }
   const cell = e.target.closest('a.item');
   if (!cell) return;
   e.preventDefault();

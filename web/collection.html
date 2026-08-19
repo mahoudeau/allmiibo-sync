@@ -190,6 +190,11 @@ try{const d=document.documentElement;d.dataset.mode=localStorage.getItem('allmii
     box-shadow:4px 4px 0 var(--shadow); }
   .selBar .selN { font-family:var(--pixel); font-size:.55rem; color:var(--fg); }
   .selBar button { min-height:2.1rem; font-size:.5rem; }
+  /* One click for a whole series; only exists while selecting. */
+  summary .selAll { display:none; flex:none; font-size:.45rem; min-height:1.8rem;
+    padding:.3em .7em; color:var(--muted); }
+  #series.selecting summary .selAll { display:inline-flex; align-items:center; }
+  #series.selecting summary .selAll:hover { color:var(--fg); }
 
   /* Skipped report (via the ⋯ menu) */
   #skipped details { border:2px solid var(--border); margin-bottom:.5rem; background:var(--panel); }

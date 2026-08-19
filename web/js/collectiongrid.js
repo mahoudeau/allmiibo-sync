@@ -31,6 +31,7 @@
  * @param {string} [hooks.chevron]                     markup for the chevron
  * @param {(item, group) => string} [hooks.searchText] the row's search haystack
  * @param {number} [hooks.subheadsOver]                sub-header threshold
+ * @param {boolean} [hooks.selectable]                 a SELECT ALL button per series
  * @param {Document} [hooks.doc]
  *
  * @returns {{ frag: DocumentFragment, rows: Array, groupEls: Map }}
@@ -46,6 +47,7 @@ export function buildSeriesGrid(groups, {
   chevron = '',
   searchText = null,
   subheadsOver = 100,
+  selectable = false,
   doc = globalThis.document,
 } = {}) {
   if (typeof cell !== 'function') throw new TypeError('buildSeriesGrid needs a cell hook');
@@ -92,6 +94,16 @@ export function buildSeriesGrid(groups, {
     const grow = doc.createElement('span');
     grow.className = 'grow';
     summary.append(head, grow);
+
+    // Only rendered where a selection mode exists (the collection page); CSS
+    // keeps it hidden until that mode is on. The admin never passes the flag.
+    if (selectable) {
+      const selAll = doc.createElement('button');
+      selAll.type = 'button';
+      selAll.className = 'selAll';
+      selAll.textContent = 'SELECT ALL';
+      summary.append(selAll);
+    }
 
     const badge = pill?.(group);
     if (badge) summary.append(badge);

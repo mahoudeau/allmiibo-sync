@@ -331,3 +331,25 @@ test('these checks fail if the grid drops amiibo or forgets to hide a group', ()
     page.restore();
   }
 });
+
+test('the SELECT ALL button exists only where a page asks for it', () => {
+  // The grid is shared with the admin, which has no selection mode; only the
+  // collection page passes `selectable`, so only it may carry the buttons.
+  const plain = grid();
+  try {
+    assert.equal(plain.page.$$('summary .selAll').length, 0, 'the admin grew selection buttons');
+  } finally {
+    plain.page.restore();
+  }
+
+  const selectable = grid({ hooks: { selectable: true } });
+  try {
+    const buttons = selectable.page.$$('summary .selAll');
+    assert.equal(buttons.length, selectable.groups.length, 'one per series');
+    assert.ok(buttons.every((b) => b.getAttribute('type') === 'button'),
+      'a bare <button> in a form context would submit it');
+    assert.equal(buttons[0].textContent, 'SELECT ALL');
+  } finally {
+    selectable.page.restore();
+  }
+});
