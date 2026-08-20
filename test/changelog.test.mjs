@@ -175,6 +175,18 @@ test('the newest release is what the footer shows', async () => {
   assert.match(footer, /changelog\.html/);
 });
 
+test('the README states the current release', async () => {
+  const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
+  const stated = /^Currently \*\*(\d+\.\d+\.\d+)\*\*/m.exec(readme);
+  assert.ok(stated, 'the README should open by saying which release it documents');
+
+  // The footer reads the version from the data. The README cannot, being
+  // markdown, so it repeats the number by hand and it went stale for two
+  // releases before anyone noticed. This is the only thing that would.
+  assert.equal(stated[1], RELEASES[0].version,
+    'README.md is behind web/data/changelog.js; update the version line');
+});
+
 test('the page renders one panel per release, newest first', () => {
   const page = mountHtml(PAGE);
   renderChangelog(page.document.getElementById('out'));

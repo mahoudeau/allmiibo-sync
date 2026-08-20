@@ -1,7 +1,13 @@
 # allmiibo-sync
 
+[![allmiibo-sync: sync your amiibo collection over Bluetooth](web/icons/og.png)](https://allmiibo.mathieu.dev)
+
 Folder sync and collection tracking for Pixl.js / AmiiboLink-compatible NFC
 emulator devices over Bluetooth LE.
+
+**[Try it at allmiibo.mathieu.dev](https://allmiibo.mathieu.dev)**. No install, no
+account, nothing leaves the browser. Chrome or Edge to sync a device, any browser
+to browse the database and scan a folder.
 
 The stock web tools (`bt.allmiibo.com`, `pixl.amiibo.xyz`) support only manual,
 one-file-at-a-time transfers and hand-made folders. This project keeps a local
@@ -15,7 +21,7 @@ full amiibo database while it is at it.
 > catalogues the files already present on a connected device. See
 > [Legal and licensing](#legal-and-licensing).
 
-Currently **1.0.0**. What changed, and when: [CHANGELOG.md](CHANGELOG.md).
+Currently **1.0.2**. What changed, and when: [CHANGELOG.md](CHANGELOG.md).
 
 ## Self-contained by design
 
