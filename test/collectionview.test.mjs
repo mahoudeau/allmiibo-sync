@@ -244,3 +244,12 @@ test('collectionCsv quotes fields and escapes embedded quotes', () => {
   assert.match(csv, /"Série ""A"""/, 'quotes inside a field are doubled');
   assert.match(csv, /"Mario ""Gold"""/);
 });
+
+test('collectionCsv writes "no" for hasDevice when device not yet scanned (null)', () => {
+  const col = {
+    series: [group(0, 'Test', [item('a', { hasLocal: true, hasDevice: null })])],
+  };
+  const csv = collectionCsv(col).slice(1);
+  const lines = csv.split('\n');
+  assert.match(lines[1], /"yes","no","yes"/, 'hasDevice: null -> "no"');
+});
