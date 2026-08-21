@@ -135,3 +135,30 @@ export function sortSeries(groups, mode, releases) {
 export function searchText(item, { seriesName = '', fileNames = [] } = {}) {
   return [item.name ?? '', item.id, seriesName, ...fileNames].join(' ').toLowerCase();
 }
+
+/**
+ * The whole collection as a CSV string, prefixed with a UTF-8 BOM so
+ * spreadsheet apps read non-ASCII names (Pokémon, etc.) correctly.
+ *
+ * Pure and DOM-free like the rest of this module, so it can be tested. The
+ * page stays responsible for turning the string into a download.
+ */
+export function collectionCsv(collection) {
+  const rows = [['Series', 'Name', 'ID', 'Owned', 'On device', 'In database']];
+  for (const group of collection?.series ?? []) {
+    for (const item of group.items) {
+      rows.push([
+        group.seriesName,
+        item.name ?? '',
+        item.id ?? '',
+        item.hasLocal ? 'yes' : 'no',
+        item.hasDevice ? 'yes' : 'no',
+        item.inDatabase ? 'yes' : 'no',
+      ]);
+    }
+  }
+  const csv = rows
+    .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+  return `\uFEFF${csv}`;
+}
