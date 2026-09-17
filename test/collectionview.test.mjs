@@ -139,22 +139,24 @@ test('a series with nothing catalogued sorts last rather than as complete', () =
   assert.equal(completionRatio(g), -1);
 });
 
-test('the completion percentage reads 100 only when nothing is missing', () => {
-  assert.equal(progressPct(946, 950), 99, '99.6% is not complete');
-  assert.equal(progressPct(949, 950), 99);
+test('a progress percentage reads 100 only when nothing is left', () => {
+  assert.equal(progressPct(949, 950), 99.9, '99.89% is not complete');
+  assert.equal(progressPct(9999, 10000), 99.9, 'even when it would round to 100.0');
   assert.equal(progressPct(950, 950), 100);
 });
 
-test('the completion percentage reads 0 only when nothing is owned', () => {
-  assert.equal(progressPct(1, 950), 1, '0.1% is not nothing');
+test('a progress percentage reads 0 only when nothing is done', () => {
+  assert.equal(progressPct(1, 950), 0.1);
+  assert.equal(progressPct(1, 10000), 0.1, 'even when it would round to 0.0');
   assert.equal(progressPct(0, 950), 0);
   assert.equal(progressPct(0, 0), 0, 'an empty total is 0, not a division by zero');
 });
 
-test('between the ends the completion percentage rounds normally', () => {
-  assert.equal(progressPct(475, 950), 50);
-  assert.equal(progressPct(1, 3), 33);
-  assert.equal(progressPct(2, 3), 67);
+test('between the ends a progress percentage rounds to one decimal', () => {
+  assert.equal(progressPct(946, 950), 99.6);
+  assert.equal(progressPct(1, 3), 33.3);
+  assert.equal(progressPct(2, 3), 66.7);
+  assert.equal(progressPct(475, 950), 50, 'a whole value has no trailing .0');
 });
 
 test('sorting by name is alphabetical', () => {

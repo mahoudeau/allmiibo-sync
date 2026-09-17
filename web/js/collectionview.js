@@ -93,14 +93,15 @@ export function completionRatio(group) {
 }
 
 /**
- * A whole-number percentage that is honest at both ends: 100 only when every
- * item is owned, 0 only when none is. Plain rounding shows 946 of 950 as 100%,
- * which reads as complete with four still missing.
+ * A percentage to one decimal that is honest at both ends: 100 only when
+ * nothing is left, 0 only when nothing is done. Plain rounding shows 949 of
+ * 950 as 100%, which reads as complete with one still missing, so the ends
+ * clamp to 0.1 and 99.9 instead. Whole values carry no trailing ".0".
  */
 export function progressPct(done, total) {
   if (!total || done <= 0) return 0;
   if (done >= total) return 100;
-  return Math.min(99, Math.max(1, Math.round((done / total) * 100)));
+  return Math.min(99.9, Math.max(0.1, Math.round((done / total) * 1000) / 10));
 }
 
 /**

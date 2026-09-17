@@ -777,7 +777,7 @@ function renderHero() {
 
   const { up, down, matched } = syncDeltas();
   const syncDenom = matched + up + down;
-  const syncPct = syncDenom ? Math.round((matched / syncDenom) * 100) : 0;
+  const syncPct = progressPct(matched, syncDenom);
 
   let folderDetail = '';
   if (stats && scannedFolder) {
