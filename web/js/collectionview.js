@@ -93,6 +93,17 @@ export function completionRatio(group) {
 }
 
 /**
+ * A whole-number percentage that is honest at both ends: 100 only when every
+ * item is owned, 0 only when none is. Plain rounding shows 946 of 950 as 100%,
+ * which reads as complete with four still missing.
+ */
+export function progressPct(done, total) {
+  if (!total || done <= 0) return 0;
+  if (done >= total) return 100;
+  return Math.min(99, Math.max(1, Math.round((done / total) * 100)));
+}
+
+/**
  * Series in display order. Returns a new array; the input is not reordered.
  *
  * Release order is the default and the fiddly one: a series with no dated entry

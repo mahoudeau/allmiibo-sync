@@ -16,6 +16,7 @@ import {
   matchesFilter,
   seriesDate,
   completionRatio,
+  progressPct,
   sortSeries,
   searchText,
 } from '../web/js/collectionview.js';
@@ -136,6 +137,24 @@ test('completion counts only catalogued entries', () => {
 test('a series with nothing catalogued sorts last rather than as complete', () => {
   const g = group(0, 'Smash', [item('a', { inDatabase: false, hasLocal: true })]);
   assert.equal(completionRatio(g), -1);
+});
+
+test('the completion percentage reads 100 only when nothing is missing', () => {
+  assert.equal(progressPct(946, 950), 99, '99.6% is not complete');
+  assert.equal(progressPct(949, 950), 99);
+  assert.equal(progressPct(950, 950), 100);
+});
+
+test('the completion percentage reads 0 only when nothing is owned', () => {
+  assert.equal(progressPct(1, 950), 1, '0.1% is not nothing');
+  assert.equal(progressPct(0, 950), 0);
+  assert.equal(progressPct(0, 0), 0, 'an empty total is 0, not a division by zero');
+});
+
+test('between the ends the completion percentage rounds normally', () => {
+  assert.equal(progressPct(475, 950), 50);
+  assert.equal(progressPct(1, 3), 33);
+  assert.equal(progressPct(2, 3), 67);
 });
 
 test('sorting by name is alphabetical', () => {

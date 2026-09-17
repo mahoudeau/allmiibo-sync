@@ -20,7 +20,7 @@ import { findRescueStaging, stagingNotice, driveRootOf } from './rescue.js';
 import { scanAndPlan, applyThePlan, planSelection, hasWork } from './syncflow.js';
 import { expandBundles, hasBundles } from './bundlesource.js';
 import {
-  FILTERS, normaliseFilter, filterCounts, matchesFilter, sortSeries, seriesDate,
+  FILTERS, normaliseFilter, filterCounts, matchesFilter, sortSeries, seriesDate, progressPct,
 } from './collectionview.js';
 import { buildSeriesGrid, applyGridFilter, reorderGroups } from './collectiongrid.js';
 import { hhdMark } from './sprite.js';
@@ -674,7 +674,7 @@ function renderProgress() {
   els.collProg.hidden = !show;
   if (!show) { els.collProg.innerHTML = ''; return; }
 
-  const pct = stats.knownTotal ? Math.round((stats.ownedKnown / stats.knownTotal) * 100) : 0;
+  const pct = progressPct(stats.ownedKnown, stats.knownTotal);
   const showSplit = stats.ownedDeviceOnly > 0 && localIds.size > 0;
   const split = showSplit
     ? `title="${stats.ownedLocalKnown} in your folder · ${stats.ownedDeviceOnly} only on the device"`
