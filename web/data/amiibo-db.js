@@ -9,7 +9,7 @@
 //   - solosky/pixl.js       fw/application/src/amiidb/db_amiibo.c  (names, GPL-2.0)
 //   - 8bitDream/AmiiboAPI   database/amiibo.json                   (series, types, dates, MIT)
 //
-// 948 amiibo IDs, 32 series, 5 types.
+// 949 amiibo IDs, 32 series, 5 types.
 
 // amiibo ID (16 hex chars, bytes 84..91 of a dump) -> display name.
 export const AMIIBO_NAMES = Object.freeze({
@@ -658,11 +658,11 @@ export const AMIIBO_NAMES = Object.freeze({
   '0805030003900402': "Octoling Octopus",
   '08060100041c0402': "Smallfry",
   '0807000004330402': "Shiver",
-  '0807000004f70402': "Shiver (Splatoon Raiders)",
+  '0807000004f70402': "Shiver - Splatoon Raiders",
   '0808000004340402': "Frye",
-  '0808000004f80402': "Frye (Splatoon Raiders)",
+  '0808000004f80402': "Frye - Splatoon Raiders",
   '0809000004350402': "Big Man",
-  '0809000004f90402': "Big Man (Splatoon Raiders)",
+  '0809000004f90402': "Big Man - Splatoon Raiders",
   '09c0010102690e02': "Mario - Soccer",
   '09c00201026a0e02': "Mario - Baseball",
   '09c00301026b0e02': "Mario - Tennis",
@@ -811,6 +811,7 @@ export const AMIIBO_NAMES = Object.freeze({
   '1f02000004c71e03': "King Dedede (& Tank Star)",
   '1f03000002570c02': "Waddle Dee",
   '1f03010004c91e03': "Bandana Waddle Dee",
+  '1f04000004ca1e03': "Chef Kawasaki (& Hop Star)",
   '1f400000035e1002': "Qbby",
   '21000000000b0002': "Marth",
   '2101000000180002': "Ike",
@@ -1808,6 +1809,7 @@ export const AMIIBO_RELEASE = Object.freeze({
   '1f02000004c71e03': '2026-07-02',
   '1f03000002570c02': '2016-04-28',
   '1f03010004c91e03': '2025-11-20',
+  '1f04000004ca1e03': '2026-09-03',
   '1f400000035e1002': '2017-02-02',
   '21000000000b0002': '2014-11-21',
   '2101000000180002': '2015-01-22',
@@ -2032,7 +2034,7 @@ export const AMIIBO_FILE_NAMES = Object.freeze({
 
 // amiibo ID -> abbreviated filename base, for paths that will not otherwise
 // fit. Abbreviates the segment after the last " - ": "Pink Gold Peach - Horse
-// Racing" -> "Pink Gold Peach - HR". Only the 46 names long enough to matter
+// Racing" -> "Pink Gold Peach - HR". Only the 49 names long enough to matter
 // appear.
 export const AMIIBO_SHORT_NAMES = Object.freeze({
   '00000000003d0102': "Mario - SE",
@@ -2069,6 +2071,9 @@ export const AMIIBO_SHORT_NAMES = Object.freeze({
   '0800010003690402': "Inkling Girl - NP",
   '08000200036a0402': "Inkling Boy - NG",
   '08000300036b0402': "Inkling Squid - NP",
+  '0807000004f70402': "Shiver - SR",
+  '0808000004f80402': "Frye - SR",
+  '0809000004f90402': "Big Man - SR",
   '09c60501028b0e02': "Waluigi - HR",
   '09c7050102900e02': "Donkey Kong - HR",
   '09c8050102950e02': "Diddy Kong - HR",

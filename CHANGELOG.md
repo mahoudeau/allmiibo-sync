@@ -8,6 +8,25 @@ Every release of [allmiibo-sync](https://allmiibo.mathieu.dev), newest first.
 The same history, minus the sections that only concern this repository, is on
 the site under [What's new](https://allmiibo.mathieu.dev/changelog.html).
 
+## 1.0.3 · 17 September 2026
+
+**Chef Kawasaki, and a collection that fits a phone**
+
+### Added
+
+- **Chef Kawasaki & Hop Star**, the Kirby Air Riders figure released on 3 September. The database now holds 949 amiibo across 32 series
+
+### Changed
+
+- The three Splatoon Raiders figures follow the upstream database's new names: **Shiver - Splatoon Raiders**, **Frye - Splatoon Raiders** and **Big Man - Splatoon Raiders**. Their files on a device already synced move to the new names on the next sync
+- Hop Star is not recognised yet. A dump of any rider on it reads as Tank Star until its signature is confirmed
+- The collection grid fits two or three cards per row on a phone instead of one, and the list view drops to a single column
+- On a phone the toolbar gives each control its own row. The more button stays at the right edge, so its menu no longer opens off the screen
+
+### Behind the scenes
+
+- The test suite runs on every push and pull request, on Node 20 and 22. CI reports how many tests it skipped and fails if that number grows
+
 ## 1.0.2 · 19 August 2026
 
 **What the testers found, again**
