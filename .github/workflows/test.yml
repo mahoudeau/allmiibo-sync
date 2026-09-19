@@ -23,7 +23,10 @@ jobs:
 
     # The two supported LTS lines. 24 is also what the admin runs in
     # production, so a break there shows up here first.
+    # fail-fast off: one version failing should not cancel the other and hide
+    # whether it passed.
     strategy:
+      fail-fast: false
       matrix:
         node-version: [22.x, 24.x]
 
@@ -40,10 +43,13 @@ jobs:
 
       # Piped through tee to keep the counts for the step below. pipefail so a
       # failing suite still fails the step rather than being swallowed by tee.
+      # The reporter is pinned because the default is not stable: Node 22 prints
+      # TAP when piped and Node 24 prints its own format, which the count step
+      # cannot read.
       - name: Run tests
         run: |
           set -o pipefail
-          npm test 2>&1 | tee test-output.txt
+          npm test -- --test-reporter=tap 2>&1 | tee test-output.txt
 
       # A skipped test is not a passing test. tools/.cache is gitignored and
       # nothing here can fill it without reaching upstream, so the database
