@@ -9,7 +9,7 @@
 //   - solosky/pixl.js       fw/application/src/amiidb/db_amiibo.c  (names, GPL-2.0)
 //   - 8bitDream/AmiiboAPI   database/amiibo.json                   (series, types, dates, MIT)
 //
-// 949 amiibo IDs, 32 series, 5 types.
+// 950 amiibo IDs, 32 series, 5 types.
 
 // amiibo ID (16 hex chars, bytes 84..91 of a dump) -> display name.
 export const AMIIBO_NAMES = Object.freeze({
@@ -107,6 +107,7 @@ export const AMIIBO_NAMES = Object.freeze({
   '010a000004a40902': "Sidon",
   '010b000004a50902': "Tulin",
   '010c000004a60902': "Yunobo",
+  '010d000004a70902': "Mineru's Construct",
   '0140000003550902': "Guardian",
   '01410000035c0902': "Bokoblin",
   '0180000000080002': "Villager",
@@ -1105,6 +1106,7 @@ export const AMIIBO_RELEASE = Object.freeze({
   '010a000004a40902': '2025-06-05',
   '010b000004a50902': '2025-06-05',
   '010c000004a60902': '2025-06-05',
+  '010d000004a70902': '2026-09-17',
   '0140000003550902': '2017-03-03',
   '01410000035c0902': '2017-03-03',
   '0180000000080002': '2014-11-21',
