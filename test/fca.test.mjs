@@ -174,7 +174,10 @@ test('a v3 entry keeps its whole dump and its vehicle', () => {
   const { records } = splitFca(a);
   assert.equal(records.length, 4);
   assert.deepEqual(records.map((r) => r.dump.length), [2048, 2048, 2048, 2048]);
-  assert.deepEqual(records.map((r) => r.vehicle), VEHICLES.map(([, , name]) => name));
+  const labels = records.map((r) => r.vehicle);
+  assert.deepEqual(labels.slice(0, 3), VEHICLES.slice(0, 3).map(([, , name]) => name));
+  // A Tank Star code on a copy the app has not seen could be a Hop Star too.
+  assert.match(labels[3], /^Tank or Hop Star #[0-9a-f]{8}$/);
 });
 
 test('a dump is copied out, not left as a view on the archive', () => {
@@ -213,8 +216,10 @@ test('four vehicles of one character survive as four separate amiibo', async () 
   const r = await expand('riders.fca', bytes);
   assert.equal(r.report.bundles[0].unique, 4, 'four distinct items');
   assert.equal(r.virtual.size, 4);
-  assert.deepEqual([...r.virtual.keys()].sort(),
-    ['Shadow', 'Tank', 'Warp', 'Winged'].map((v) => `${dir(KIRBY_AR)}/Kirby (${v}).bin`).sort());
+  const keys = [...r.virtual.keys()].sort();
+  const named = ['Shadow', 'Warp', 'Winged'].map((v) => `${dir(KIRBY_AR)}/Kirby (${v}).bin`);
+  assert.deepEqual(keys.filter((k) => !k.includes('TankHop')), named.sort());
+  assert.equal(keys.filter((k) => /Kirby \(TankHop-[0-9a-f]{8}\)\.bin$/.test(k)).length, 1);
   for (const e of r.virtual.values()) assert.equal(e.size, 2048, 'the full dump is kept');
 });
 
@@ -257,6 +262,8 @@ test('a real archive keeps Air Riders vehicles, which the flat format cannot', {
   assert.equal(records.length, 16, '4 characters x 4 vehicles');
   assert.ok(records.every((r) => r.dump.length === 2048 && r.type === 2), 'whole I2C dumps');
   assert.equal(new Set(records.map((r) => r.amiiboId)).size, 4, 'four characters share four IDs');
+  // A real archive carries real copies, which the fingerprint table knows, so
+  // even the Tank Star is named rather than left as "Tank or Hop".
   assert.deepEqual(new Set(records.map((r) => r.vehicle)),
     new Set(['Warp Star', 'Winged Star', 'Shadow Star', 'Tank Star']));
 });

@@ -249,7 +249,8 @@ export function buildAmiiboDetail(id, {
       const card = el(doc, 'span', `vCard${owned.has(vehicle) ? ' have' : ''}`);
       const artSlot = el(doc, 'span', 'vArt');
       artSlot.dataset.initial = vehicle[0];
-      if (vehicleArt) {
+      // Only a named vehicle has a render. A fingerprinted one keeps its initial.
+      if (vehicleArt && KNOWN_VEHICLES.includes(vehicle)) {
         const img = doc.createElement('img');
         img.loading = 'lazy';
         img.alt = '';
@@ -261,7 +262,9 @@ export function buildAmiiboDetail(id, {
     }
     block.append(chips);
     const note = el(doc, 'p', 'vNote',
-      'Every rider fits every machine. Solid = you have a dump of that pairing.');
+      'Every rider fits every machine. Solid = you have a dump of that pairing. ' +
+      'A machine the app cannot name for certain shows with its fingerprint: ' +
+      'Tank Star and Hop Star read alike, so an unfamiliar one is "Tank or Hop Star".');
     why.addEventListener('click', () => note.classList.toggle('open'));
     block.append(note);
     facts.append(mark('vehicles', block));

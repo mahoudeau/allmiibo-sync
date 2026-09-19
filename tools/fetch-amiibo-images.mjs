@@ -357,7 +357,7 @@ export function describeArtwork(report) {
 // through their CDN. Same posture as the amiibo art: fetched locally, never
 // committed (web/data/images/ is gitignored).
 
-const VEHICLE_SLUGS = ['warp-star', 'winged-star', 'shadow-star', 'tank-star'];
+const VEHICLE_SLUGS = ['warp-star', 'winged-star', 'shadow-star', 'tank-star', 'hop-star'];
 const VEHICLE_URL = (slug) =>
   `https://assets.nintendo.com/image/upload/f_png,w_256/Marketing/ms_j3gnc8ap1/riders-and-machines/gallery-machines/${slug}/machine-2x`;
 

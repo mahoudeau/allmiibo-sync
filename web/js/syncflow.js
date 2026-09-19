@@ -487,7 +487,7 @@ async function packFrom({ paths, read, on = {}, shouldStop = () => false }) {
 
     if (isLossyInBundle(bytes.length)) {
       const vehicle = parseVehicle(bytes);
-      report.lossy.push({ relPath, amiiboId, vehicle: vehicle?.name ?? vehicle?.code ?? null });
+      report.lossy.push({ relPath, amiiboId, vehicle: vehicle?.label ?? null });
     }
     dumps.set(key, bytes);
   }

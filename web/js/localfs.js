@@ -33,7 +33,7 @@ async function describeFile(buf, { size, lastModified, hash = true }) {
     size,
     hash: hash ? await sha256(buf) : null,
     amiiboId,
-    vehicle: vehicle?.name ?? vehicle?.code ?? null,
+    vehicle: vehicle?.label ?? null,
     // The HHD pack shares one amiibo ID; the UID tells the cards apart.
     uid: amiiboId && isHhdItemCards(amiiboId) ? parseUid(buf) : null,
     // Not a dump, but a whole library in one file. Recorded here because the

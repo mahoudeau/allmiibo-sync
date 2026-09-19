@@ -8,6 +8,33 @@ Every release of [allmiibo-sync](https://allmiibo.mathieu.dev), newest first.
 The same history, minus the sections that only concern this repository, is on
 the site under [What's new](https://allmiibo.mathieu.dev/changelog.html).
 
+## 1.0.4 · 19 September 2026
+
+**Mineru, and the Hop Star at last**
+
+### Added
+
+- **Mineru's Construct**, the Zelda figure released on 17 September. The database now holds 950 amiibo across 32 series
+- **Hop Star** joins the vehicle line-up, so every Air Riders character now has five machines to collect
+
+### Changed
+
+- Vehicles are recognised by the physical copy, not by the code printed in the dump. Tank Star and Hop Star carry the same code, and Winged Stars come with two, so a copy seen before is matched exactly and any other is named only where its code cannot mislead. An unfamiliar Tank or Hop Star now says **Tank or Hop Star** instead of guessing
+- A vehicle the app cannot name for certain gets a short fingerprint in its filename, so two different copies never share a file on the device
+- Collection and **SYNCED** percentages show one decimal, so 0.1% and 99.9% sit right next to the ends
+- A dump whose vehicle is now named differently moves to its new name on the next sync. A Hop Star that was filed as a Tank Star is the usual case
+
+### Fixed
+
+- A Hop Star read as a Tank Star, so a rider's Hop and Tank dumps could be given the same file and one could replace the other
+- A Winged Star carrying its second code showed as an unknown vehicle
+- The collection bar read 100% with amiibo still missing, and 0% with one owned. **SYNCED** read 100% with a file still to move
+
+### Behind the scenes
+
+- PROTOCOL.md now says what the vehicle buffer does and does not tell you, measured on ten physical vehicles and five riders swapped between them
+- `fetch-images` also fetches the Hop Star render
+
 ## 1.0.3 · 17 September 2026
 
 **Chef Kawasaki, and a collection that fits a phone**

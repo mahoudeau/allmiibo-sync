@@ -162,7 +162,7 @@ export function splitFca(bytes) {
       uid: parseUid(dump),
       // Only ever set for a type-2 entry, which is the whole reason FCA is
       // worth reading: the flat format cannot carry this.
-      vehicle: vehicle?.name ?? vehicle?.code ?? null,
+      vehicle: vehicle?.label ?? null,
       type: e.type,
       typeName,
     });

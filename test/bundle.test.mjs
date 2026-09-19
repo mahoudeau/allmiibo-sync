@@ -468,7 +468,9 @@ const VEHICLES = [
   ['PB4W17', 0x02, 'Warp Star'],
   ['PB4W17', 0x04, 'Winged Star'],
   ['PB5T42', 0x04, 'Shadow Star'],
-  ['PC6V28', 0x04, 'Tank Star'],
+  // A made-up copy is not in the fingerprint table, so its shared code leaves
+  // it as "Tank or Hop Star" with the fingerprint of these exact bytes.
+  ['PC6V28', 0x04, 'Tank or Hop Star #85cdccfa'],
 ];
 
 test('a vehicle tag is the distinguishing word, not the whole name', () => {

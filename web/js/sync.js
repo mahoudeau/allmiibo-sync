@@ -131,7 +131,7 @@ export async function hashDeviceIndex(client, deviceRoot, index, { onProgress = 
         ...entry,
         hash: await sha256(bytes),
         amiiboId,
-        vehicle: v?.name ?? v?.code ?? null,
+        vehicle: v?.label ?? null,
         uid: amiiboId && isHhdItemCards(amiiboId) ? parseUid(bytes) : null,
       });
     } catch (err) {

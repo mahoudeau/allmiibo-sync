@@ -110,31 +110,84 @@ export function parseAmiiboId(bytes) {
 //
 // Kirby Air Riders amiibo are two pieces: the character figure carries the
 // tag, the vehicle acts as the antenna. The amiibo ID identifies the
-// *character only* — all four vehicles for one character share an ID — and the
+// *character only*: every vehicle for one character shares an ID. The
 // vehicle lives in the tag's SRAM buffer at pages 0xF0–0xFF.
 //
-// Within that buffer, bytes 979–984 of the dump hold an ASCII part code and
-// byte 988 a discriminator. Measured across 16 dumps (4 characters × 4
-// vehicles): the signature is identical across characters and unique per
-// vehicle. Background: AmiiboAPI issue #243, and xSke's write-up there.
+// The buffer belongs to the physical vehicle alone. Five riders on one vehicle
+// give a byte-identical buffer, and a rider's own tag does not change with the
+// vehicle under it. What the buffer does not do is name the vehicle in plain
+// text:
+//
+//   - Bytes 979-984 hold an ASCII code and byte 988 a flag, but the pair is not
+//     a vehicle ID. Tank Star and Hop Star both read PC6V28:04, and two Winged
+//     Stars read PB4W17:04 and P45S63:04. It behaves like a board part number.
+//   - Bytes 962-978 differ on every physical copy, and the game authenticates
+//     bytes 960-985 (xSke, AmiiboAPI issue #243). Copying one vehicle's buffer
+//     into another dump changes the vehicle in game, so the identity is in
+//     there, in a form that cannot be read without Nintendo's keys.
+//
+// So a vehicle is recognised in two ways. A copy seen before is matched by a
+// fingerprint of its authenticated bytes, which is certain. Anything else falls
+// back to its code, which is only trusted where no two vehicles are known to
+// share it. Only fingerprints are kept here, never the bytes: they identify a
+// copy without letting anyone rebuild one.
 
+export const VEHICLE_BLOCK_OFFSET = 960;
+export const VEHICLE_BLOCK_SIGNED = 26; // bytes 960-985, what the game checks
 export const VEHICLE_CODE_OFFSET = 979;
 export const VEHICLE_FLAG_OFFSET = 988;
 
-export const VEHICLE_SIGNATURES = Object.freeze({
+// Physical copies with a known vehicle, by fingerprint. Every entry was dumped
+// with its rider seated on the vehicle named.
+export const VEHICLE_BLOCKS = Object.freeze({
+  'a710b71e': 'Warp Star',
+  'b3366f4d': 'Warp Star',   // AmiiboAPI issue #243
+  '7e9e9952': 'Warp Star',
+  'b163705a': 'Winged Star', // AmiiboAPI issue #243
+  'ba7912da': 'Winged Star',
+  '0323a59a': 'Shadow Star',
+  '3d5bff54': 'Tank Star',
+  '43862cb5': 'Tank Star',
+  '19bb0c2d': 'Hop Star',
+  '179a850c': 'Hop Star',
+});
+
+// Codes that have only ever been seen on one vehicle.
+export const VEHICLE_CODES = Object.freeze({
   'PB4W17:02': 'Warp Star',
   'PB4W17:04': 'Winged Star',
+  'P45S63:04': 'Winged Star',
   'PB5T42:04': 'Shadow Star',
-  'PC6V28:04': 'Tank Star',
+});
+
+// Codes shared by more than one vehicle. An unrecognised copy carrying one is
+// named for what it could be, with its fingerprint, so two copies never merge.
+export const AMBIGUOUS_CODES = Object.freeze({
+  'PC6V28:04': { label: 'Tank or Hop Star', tag: 'TankHop' },
 });
 
 // Every character takes every vehicle, so this doubles as the per-character
-// checklist. It is only as complete as what has been observed — a Hop Star is
-// announced alongside Chef Kawasaki and is not here yet — so treat a missing
-// chip as "not seen in your dumps", not as proof the pairing does not exist.
+// checklist.
 export const KNOWN_VEHICLES = Object.freeze([
-  ...new Set(Object.values(VEHICLE_SIGNATURES)),
+  ...new Set([...Object.values(VEHICLE_BLOCKS), ...Object.values(VEHICLE_CODES), 'Hop Star', 'Tank Star']),
 ].sort());
+
+/**
+ * FNV-1a over a vehicle's authenticated bytes, as 8 hex characters.
+ *
+ * Synchronous on purpose: this runs inside the scan of every file, where
+ * WebCrypto's promise would ripple through callers that are not async.
+ * Collisions do not matter at this scale, and the hash cannot be turned back
+ * into the 26 bytes it came from.
+ */
+export function vehicleFingerprint(u) {
+  let h = 0x811c9dc5;
+  for (let i = VEHICLE_BLOCK_OFFSET; i < VEHICLE_BLOCK_OFFSET + VEHICLE_BLOCK_SIGNED; i++) {
+    h ^= u[i];
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
 
 /**
  * Short form of a vehicle name, for use in a filename: "Warp Star" -> "Warp".
@@ -147,6 +200,13 @@ export const KNOWN_VEHICLES = Object.freeze([
  */
 export function vehicleTag(vehicle) {
   if (!vehicle) return null;
+  // A vehicle without a certain name carries its fingerprint, and the tag has
+  // to keep it, or two copies of "Tank or Hop Star" share one path.
+  const unnamed = /^(.*) #([0-9a-f]{8})$/.exec(String(vehicle).trim());
+  if (unnamed) {
+    const ambiguous = Object.values(AMBIGUOUS_CODES).find((a) => a.label === unnamed[1]);
+    return `${ambiguous ? ambiguous.tag : 'V'}-${unnamed[2]}`;
+  }
   const first = String(vehicle).trim().split(/\s+/)[0];
   return first || null;
 }
@@ -174,7 +234,12 @@ export function hasVehicles(id) {
 
 /**
  * Vehicle carried by a v3 dump, or null when the dump is not one.
- * Returns { code, name }, with name null for a vehicle not yet catalogued.
+ *
+ * Returns { code, fingerprint, name, label }. `name` is set only when the
+ * vehicle is known: by its fingerprint, or by a code no two vehicles share.
+ * `label` is what the rest of the app stores and shows. It is the name when
+ * there is one, and otherwise says what is known plus the fingerprint, so it
+ * stays unique to the physical copy.
  */
 export function parseVehicle(bytes) {
   const u = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -186,7 +251,10 @@ export function parseVehicle(bytes) {
   const code = `${String.fromCharCode(...raw)}:${u[VEHICLE_FLAG_OFFSET]
     .toString(16)
     .padStart(2, '0')}`;
-  return { code, name: VEHICLE_SIGNATURES[code] ?? null };
+  const fingerprint = vehicleFingerprint(u);
+  const name = VEHICLE_BLOCKS[fingerprint] ?? VEHICLE_CODES[code] ?? null;
+  const label = name ?? `${AMBIGUOUS_CODES[code]?.label ?? code} #${fingerprint}`;
+  return { code, fingerprint, name, label };
 }
 
 /** Break an ID into its documented fields. */

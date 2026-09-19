@@ -844,25 +844,77 @@ ID, so the offset is unaffected.
 
 An Air Riders amiibo is two pieces: the character figure carries the tag, the
 vehicle acts as its antenna. **The amiibo ID identifies the character only**,
-so all four vehicles for one character share an ID.
+so every vehicle for one character shares an ID.
 
-The vehicle is in the tag's SRAM buffer at pages `0xF0`–`0xFF`. Measured across
-16 dumps (4 characters × 4 vehicles), files for one character differ *only*
-within that range, by 21 to 22 bytes, and the signature is identical across
-characters:
+The vehicle is in the tag's SRAM buffer at pages `0xF0`-`0xFF` (dump bytes
+960-1023). That buffer belongs to the **physical vehicle alone**. Measured in
+September 2026 by seating four or five riders in turn on each of four vehicles
+(Warp, Winged, Tank and Hop Star): every rider on one vehicle gives a
+byte-identical buffer, and each rider's own tag is byte-identical outside the
+buffer whatever it sits on.
 
-| Bytes 979–984 | Byte 988 | Vehicle |
-|---|---|---|
-| `PB4W17` | `0x02` | Warp Star |
-| `PB4W17` | `0x04` | Winged Star |
-| `PB5T42` | `0x04` | Shadow Star |
-| `PC6V28` | `0x04` | Tank Star |
+The buffer does **not** name the vehicle in plain text. Its layout:
 
-Bytes 975–978 vary per physical tag, so they are not part of the signature.
+| Bytes | Content |
+|---|---|
+| 960-961 | `02 00` |
+| 962-978 | differ on every physical copy, including two copies of one vehicle |
+| 979-984 | an ASCII code, e.g. `PB4W17` |
+| 985 | `0x20` |
+| 986-988 | `01 01`, then `0x02` or `0x04` |
+| 1022-1023 | CRC-16 |
 
-Consequences: four dumps of one character are **not duplicates**. They are
-distinct vehicle pairings sharing an ID. Any tool matching purely on amiibo ID
-must report same-ID-different-bytes rather than collapsing it.
+The ASCII code and byte 988 look like a vehicle ID and are not one. Across ten
+physical copies:
+
+| Vehicle | Codes seen |
+|---|---|
+| Warp Star | `PB4W17:02` (3 copies) |
+| Winged Star | `PB4W17:04`, `P45S63:04` (1 copy each) |
+| Shadow Star | `PB5T42:04` |
+| Tank Star | `PC6V28:04` (2 copies) |
+| Hop Star | `PC6V28:04` (2 copies) |
+
+Tank Star and Hop Star share a code, and Winged Star has two. It behaves like a
+board part number. No single byte in the buffer is constant within a vehicle and
+different between vehicles.
+
+The game still tells them apart. xSke's findings in AmiiboAPI issue #243: the
+game authenticates bytes 960-985 (flip any bit and the read fails, while bytes
+986-988 can change freely), and copying one vehicle's buffer into another dump
+changes the vehicle in game. So the identity is in the authenticated bytes,
+most likely in 962-978, in a form that cannot be read without Nintendo's keys.
+
+What this tool does with that, in `parseVehicle`:
+
+1. **A copy seen before** is matched by a fingerprint of bytes 960-985 against
+   a table of known copies (`VEHICLE_BLOCKS` in `web/js/amiibo.js`). That is
+   certain. The fingerprint is 32-bit FNV-1a (offset basis `0x811c9dc5`, prime
+   `0x01000193`) over those 26 bytes, written as 8 lowercase hex characters, so
+   any tool can compute the same one. Only fingerprints are kept, never the
+   bytes, so the table identifies a copy without letting anyone rebuild one.
+2. **Otherwise the code**, where no two vehicles are known to share it: Warp,
+   Winged and Shadow.
+3. **`PC6V28:04` on an unknown copy** is "Tank or Hop Star", with its
+   fingerprint, and anything else keeps its code and fingerprint. The
+   fingerprint goes into the filename, so two different copies never share a
+   path.
+
+Consequences: dumps of one character on different vehicles are **not
+duplicates**. They are distinct vehicle pairings sharing an ID. Any tool matching
+purely on amiibo ID must report same-ID-different-bytes rather than collapsing
+it.
+
+Open questions, as of September 2026:
+
+- **Where exactly the identity sits** in bytes 962-978, and whether it can be
+  read at all without the keys.
+- **Whether byte 988 means anything.** It is `0x02` on every Warp Star seen and
+  `0x04` on everything else, but the game does not check it.
+- **More copies.** Only one Shadow Star has been measured, and one of each
+  Winged Star code. A fingerprint and code from another physical copy, with the
+  vehicle it was dumped on, extends the table. The bytes themselves are not
+  needed.
 
 Background and credit: [AmiiboAPI issue
 #243](https://github.com/N3evin/AmiiboAPI/issues/243), particularly xSke's

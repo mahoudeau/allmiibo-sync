@@ -21,7 +21,7 @@ full amiibo database while it is at it.
 > catalogues the files already present on a connected device. See
 > [Legal and licensing](#legal-and-licensing).
 
-Currently **1.0.3**. What changed, and when: [CHANGELOG.md](CHANGELOG.md).
+Currently **1.0.4**. What changed, and when: [CHANGELOG.md](CHANGELOG.md).
 
 ## Self-contained by design
 
@@ -163,11 +163,15 @@ With both sources connected:
 Two products break the one-ID-one-amiibo rule, and each gets a tailored
 presentation instead of 90-odd duplicate rows:
 
-- **Kirby Air Riders vehicles.** Every rider can be paired with four
-  machines (Warp Star, Winged Star, Shadow Star, Tank Star), and each pairing
-  is its own dump under the same ID. The collection cell shows a `n/4` tally;
-  the detail page shows the four machines as image cards, official renders
-  fetched locally by `fetch-images`, greyed until you hold that pairing.
+- **Kirby Air Riders vehicles.** Every rider can be paired with five
+  machines (Warp Star, Winged Star, Shadow Star, Tank Star, Hop Star), and each
+  pairing is its own dump under the same ID. The collection cell shows a `n/5`
+  tally; the detail page shows the machines as image cards, official renders
+  fetched locally by `fetch-images`, greyed until you hold that pairing. A dump
+  does not name its machine in plain text, so a copy the app has not seen before
+  is named from its code where that is safe, and otherwise shows as "Tank or
+  Hop Star" or its raw code, with a fingerprint (see
+  [PROTOCOL.md](PROTOCOL.md)).
 - **The fan-made Happy Home Designer cards.** A community-made pack of 91
   item-unlock cards for the 3DS game, not official Nintendo cards. All 91
   carry one fabricated amiibo ID, so the collection shows them as a single
@@ -519,10 +523,11 @@ database. A picked file keeps the name you gave it and gains only a series
 folder, so `K+WarpStar.bin` becomes `Kirby Air Riders/K+WarpStar.bin`; a name
 too long for the device is the only case that falls back to a built one.
 
-Air Riders needs one more thing. All four vehicles of a character share a single
-amiibo ID, so a database-built name puts four real dumps on one path and keeps
+Air Riders needs one more thing. Every vehicle of a character shares a single
+amiibo ID, so a database-built name puts several real dumps on one path and keeps
 the last. Where the app names one itself it adds the vehicle, shortened:
-`KAR/Kirby (Warp).bin`. The full name does not fit, pushing the longest Air
+`KAR/Kirby (Warp).bin`, or `KAR/Kirby (TankHop-85cdccfa).bin` for a copy it
+cannot name, so two of those never meet either. The full name does not fit, pushing the longest Air
 Riders path to 72 bytes against a 63-byte limit. Bundles never hit this, since a
 572-byte record cannot carry a vehicle at all. Where it
 goes is decided at generation time rather than at sync time, in three extra

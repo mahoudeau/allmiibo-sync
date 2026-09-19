@@ -15,8 +15,11 @@ import {
   hasVehicles,
   amiiboVersion,
   KNOWN_VEHICLES,
+  VEHICLE_BLOCKS,
   VEHICLE_CODE_OFFSET,
   VEHICLE_FLAG_OFFSET,
+  vehicleFingerprint,
+  vehicleTag,
 } from '../web/js/amiibo.js';
 // Series names are curated data: they come from upstream and can be renamed in
 // the overlay. Asserting the literal here tests the database, not the decoder —
@@ -145,21 +148,72 @@ test('a file of an unrecognised length is not treated as a dump', () => {
   assert.equal(parseAmiiboId(new Uint8Array(17)), null);
 });
 
-test('the vehicle is read from the SRAM buffer of a v3 dump', () => {
+const vehicleDump = (code, flag, salt = 0) => {
   const u = new Uint8Array(2048);
-  u.set(Uint8Array.from('PB4W17', (c) => c.charCodeAt(0)), VEHICLE_CODE_OFFSET);
-  u[VEHICLE_FLAG_OFFSET] = 0x02;
-  assert.deepEqual(parseVehicle(u), { code: 'PB4W17:02', name: 'Warp Star' });
+  u.set(Uint8Array.from(code, (c) => c.charCodeAt(0)), VEHICLE_CODE_OFFSET);
+  u[VEHICLE_FLAG_OFFSET] = flag;
+  u[962] = salt; // stands in for the bytes that differ on every physical copy
+  return u;
+};
 
-  u[VEHICLE_FLAG_OFFSET] = 0x04;
-  assert.equal(parseVehicle(u).name, 'Winged Star');
+test('the vehicle is read from the SRAM buffer of a v3 dump', () => {
+  const warp = parseVehicle(vehicleDump('PB4W17', 0x02));
+  assert.equal(warp.code, 'PB4W17:02');
+  assert.equal(warp.name, 'Warp Star');
+  assert.equal(warp.label, 'Warp Star', 'a named vehicle is stored by its name');
+  assert.match(warp.fingerprint, /^[0-9a-f]{8}$/);
+
+  assert.equal(parseVehicle(vehicleDump('PB4W17', 0x04)).name, 'Winged Star');
+});
+
+test('both codes seen on a Winged Star name it', () => {
+  assert.equal(parseVehicle(vehicleDump('P45S63', 0x04)).name, 'Winged Star');
+});
+
+test('the Tank Star code alone does not claim Tank, because Hop Star shares it', () => {
+  const v = parseVehicle(vehicleDump('PC6V28', 0x04));
+  assert.equal(v.name, null);
+  assert.equal(v.label, `Tank or Hop Star #${v.fingerprint}`);
+});
+
+test('two copies with the same shared code stay two vehicles', () => {
+  const a = parseVehicle(vehicleDump('PC6V28', 0x04, 1));
+  const b = parseVehicle(vehicleDump('PC6V28', 0x04, 2));
+  assert.notEqual(a.label, b.label, 'the fingerprint keeps them apart');
+  assert.notEqual(vehicleTag(a.label), vehicleTag(b.label), 'and so do their filenames');
+});
+
+test('the fingerprint covers only the bytes the game authenticates', () => {
+  const u = vehicleDump('PB4W17', 0x02);
+  const before = vehicleFingerprint(u);
+  u[VEHICLE_FLAG_OFFSET] = 0x04; // byte 988, outside the checked range
+  assert.equal(vehicleFingerprint(u), before);
+  u[970] ^= 1;
+  assert.notEqual(vehicleFingerprint(u), before);
 });
 
 test('an uncatalogued vehicle returns its code rather than nothing', () => {
-  const u = new Uint8Array(2048);
-  u.set(Uint8Array.from('PZ9Q99', (c) => c.charCodeAt(0)), VEHICLE_CODE_OFFSET);
-  u[VEHICLE_FLAG_OFFSET] = 0x07;
-  assert.deepEqual(parseVehicle(u), { code: 'PZ9Q99:07', name: null });
+  const v = parseVehicle(vehicleDump('PZ9Q99', 0x07));
+  assert.equal(v.code, 'PZ9Q99:07');
+  assert.equal(v.name, null);
+  assert.equal(v.label, `PZ9Q99:07 #${v.fingerprint}`);
+});
+
+test('a vehicle without a certain name still gets a short, unique tag', () => {
+  assert.equal(vehicleTag('Warp Star'), 'Warp');
+  assert.equal(vehicleTag('Hop Star'), 'Hop');
+  assert.equal(vehicleTag('Tank or Hop Star #85cdccfa'), 'TankHop-85cdccfa');
+  assert.equal(vehicleTag('PZ9Q99:07 #1c86e04b'), 'V-1c86e04b');
+});
+
+test('every known copy names a vehicle on the checklist', () => {
+  for (const [fp, name] of Object.entries(VEHICLE_BLOCKS)) {
+    assert.match(fp, /^[0-9a-f]{8}$/);
+    assert.ok(KNOWN_VEHICLES.includes(name), `${fp} names ${name}`);
+  }
+  // The point of the table: the two vehicles no code can tell apart.
+  const names = new Set(Object.values(VEHICLE_BLOCKS));
+  assert.ok(names.has('Tank Star') && names.has('Hop Star'));
 });
 
 test('non-v3 dumps carry no vehicle', () => {
@@ -239,7 +293,7 @@ test('vehicles apply to the Kirby Air Riders series', () => {
 });
 
 test('the vehicle line-up is the full known set, so it reads as a checklist', () => {
-  assert.deepEqual(KNOWN_VEHICLES, ['Shadow Star', 'Tank Star', 'Warp Star', 'Winged Star']);
+  assert.deepEqual(KNOWN_VEHICLES, ['Hop Star', 'Shadow Star', 'Tank Star', 'Warp Star', 'Winged Star']);
 });
 
 test('the amiibo format version is byte 7', () => {
