@@ -16,13 +16,16 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { createAdminServer } from '../server/index.mjs';
 import { hashPassword } from '../server/auth.mjs';
 
-const REPO = new URL('../', import.meta.url).pathname;
+// fileURLToPath, not URL.pathname: on Windows pathname is "/C:/dir/" with a
+// leading slash, so join() builds "\C:\dir\web" and every asset 404s.
+const REPO = fileURLToPath(new URL('../', import.meta.url));
 
 let dir;
 let handle;

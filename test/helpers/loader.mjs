@@ -7,10 +7,12 @@
 //
 // Registered per test file with module.register(); see helpers/dom.mjs.
 
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 
-const REPO = new URL('../../', import.meta.url).pathname;
+// fileURLToPath, not URL.pathname: on Windows pathname is "/C:/dir/" with a
+// leading slash, so join() builds an invalid path and every import 404s.
+const REPO = fileURLToPath(new URL('../../', import.meta.url));
 
 export function resolve(specifier, context, next) {
   if (specifier.startsWith('/js/')) {
