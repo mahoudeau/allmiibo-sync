@@ -13,7 +13,7 @@ import {
   packFolder, packDevice, packFileName,
 } from './syncflow.js';
 import { pickDeviceFolder } from './devicepicker.js';
-import { toast, statusCtl, progressCtl, busy, idle, fmtBytes, fmtDuration } from './ui.js';
+import { toast, statusCtl, progressCtl, busy, idle, fmtBytes, fmtDuration, saveBlob } from './ui.js';
 import { icon, ICONS } from './icons.js';
 import { confirmDialog, chooseDialog } from './dialog.js';
 import { findRescueStaging, stagingNotice, driveRootOf } from './rescue.js';
@@ -677,11 +677,7 @@ els.stopRun.addEventListener('click', () => {
 
 function saveBytes(bytes, filename) {
   const blob = new Blob([bytes], { type: 'application/octet-stream' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  saveBlob(blob, filename);
 }
 
 async function runPack(op) {
@@ -842,11 +838,7 @@ function runReport() {
 
 els.saveLog.addEventListener('click', () => {
   const blob = new Blob([runReport()], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `allmiibo-sync-${lastRun?.operation ?? 'run'}.json`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  saveBlob(blob, `allmiibo-sync-${lastRun?.operation ?? 'run'}.json`);
 });
 
 els.copyLog.addEventListener('click', async () => {

@@ -210,6 +210,30 @@ export function burst(anchorEl) {
   setTimeout(() => b.remove(), 900); // safety net
 }
 
+// ---- saveBlob ---------------------------------------------------------------
+// Downloads a Blob as a file. Used by probe, repair, sync, writetest, and the
+// collection page (scan log + CSV). The helper centralises the "create anchor,
+// append, click, delayed revoke" dance so every surface gets it right.
+//
+// Two details that aren't obvious:
+// 1. The anchor MUST be in the DOM before click() — some browsers (notably
+//    Safari on iOS, and occasionally Chrome) ignore the download attribute on
+//    a detached element.
+// 2. Revoking the object URL synchronously after click() can cancel the
+//    download before it starts. A short setTimeout lets the browser initiate
+//    the save first. 2 s is generous but safe; the anchor is removed at the
+//    same time so the DOM doesn't accumulate.
+export function saveBlob(blob, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  // In the DOM before the click (some browsers require it), and the URL
+  // outlives the click — revoking synchronously can cancel the download.
+  document.body.append(a);
+  a.click();
+  setTimeout(() => { a.remove(); URL.revokeObjectURL(a.href); }, 2000);
+}
+
 // ---- segmented control -----------------------------------------------------
 
 // Wires a .segCtl (radios + sliding thumb). Returns { get value, set }.

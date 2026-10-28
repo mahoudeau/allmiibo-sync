@@ -7,7 +7,7 @@
 
 import { BleTransport } from './ble.js';
 import { AllmiiboClient, driveRoot } from './protocol.js';
-import { statusCtl, progressCtl, busy, idle, toast } from './ui.js';
+import { statusCtl, progressCtl, busy, idle, toast, saveBlob } from './ui.js';
 import { confirmDialog } from './dialog.js';
 import { rescueFolder, findRescueStaging, driveRootOf } from './rescue.js';
 
@@ -235,12 +235,7 @@ els.copy.addEventListener('click', async () => {
 
 els.save.addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(reportJson(), null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'allmiibo-repair.json';
-  document.body.append(a);
-  a.click();
-  setTimeout(() => { a.remove(); URL.revokeObjectURL(a.href); }, 2000);
+  saveBlob(blob, 'allmiibo-repair.json');
 });
 
 function reportJson() {

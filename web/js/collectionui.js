@@ -27,6 +27,7 @@ import { hhdMark } from './sprite.js';
 import { makeArt, bestTier, dropBrokenArt } from './artwork.js';
 import { HHD_CARDS } from '../data/hhd-cards.js';
 import { pickDeviceFolder } from './devicepicker.js';
+import { saveBlob } from './ui.js';
 
 prefs.migrate();
 
@@ -1526,17 +1527,10 @@ els.exportLog.addEventListener('click', () => {
     },
   };
   try {
-    const blob = new Blob([JSON.stringify(log, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `allmiibo-scanlog-${new Date().toISOString().slice(0, 10)}.json`;
-    // In the DOM before the click (some browsers require it), and the URL
-    // outlives the click — revoking synchronously can cancel the download.
-    document.body.append(a);
-    a.click();
-    setTimeout(() => { a.remove(); URL.revokeObjectURL(a.href); }, 2000);
-    toast('Scan log saved — filenames and sizes only, no file contents.');
-  } catch (err) {
+      const blob = new Blob([JSON.stringify(log, null, 2)], { type: 'application/json' });
+      saveBlob(blob, `allmiibo-scanlog-${new Date().toISOString().slice(0, 10)}.json`);
+      toast('Scan log saved — filenames and sizes only, no file contents.');
+    } catch (err) {
     toast(`Couldn't save the log: ${err.message}`, { kind: 'err' });
   }
 });

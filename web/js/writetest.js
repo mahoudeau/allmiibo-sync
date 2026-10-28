@@ -14,6 +14,7 @@
 import { BleTransport } from './ble.js';
 import { AllmiiboClient, joinPath } from './protocol.js';
 import { toHex } from './bytes.js';
+import { saveBlob } from './ui.js';
 
 const SCRATCH = 'E:/_synctest';
 const SUBDIR = `${SCRATCH}/sub`;
@@ -327,11 +328,7 @@ els.copy.addEventListener('click', async () => {
 
 els.save.addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'allmiibo-writetest.json';
-  a.click();
-  URL.revokeObjectURL(a.href);
+  saveBlob(blob, 'allmiibo-writetest.json');
 });
 
 if (!BleTransport.available) {
