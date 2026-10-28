@@ -382,7 +382,12 @@ export async function fetchVehicles(imagesDir, fetchImpl = globalThis.fetch) {
 
 // ---- CLI ------------------------------------------------------------------
 
-const isCli = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
+// Compare OS-native paths, both sides via node:url. `file://${argv[1]}` only
+// matches on POSIX: on Windows argv[1] is `C:\dir\file.mjs`, so the template
+// yields `file://C:\dir\file.mjs` (two slashes, backslashes) while
+// import.meta.url is `file:///C:/dir/file.mjs` — never equal, so the CLI block
+// was skipped and the script exited 0 having done nothing.
+const isCli = process.argv[1] === fileURLToPath(import.meta.url);
 if (isCli) {
   // Imported here rather than at the top so the module itself never pulls in
   // the generated database — see the note at the top of the file.

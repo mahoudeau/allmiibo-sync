@@ -1015,7 +1015,12 @@ export function createAdminServer(config = {}) {
 
 // ---- CLI ----------------------------------------------------------------
 
-const isCli = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
+// Compare OS-native paths, both sides via node:url. `file://${argv[1]}` only
+// matches on POSIX: on Windows argv[1] is `C:\dir\file.mjs`, so the template
+// yields `file://C:\dir\file.mjs` (two slashes, backslashes) while
+// import.meta.url is `file:///C:/dir/file.mjs` — never equal, so the CLI block
+// was skipped and the server exited 0 having done nothing.
+const isCli = process.argv[1] === fileURLToPath(import.meta.url);
 if (isCli) {
   const port = Number(process.env.PORT ?? 8081);
   // IP is what a managed host injects alongside PORT; HOST is the local
